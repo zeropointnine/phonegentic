@@ -162,7 +162,9 @@ class WhisperRealtimeService {
           '\n\nYou have access to a local call history database. '
           'When the user asks about past calls, call duration, '
           'or wants to search their call history, use the search_calls tool. '
-          'You can also open the call history UI with open_call_history.';
+          'You can also open the call history UI with open_call_history. '
+          'You can make calls with make_call, hang up with end_call, '
+          'and navigate phone menus with send_dtmf.';
     }
 
     session['tools'] = [
@@ -222,6 +224,47 @@ class WhisperRealtimeService {
           },
         },
       },
+      {
+        'type': 'function',
+        'name': 'make_call',
+        'description': 'Initiate an outbound phone call to a number.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'number': {
+              'type': 'string',
+              'description': 'The phone number or SIP URI to dial',
+            },
+          },
+          'required': ['number'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'end_call',
+        'description': 'Hang up the current active call.',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'send_dtmf',
+        'description':
+            'Send DTMF tones on the active call to navigate phone menus.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'tones': {
+              'type': 'string',
+              'description':
+                  'DTMF digit string to send (e.g. "1", "123#", "*9")',
+            },
+          },
+          'required': ['tones'],
+        },
+      },
     ];
 
     _send({'type': 'session.update', 'session': session});
@@ -234,6 +277,25 @@ class WhisperRealtimeService {
       'item': {
         'type': 'message',
         'role': 'user',
+        'content': [
+          {'type': 'input_text', 'text': text}
+        ],
+      },
+    });
+    _send({'type': 'response.create'});
+  }
+
+  /// Inject a system instruction and trigger a spoken response.
+  /// Unlike sendTextMessage (user role), this uses the system role so the
+  /// agent treats it as a directive it must follow, not a conversational
+  /// request it may decline.
+  void sendSystemDirective(String text) {
+    if (!_connected || _ws == null) return;
+    _send({
+      'type': 'conversation.item.create',
+      'item': {
+        'type': 'message',
+        'role': 'system',
         'content': [
           {'type': 'input_text', 'text': text}
         ],

@@ -11,6 +11,7 @@ import 'package:sip_ua/sip_ua.dart';
 
 import 'package:provider/provider.dart';
 
+import 'agent_config_service.dart';
 import 'agent_service.dart';
 import 'audio_device_service.dart';
 import 'call_history_service.dart';
@@ -44,8 +45,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   bool _showNumPad = false;
   final ValueNotifier<String> _timeLabel = ValueNotifier<String>('00:00');
   bool _audioMuted = false;
+  bool _softMute = false;
   bool _videoMuted = false;
-  bool _speakerOn = false;
   bool _hold = false;
   bool _mirror = true;
   Originator? _holdOriginator;
@@ -195,7 +196,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       case CallStateEnum.CONFIRMED:
         setState(() => _callConfirmed = true);
         _enterCallMode();
-        _startRecording();
+        _maybeAutoRecord();
         break;
       default:
         setState(() {});
@@ -315,6 +316,25 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _mediaRecorder = null;
   }
 
+  void _toggleRecording() async {
+    if (_isRecording) {
+      await _stopRecording();
+    } else {
+      await _startRecording();
+      _agent.announceRecording();
+    }
+    setState(() {});
+  }
+
+  Future<void> _maybeAutoRecord() async {
+    final config = await AgentConfigService.loadCallRecordingConfig();
+    if (config.autoRecord) {
+      await _startRecording();
+      _agent.announceRecording();
+      setState(() {});
+    }
+  }
+
   void _resizeLocalVideo() {
     _localVideoMargin = _remoteStream != null
         ? const EdgeInsets.only(top: 15, right: 15)
@@ -383,6 +403,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
   }
 
+  void _softMuteAudio() {
+    _softMute = !_softMute;
+    _tapChannel.invokeMethod('setMicMute', {'muted': _softMute});
+    setState(() {});
+  }
+
   void _muteVideo() {
     if (_videoMuted) {
       call!.unmute(false, true);
@@ -447,16 +473,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           call: call!,
           voiceOnly: true,
           done: (IncomingMessage? msg) {});
-    }
-  }
-
-  void _toggleSpeaker() {
-    if (_localStream != null) {
-      _speakerOn = !_speakerOn;
-      if (!kIsWeb) {
-        _localStream!.getAudioTracks()[0].enableSpeakerphone(_speakerOn);
-      }
-      setState(() {});
     }
   }
 
@@ -706,10 +722,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       case CallStateEnum.CONFIRMED:
         actions.addAll([
           ActionButton(
-            title: _audioMuted ? 'Unmute' : 'Mute',
-            icon: _audioMuted ? Icons.mic_off : Icons.mic,
-            checked: _audioMuted,
-            onPressed: _muteAudio,
+            title: _softMute ? 'Unmute' : 'Mute',
+            icon: _softMute ? Icons.mic_off : Icons.mic,
+            checked: _softMute,
+            onPressed: _softMuteAudio,
+            onLongPress: _muteAudio,
           ),
           if (voiceOnly)
             ActionButton(
@@ -725,10 +742,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             ),
           if (voiceOnly)
             ActionButton(
-              title: _speakerOn ? 'Speaker' : 'Speaker',
-              icon: _speakerOn ? Icons.volume_up : Icons.volume_off,
-              checked: _speakerOn,
-              onPressed: _toggleSpeaker,
+              title: _isRecording ? 'Stop Rec' : 'Record',
+              icon: _isRecording ? Icons.stop_rounded : Icons.fiber_manual_record,
+              checked: _isRecording,
+              fillColor: _isRecording ? AppColors.red : null,
+              onPressed: _toggleRecording,
             )
           else
             ActionButton(

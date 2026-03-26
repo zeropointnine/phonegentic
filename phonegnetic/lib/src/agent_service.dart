@@ -3,6 +3,8 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
 import 'call_history_service.dart';
@@ -40,6 +42,7 @@ class AgentService extends ChangeNotifier {
   bool get hasActiveCall => _callPhase != CallPhase.idle;
 
   CallHistoryService? callHistory;
+  SIPUAHelper? sipHelper;
 
   StreamSubscription<double>? _levelSub;
   StreamSubscription<bool>? _speakingSub;
@@ -294,6 +297,15 @@ class AgentService extends ChangeNotifier {
           );
           result = 'Call history panel opened.';
           break;
+        case 'make_call':
+          result = await _handleMakeCall(args);
+          break;
+        case 'end_call':
+          result = _handleEndCall();
+          break;
+        case 'send_dtmf':
+          result = _handleSendDtmf(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -333,6 +345,51 @@ class AgentService extends ChangeNotifier {
     callHistory!.openHistory();
 
     return result;
+  }
+
+  Future<String> _handleMakeCall(Map<String, dynamic> args) async {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final number = args['number'] as String?;
+    if (number == null || number.isEmpty) return 'No number provided.';
+    try {
+      final mediaConstraints = <String, dynamic>{
+        'audio': true,
+        'video': false,
+      };
+      final stream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      sipHelper!.call(number, voiceOnly: true, mediaStream: stream);
+      return 'Call initiated to $number';
+    } catch (e) {
+      return 'Failed to make call: $e';
+    }
+  }
+
+  String _handleEndCall() {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final active = sipHelper!.activeCall;
+    if (active == null) return 'No active call to end.';
+    active.hangup();
+    return 'Call ended.';
+  }
+
+  String _handleSendDtmf(Map<String, dynamic> args) {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final tones = args['tones'] as String?;
+    if (tones == null || tones.isEmpty) return 'No tones provided.';
+    final active = sipHelper!.activeCall;
+    if (active == null) return 'No active call for DTMF.';
+    active.sendDTMF(tones);
+    return 'Sent DTMF: $tones';
+  }
+
+  void announceRecording() {
+    if (!_active) return;
+    _whisper.sendSystemDirective(
+      'SYSTEM ACTION: Call recording has started. You MUST immediately say '
+      'aloud to the other party: "By the way, this call is now being recorded." '
+      'Say only this announcement, nothing else.',
+    );
   }
 
   void sendUserMessage(String text) {

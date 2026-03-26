@@ -106,6 +106,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "stopAudioPlayback":
             stopPlayback()
             result(nil)
+        case "setMicMute":
+            let muted = (call.arguments as? [String: Any])?["muted"] as? Bool ?? false
+            WebRTCAudioProcessor.shared.micMuted = muted
+            NSLog("[AudioTap] setMicMute=%@", muted ? "YES" : "NO")
+            result(nil)
         case "getDominantSpeaker":
             result(dominantSpeaker)
         default:

@@ -122,6 +122,11 @@ final class WebRTCAudioProcessor: NSObject {
     let micInjectionRing = SPSCRingBuffer(capacity: 48000 * 2)
     var micSourceRate: Int = 48000
 
+    /// When true, mic audio is zeroed in the capture path so the remote
+    /// party can't hear the local user, but TTS keeps flowing and the
+    /// agent's whisper feed (via CoreAudio IOProc) stays active.
+    var micMuted = false
+
     private(set) var isRegistered = false
     private var captureProcessor: CapturePostProcessor?
     private var renderProcessor: RenderPreProcessor?
@@ -277,12 +282,18 @@ final class CapturePostProcessor: NSObject, ExternalAudioProcessingDelegate {
         let rate = effectiveRate(frames: frames)
         let buf = audioBuffer.rawBuffer(forChannel: 0)
 
-        var micRms: Float = 0
-        for i in 0..<frames { micRms += buf[i] * buf[i] }
-        micRms = sqrtf(micRms / Float(frames))
+        if owner.micMuted {
+            // Zero mic audio so the remote party hears silence from the user,
+            // but keep the pipeline alive for TTS mixing below.
+            for i in 0..<frames { buf[i] = 0 }
+        } else {
+            var micRms: Float = 0
+            for i in 0..<frames { micRms += buf[i] * buf[i] }
+            micRms = sqrtf(micRms / Float(frames))
 
-        if micRms < 10.0 {
-            injectMicAudio(into: buf, frames: frames, owner: owner, rate: rate)
+            if micRms < 10.0 {
+                injectMicAudio(into: buf, frames: frames, owner: owner, rate: rate)
+            }
         }
 
         diagCounter += 1
@@ -292,8 +303,9 @@ final class CapturePostProcessor: NSObject, ExternalAudioProcessingDelegate {
             postRms = sqrtf(postRms / Float(frames))
             let ttsAvail = owner.ttsCaptureRing.availableToRead
             let injAvail = owner.micInjectionRing.availableToRead
-            NSLog("[CapturePostProc] #%llu frames=%d rate=%d admRMS=%.1f postRMS=%.1f ttsAvail=%d injRingAvail=%d",
-                  diagCounter, frames, rate, micRms, postRms, ttsAvail, injAvail)
+            NSLog("[CapturePostProc] #%llu frames=%d rate=%d postRMS=%.1f ttsAvail=%d injRingAvail=%d micMuted=%@",
+                  diagCounter, frames, rate, postRms, ttsAvail, injAvail,
+                  owner.micMuted ? "YES" : "NO")
         }
 
         mixTTSInto(buf: buf, frames: frames, ring: owner.ttsCaptureRing, rate: rate)

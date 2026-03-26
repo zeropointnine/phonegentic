@@ -20,6 +20,150 @@ class CallSearchParams {
     this.direction,
     this.status,
   });
+
+  /// Parse a natural-language search query into structured params.
+  ///
+  /// Handles patterns like:
+  ///   "calls with 585 in number"
+  ///   "calls to Fred over 2 minutes"
+  ///   "missed calls today"
+  ///   "outbound calls last hour"
+  ///   "calls longer than 5 minutes"
+  factory CallSearchParams.fromQuery(String query) {
+    final q = query.toLowerCase().trim();
+    String? contactName;
+    int? minDuration;
+    int? maxDuration;
+    DateTime? since;
+    String? direction;
+    String? status;
+
+    // Strip filler words for parsing
+    var working = q
+        .replaceAll(RegExp(r'\bcalls?\b'), '')
+        .replaceAll(RegExp(r'\bshow\s+me\b'), '')
+        .replaceAll(RegExp(r'\bfind\b'), '')
+        .replaceAll(RegExp(r'\ball\b'), '')
+        .replaceAll(RegExp(r'\bthe\b'), '')
+        .replaceAll(RegExp(r'\bmy\b'), '')
+        .trim();
+
+    // Direction
+    if (RegExp(r'\b(outbound|outgoing|made|dialed)\b').hasMatch(working)) {
+      direction = 'outbound';
+      working = working
+          .replaceAll(RegExp(r'\b(outbound|outgoing|made|dialed)\b'), '')
+          .trim();
+    } else if (RegExp(r'\b(inbound|incoming|received)\b').hasMatch(working)) {
+      direction = 'inbound';
+      working = working
+          .replaceAll(RegExp(r'\b(inbound|incoming|received)\b'), '')
+          .trim();
+    }
+
+    // Status
+    if (RegExp(r'\bmissed\b').hasMatch(working)) {
+      status = 'missed';
+      working = working.replaceAll(RegExp(r'\bmissed\b'), '').trim();
+    } else if (RegExp(r'\bfailed\b').hasMatch(working)) {
+      status = 'failed';
+      working = working.replaceAll(RegExp(r'\bfailed\b'), '').trim();
+    } else if (RegExp(r'\bcompleted\b').hasMatch(working)) {
+      status = 'completed';
+      working = working.replaceAll(RegExp(r'\bcompleted\b'), '').trim();
+    }
+
+    // Time: "last N hour(s)/minute(s)/min"
+    final timeMatch = RegExp(
+            r'\b(?:in\s+)?(?:the\s+)?last\s+(\d+)\s*(hours?|minutes?|mins?|days?)\b')
+        .firstMatch(working);
+    if (timeMatch != null) {
+      final n = int.parse(timeMatch.group(1)!);
+      final unit = timeMatch.group(2)!;
+      if (unit.startsWith('h')) {
+        since = DateTime.now().subtract(Duration(hours: n));
+      } else if (unit.startsWith('m')) {
+        since = DateTime.now().subtract(Duration(minutes: n));
+      } else if (unit.startsWith('d')) {
+        since = DateTime.now().subtract(Duration(days: n));
+      }
+      working = working.replaceAll(timeMatch.group(0)!, '').trim();
+    } else if (RegExp(r'\b(?:in\s+)?(?:the\s+)?last\s+hour\b')
+        .hasMatch(working)) {
+      since = DateTime.now().subtract(const Duration(hours: 1));
+      working = working
+          .replaceAll(
+              RegExp(r'\b(?:in\s+)?(?:the\s+)?last\s+hour\b'), '')
+          .trim();
+    } else if (RegExp(r'\btoday\b').hasMatch(working)) {
+      final now = DateTime.now();
+      since = DateTime(now.year, now.month, now.day);
+      working = working.replaceAll(RegExp(r'\btoday\b'), '').trim();
+    } else if (RegExp(r'\byesterday\b').hasMatch(working)) {
+      final now = DateTime.now();
+      since = DateTime(now.year, now.month, now.day - 1);
+      working = working.replaceAll(RegExp(r'\byesterday\b'), '').trim();
+    } else if (RegExp(r'\b(?:this|last)\s+week\b').hasMatch(working)) {
+      since = DateTime.now().subtract(const Duration(days: 7));
+      working = working
+          .replaceAll(RegExp(r'\b(?:this|last)\s+week\b'), '')
+          .trim();
+    }
+
+    // Duration: "over/longer than/more than N min(utes)/sec(onds)"
+    final durMatch = RegExp(
+            r'\b(?:over|longer\s+than|more\s+than|>=?)\s*(\d+)\s*(minutes?|mins?|seconds?|secs?|hours?|hrs?)\b')
+        .firstMatch(working);
+    if (durMatch != null) {
+      final n = int.parse(durMatch.group(1)!);
+      final unit = durMatch.group(2)!;
+      if (unit.startsWith('h')) {
+        minDuration = n * 3600;
+      } else if (unit.startsWith('m')) {
+        minDuration = n * 60;
+      } else {
+        minDuration = n;
+      }
+      working = working.replaceAll(durMatch.group(0)!, '').trim();
+    }
+
+    // Duration: "under/shorter than/less than N min"
+    final durMaxMatch = RegExp(
+            r'\b(?:under|shorter\s+than|less\s+than|<=?)\s*(\d+)\s*(minutes?|mins?|seconds?|secs?|hours?|hrs?)\b')
+        .firstMatch(working);
+    if (durMaxMatch != null) {
+      final n = int.parse(durMaxMatch.group(1)!);
+      final unit = durMaxMatch.group(2)!;
+      if (unit.startsWith('h')) {
+        maxDuration = n * 3600;
+      } else if (unit.startsWith('m')) {
+        maxDuration = n * 60;
+      } else {
+        maxDuration = n;
+      }
+      working = working.replaceAll(durMaxMatch.group(0)!, '').trim();
+    }
+
+    // Whatever remains is the contact name / number search term.
+    // Clean up filler prepositions and "in number"/"with number" etc.
+    working = working
+        .replaceAll(RegExp(r'\b(to|from|with|for|in|number|named?)\b'), '')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
+
+    if (working.isNotEmpty) {
+      contactName = working;
+    }
+
+    return CallSearchParams(
+      contactName: contactName,
+      minDurationSeconds: minDuration,
+      maxDurationSeconds: maxDuration,
+      since: since,
+      direction: direction,
+      status: status,
+    );
+  }
 }
 
 class CallHistoryService extends ChangeNotifier {
@@ -143,6 +287,12 @@ class CallHistoryService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
   // Queries
   // ---------------------------------------------------------------------------
+
+  /// Parse a natural-language query and execute the structured search.
+  Future<void> naturalSearch(String query) async {
+    final params = CallSearchParams.fromQuery(query);
+    await search(params);
+  }
 
   Future<void> loadRecentCalls() async {
     _isLoading = true;

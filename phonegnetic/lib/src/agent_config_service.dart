@@ -95,6 +95,16 @@ class TextAgentConfig {
   }
 }
 
+class CallRecordingConfig {
+  final bool autoRecord;
+
+  const CallRecordingConfig({this.autoRecord = false});
+
+  CallRecordingConfig copyWith({bool? autoRecord}) {
+    return CallRecordingConfig(autoRecord: autoRecord ?? this.autoRecord);
+  }
+}
+
 class AgentConfigService {
   static const _prefix = 'agent_';
 
@@ -181,5 +191,18 @@ class AgentConfigService {
     await prefs.setString('${_prefix}text_claude_model', config.claudeModel);
     await prefs.setString(
         '${_prefix}text_system_prompt', config.systemPrompt);
+  }
+
+  static Future<CallRecordingConfig> loadCallRecordingConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    return CallRecordingConfig(
+      autoRecord: prefs.getBool('${_prefix}call_auto_record') ?? false,
+    );
+  }
+
+  static Future<void> saveCallRecordingConfig(
+      CallRecordingConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('${_prefix}call_auto_record', config.autoRecord);
   }
 }

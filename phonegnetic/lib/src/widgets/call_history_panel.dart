@@ -1,6 +1,11 @@
+import 'dart:io';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
 
+import '../agent_service.dart';
 import '../call_history_service.dart';
 import '../theme_provider.dart';
 
@@ -31,7 +36,11 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
   }
 
   void _onSearchChanged() {
-    context.read<CallHistoryService>().setSearchQuery(_searchController.text);
+    final service = context.read<CallHistoryService>();
+    service.setSearchQuery(_searchController.text);
+    if (_searchController.text.trim().isEmpty) {
+      service.loadRecentCalls();
+    }
   }
 
   void _runSearch() {
@@ -40,8 +49,15 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
     if (query.isEmpty) {
       service.loadRecentCalls();
     } else {
-      service.search(CallSearchParams(contactName: query));
+      service.naturalSearch(query);
     }
+  }
+
+  void _askAgent() {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+    final agent = context.read<AgentService>();
+    agent.sendUserMessage('Search my call history: $query');
   }
 
   @override
@@ -75,7 +91,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
 
   Widget _buildHeader(CallHistoryService service) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      padding: const EdgeInsets.fromLTRB(16, 28, 8, 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border:
@@ -148,7 +164,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                 focusNode: _searchFocus,
                 style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
                 decoration: InputDecoration(
-                  hintText: 'Search calls by name, number...',
+                  hintText: 'e.g. "585" "missed today" "to Fred over 2 min"',
                   hintStyle:
                       TextStyle(color: AppColors.textTertiary, fontSize: 13),
                   prefixIcon: Icon(Icons.search_rounded,
@@ -161,18 +177,40 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           GestureDetector(
             onTap: _runSearch,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                color: AppColors.accent,
+            child: Tooltip(
+              message: 'Search locally',
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: AppColors.accent,
+                ),
+                child: const Icon(Icons.search_rounded,
+                    size: 16, color: AppColors.crtBlack),
               ),
-              child: const Icon(Icons.search_rounded,
-                  size: 16, color: AppColors.crtBlack),
+            ),
+          ),
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: _askAgent,
+            child: Tooltip(
+              message: 'Ask AI agent',
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: AppColors.card,
+                  border: Border.all(
+                      color: AppColors.accent.withOpacity(0.4), width: 0.5),
+                ),
+                child: Icon(Icons.auto_awesome,
+                    size: 16, color: AppColors.accent),
+              ),
             ),
           ),
         ],
@@ -279,6 +317,11 @@ class _CallRecordTileState extends State<_CallRecordTile> {
       .toUpperCase();
 
   bool get _isOutbound => widget.record['direction'] == 'outbound';
+
+  bool get _hasRecording {
+    final path = widget.record['recording_path'];
+    return path != null && (path as String).isNotEmpty;
+  }
 
   Color get _statusColor {
     switch (widget.record['status']) {
@@ -421,6 +464,19 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                             style: TextStyle(
                                 fontSize: 10, color: AppColors.textTertiary),
                           ),
+                          if (_hasRecording) ...[
+                            const SizedBox(width: 8),
+                            Icon(Icons.fiber_manual_record,
+                                size: 6, color: AppColors.red),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Recorded',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppColors.red,
+                                  fontWeight: FontWeight.w500),
+                            ),
+                          ],
                         ],
                       ),
                     ],
@@ -444,8 +500,12 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                 ),
               ],
             ),
-            // Expanded transcript view
             if (widget.isExpanded) ...[
+              if (_hasRecording) ...[
+                const SizedBox(height: 10),
+                _RecordingPlayer(
+                    filePath: widget.record['recording_path'] as String),
+              ],
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -499,6 +559,138 @@ class _CallRecordTileState extends State<_CallRecordTile> {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Audio playback player for call recordings
+// ---------------------------------------------------------------------------
+
+class _RecordingPlayer extends StatefulWidget {
+  final String filePath;
+  const _RecordingPlayer({required this.filePath});
+
+  @override
+  State<_RecordingPlayer> createState() => _RecordingPlayerState();
+}
+
+class _RecordingPlayerState extends State<_RecordingPlayer> {
+  late AudioPlayer _player;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _playing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = AudioPlayer();
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    try {
+      final file = File(widget.filePath);
+      if (await file.exists()) {
+        await _player.setFilePath(widget.filePath);
+      }
+    } catch (e) {
+      debugPrint('[RecordingPlayer] Failed to load: $e');
+    }
+
+    _player.positionStream.listen((pos) {
+      if (mounted) setState(() => _position = pos);
+    });
+    _player.durationStream.listen((dur) {
+      if (mounted && dur != null) setState(() => _duration = dur);
+    });
+    _player.playerStateStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _playing = state.playing);
+      if (state.processingState == ProcessingState.completed) {
+        _player.seek(Duration.zero);
+        _player.pause();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress =
+        _duration.inMilliseconds > 0
+            ? _position.inMilliseconds / _duration.inMilliseconds
+            : 0.0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(8),
+        border:
+            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+      ),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () {
+              if (_playing) {
+                _player.pause();
+              } else {
+                _player.play();
+              }
+            },
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.accent,
+              ),
+              child: Icon(
+                _playing
+                    ? Icons.pause_rounded
+                    : Icons.play_arrow_rounded,
+                size: 16,
+                color: AppColors.crtBlack,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: progress.clamp(0.0, 1.0),
+                minHeight: 3,
+                backgroundColor: AppColors.border.withOpacity(0.3),
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(AppColors.accent),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
+            style: TextStyle(
+              fontSize: 10,
+              color: AppColors.textTertiary,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ),
     );
   }

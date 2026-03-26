@@ -12,6 +12,7 @@ class AgentSettingsTab extends StatefulWidget {
 class _AgentSettingsTabState extends State<AgentSettingsTab> {
   VoiceAgentConfig _voice = const VoiceAgentConfig();
   TextAgentConfig _text = const TextAgentConfig();
+  CallRecordingConfig _recording = const CallRecordingConfig();
   bool _loaded = false;
 
   final _voiceKeyCtrl = TextEditingController();
@@ -39,10 +40,12 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   Future<void> _load() async {
     final v = await AgentConfigService.loadVoiceConfig();
     final t = await AgentConfigService.loadTextConfig();
+    final r = await AgentConfigService.loadCallRecordingConfig();
     if (!mounted) return;
     setState(() {
       _voice = v;
       _text = t;
+      _recording = r;
       _voiceKeyCtrl.text = v.apiKey;
       _voiceInstructionsCtrl.text = v.instructions;
       _textOpenaiKeyCtrl.text = t.openaiApiKey;
@@ -81,11 +84,99 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           children: [
             _buildVoiceAgentCard(),
             const SizedBox(height: 16),
+            _buildCallRecordingCard(),
+            const SizedBox(height: 16),
             _buildTextAgentCard(),
             const SizedBox(height: 40),
           ],
         ),
       ),
+    );
+  }
+
+  void _updateRecording(CallRecordingConfig r) {
+    setState(() => _recording = r);
+    AgentConfigService.saveCallRecordingConfig(r);
+  }
+
+  // ───── Call Recording ─────
+
+  Widget _buildCallRecordingCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'CALL RECORDING',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: _recording.autoRecord
+                        ? AppColors.red.withOpacity(0.12)
+                        : AppColors.card,
+                  ),
+                  child: Icon(Icons.fiber_manual_record,
+                      size: 17,
+                      color: _recording.autoRecord
+                          ? AppColors.red
+                          : AppColors.textTertiary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Auto-record calls',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Automatically start recording when a call connects',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  height: 28,
+                  child: Switch.adaptive(
+                    value: _recording.autoRecord,
+                    onChanged: (v) =>
+                        _updateRecording(_recording.copyWith(autoRecord: v)),
+                    activeColor: AppColors.red,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

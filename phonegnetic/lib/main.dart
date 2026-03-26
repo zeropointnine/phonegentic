@@ -52,7 +52,7 @@ class MyApp extends StatelessWidget {
         Provider<SipUserCubit>(create: (context) => SipUserCubit(sipHelper: _helper)),
         ChangeNotifierProvider<CallHistoryService>(create: (_) => CallHistoryService()),
         ChangeNotifierProxyProvider<CallHistoryService, AgentService>(
-          create: (_) => AgentService(),
+          create: (_) => AgentService()..sipHelper = _helper,
           update: (_, history, agent) => agent!..callHistory = history,
         ),
       ],
