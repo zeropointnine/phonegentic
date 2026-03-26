@@ -15,6 +15,7 @@ import 'agent_config_service.dart';
 import 'agent_service.dart';
 import 'audio_device_service.dart';
 import 'call_history_service.dart';
+import 'db/call_history_db.dart';
 import 'models/agent_context.dart';
 import 'theme_provider.dart';
 import 'widgets/action_button.dart';
@@ -53,9 +54,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   bool _callConfirmed = false;
   CallStateEnum _state = CallStateEnum.NONE;
 
-  MediaRecorder? _mediaRecorder;
   String? _recordingPath;
   bool _isRecording = false;
+  Timer? _recTimer;
+  int _recSeconds = 0;
+  String _recLabel = '0:00';
+  int? _endingCallRecordId;
 
   late String _transferTarget;
   late Timer _timer;
@@ -160,6 +164,14 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   void callStateChanged(Call call, CallState callState) {
+    // Capture the call record ID before _pushCallPhase clears it, so
+    // _stopRecording can save the recording path after the file is finalized.
+    if (callState.state == CallStateEnum.ENDED ||
+        callState.state == CallStateEnum.FAILED) {
+      final history =
+          Provider.of<CallHistoryService>(context, listen: false);
+      _endingCallRecordId = history.activeCallRecordId;
+    }
     _pushCallPhase(callState.state);
 
     if (callState.state == CallStateEnum.HOLD ||
@@ -218,6 +230,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   void _backToDialPad() {
     _timer.cancel();
+    _recTimer?.cancel();
+    _recTimer = null;
     _exitCallMode();
     Timer(const Duration(seconds: 2), () {
       if (mounted) {
@@ -277,6 +291,19 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   Future<void> _startRecording() async {
     if (_isRecording) return;
+
+    _isRecording = true;
+    _recSeconds = 0;
+    _recLabel = '0:00';
+    _recTimer?.cancel();
+    _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _recSeconds++;
+      final m = _recSeconds ~/ 60;
+      final s = _recSeconds % 60;
+      setState(() => _recLabel = '$m:${s.toString().padLeft(2, '0')}');
+    });
+    setState(() {});
+
     try {
       final dir = await getApplicationDocumentsDirectory();
       final recDir = Directory(p.join(dir.path, 'phonegnetic', 'recordings'));
@@ -285,12 +312,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       _recordingPath = p.join(recDir.path, 'call_$timestamp.wav');
 
-      _mediaRecorder = MediaRecorder();
-      await _mediaRecorder!.start(
-        _recordingPath!,
-        audioChannel: RecorderAudioChannel.INPUT,
-      );
-      _isRecording = true;
+      await _tapChannel.invokeMethod(
+          'startCallRecording', {'path': _recordingPath});
       debugPrint('[CallScreen] Recording started → $_recordingPath');
     } catch (e) {
       debugPrint('[CallScreen] Recording failed to start: $e');
@@ -299,21 +322,36 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   Future<void> _stopRecording() async {
-    if (!_isRecording || _mediaRecorder == null) return;
-    try {
-      await _mediaRecorder!.stop();
-      _isRecording = false;
-      debugPrint('[CallScreen] Recording stopped → $_recordingPath');
+    if (!_isRecording) return;
+    _recTimer?.cancel();
+    _recTimer = null;
+    _isRecording = false;
+    setState(() {});
 
-      if (_recordingPath != null) {
-        final history =
-            Provider.of<CallHistoryService>(context, listen: false);
-        await history.setRecordingPath(_recordingPath!);
-      }
+    try {
+      await _tapChannel.invokeMethod('stopCallRecording');
+      debugPrint('[CallScreen] Recording stopped → $_recordingPath');
     } catch (e) {
-      debugPrint('[CallScreen] Recording failed to stop: $e');
+      debugPrint('[CallScreen] Recording stop failed: $e');
     }
-    _mediaRecorder = null;
+
+    if (_recordingPath != null) {
+      final history =
+          Provider.of<CallHistoryService>(context, listen: false);
+      final recordId = history.activeCallRecordId ?? _endingCallRecordId;
+      if (recordId != null) {
+        try {
+          await CallHistoryDb.updateRecordingPath(recordId, _recordingPath!);
+          debugPrint(
+              '[CallScreen] Recording path saved for record #$recordId');
+        } catch (e) {
+          debugPrint('[CallScreen] Failed to save recording path: $e');
+        }
+      } else {
+        debugPrint('[CallScreen] WARNING: No recordId for recording path');
+      }
+    }
+    _endingCallRecordId = null;
   }
 
   void _toggleRecording() async {
@@ -403,10 +441,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
   }
 
-  void _softMuteAudio() {
+  void _softMuteAudio() async {
     _softMute = !_softMute;
-    _tapChannel.invokeMethod('setMicMute', {'muted': _softMute});
     setState(() {});
+    try {
+      await _tapChannel.invokeMethod('setMicMute', {'muted': _softMute});
+      debugPrint('[CallScreen] setMicMute=$_softMute');
+    } catch (e) {
+      debugPrint('[CallScreen] setMicMute failed: $e');
+    }
   }
 
   void _muteVideo() {
@@ -742,7 +785,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             ),
           if (voiceOnly)
             ActionButton(
-              title: _isRecording ? 'Stop Rec' : 'Record',
+              title: _isRecording ? _recLabel : 'Record',
               icon: _isRecording ? Icons.stop_rounded : Icons.fiber_manual_record,
               checked: _isRecording,
               fillColor: _isRecording ? AppColors.red : null,

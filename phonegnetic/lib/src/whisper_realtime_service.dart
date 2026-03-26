@@ -227,13 +227,17 @@ class WhisperRealtimeService {
       {
         'type': 'function',
         'name': 'make_call',
-        'description': 'Initiate an outbound phone call to a number.',
+        'description':
+            'Initiate an outbound phone call. Use "last" to redial '
+                'the most recent number.',
         'parameters': {
           'type': 'object',
           'properties': {
             'number': {
               'type': 'string',
-              'description': 'The phone number or SIP URI to dial',
+              'description':
+                  'The phone number or SIP URI to dial. Use "last" to redial '
+                      'the most recently dialed number.',
             },
           },
           'required': ['number'],

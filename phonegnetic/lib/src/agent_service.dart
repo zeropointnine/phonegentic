@@ -32,6 +32,7 @@ class AgentService extends ChangeNotifier {
   String? _remoteDisplayName;
   String? _localIdentity;
   bool _isOutbound = true;
+  String? _lastDialedNumber;
 
   CallPhase get callPhase => _callPhase;
   int get partyCount => _partyCount;
@@ -349,8 +350,23 @@ class AgentService extends ChangeNotifier {
 
   Future<String> _handleMakeCall(Map<String, dynamic> args) async {
     if (sipHelper == null) return 'SIP helper not available.';
-    final number = args['number'] as String?;
+    var number = args['number'] as String?;
     if (number == null || number.isEmpty) return 'No number provided.';
+
+    // Resolve "last" / "redial" / placeholder to the actual last dialed number
+    final normalized = number.toLowerCase().replaceAll(RegExp(r'[<>_]'), '').trim();
+    if (normalized == 'last' ||
+        normalized == 'redial' ||
+        normalized == 'lastdialed' ||
+        normalized == 'lastdialednumber' ||
+        normalized == 'last dialed number') {
+      if (_lastDialedNumber != null) {
+        number = _lastDialedNumber!;
+      } else {
+        return 'No previous number to redial.';
+      }
+    }
+
     try {
       final mediaConstraints = <String, dynamic>{
         'audio': true,
@@ -448,6 +464,7 @@ class AgentService extends ChangeNotifier {
     if (phase == CallPhase.ended || phase == CallPhase.failed) {
       final status = phase == CallPhase.failed ? 'failed' : 'completed';
       callHistory?.endCallRecord(status: status);
+      if (_remoteIdentity != null) _lastDialedNumber = _remoteIdentity;
       _remoteIdentity = null;
       _remoteDisplayName = null;
       _localIdentity = null;

@@ -53,6 +53,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     /// instead of direct CoreAudio capture + AVAudioEngine playback.
     private var inCallMode = false
 
+    // MARK: - Call Recording (WAV file written from flushBuffers)
+    private var recordingFileHandle: FileHandle?
+    private var recordingBytesWritten: UInt32 = 0
+    private var recordingPath: String?
+
     // MARK: - Audio Playback (AVAudioEngine — used outside of calls)
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
@@ -113,6 +118,14 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             result(nil)
         case "getDominantSpeaker":
             result(dominantSpeaker)
+        case "startCallRecording":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let path = args["path"] as? String ?? ""
+            startCallRecording(path: path)
+            result(nil)
+        case "stopCallRecording":
+            stopCallRecording()
+            result(nil)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -128,6 +141,77 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         self.eventSink = nil
         return nil
+    }
+
+    // MARK: - Call Recording
+
+    private func startCallRecording(path: String) {
+        stopCallRecording()
+
+        let url = URL(fileURLWithPath: path)
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        FileManager.default.createFile(atPath: path, contents: nil)
+        guard let fh = FileHandle(forWritingAtPath: path) else {
+            NSLog("[AudioTap] Failed to open recording file: %@", path)
+            return
+        }
+
+        // Write a placeholder WAV header (44 bytes); filled in on stop.
+        fh.write(Data(count: 44))
+        recordingFileHandle = fh
+        recordingBytesWritten = 0
+        recordingPath = path
+        NSLog("[AudioTap] Recording started → %@", path)
+    }
+
+    private func stopCallRecording() {
+        guard let fh = recordingFileHandle else { return }
+
+        // Write proper WAV header now that we know the data size.
+        let dataSize = recordingBytesWritten
+        let header = buildWAVHeader(sampleRate: 24000, channels: 1, bitsPerSample: 16, dataSize: dataSize)
+        fh.seek(toFileOffset: 0)
+        fh.write(header)
+        fh.closeFile()
+
+        recordingFileHandle = nil
+        NSLog("[AudioTap] Recording stopped → %@ (%d bytes audio)", recordingPath ?? "?", dataSize)
+        recordingPath = nil
+        recordingBytesWritten = 0
+    }
+
+    private func writeRecordingData(_ data: Data) {
+        guard let fh = recordingFileHandle else { return }
+        fh.write(data)
+        recordingBytesWritten += UInt32(data.count)
+    }
+
+    private func buildWAVHeader(sampleRate: UInt32, channels: UInt16, bitsPerSample: UInt16, dataSize: UInt32) -> Data {
+        var header = Data(capacity: 44)
+        let byteRate = sampleRate * UInt32(channels) * UInt32(bitsPerSample) / 8
+        let blockAlign = channels * bitsPerSample / 8
+        let fileSize = 36 + dataSize
+
+        func appendU16(_ val: UInt16) { withUnsafeBytes(of: val.littleEndian) { header.append(contentsOf: $0) } }
+        func appendU32(_ val: UInt32) { withUnsafeBytes(of: val.littleEndian) { header.append(contentsOf: $0) } }
+
+        header.append(contentsOf: [0x52, 0x49, 0x46, 0x46]) // "RIFF"
+        appendU32(fileSize)
+        header.append(contentsOf: [0x57, 0x41, 0x56, 0x45]) // "WAVE"
+        header.append(contentsOf: [0x66, 0x6D, 0x74, 0x20]) // "fmt "
+        appendU32(16)            // subchunk1 size
+        appendU16(1)             // PCM format
+        appendU16(channels)
+        appendU32(sampleRate)
+        appendU32(byteRate)
+        appendU16(blockAlign)
+        appendU16(bitsPerSample)
+        header.append(contentsOf: [0x64, 0x61, 0x74, 0x61]) // "data"
+        appendU32(dataSize)
+
+        return header
     }
 
     // MARK: - Call Mode (WebRTC pipeline injection)
@@ -155,6 +239,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func exitCallMode() {
         guard inCallMode else { return }
         inCallMode = false
+
+        stopCallRecording()
+
+        // Clear soft mute so it doesn't persist to the next call
+        WebRTCAudioProcessor.shared.micMuted = false
 
         // Unregister WebRTC processors
         WebRTCAudioProcessor.shared.unregister()
@@ -506,6 +595,12 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                       eventSink != nil ? "yes" : "NO",
                       isPlayingResponse ? "yes" : "no")
             }
+        }
+
+        // Write mixed audio to recording file (captures everything including
+        // TTS, mic, and remote — even when the event sink is suppressed).
+        if let data = dataToSend, !data.isEmpty, recordingFileHandle != nil {
+            writeRecordingData(data)
         }
 
         guard let sink = eventSink else { return }

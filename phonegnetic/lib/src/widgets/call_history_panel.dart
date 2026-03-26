@@ -2,8 +2,10 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:provider/provider.dart';
+import 'package:sip_ua/sip_ua.dart';
 
 import '../agent_service.dart';
 import '../call_history_service.dart';
@@ -364,6 +366,205 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     }
   }
 
+  void _redial(BuildContext context) async {
+    final number = widget.record['remote_identity'] as String?;
+    if (number == null || number.isEmpty) return;
+    try {
+      final helper = Provider.of<SIPUAHelper>(context, listen: false);
+      final mediaConstraints = <String, dynamic>{
+        'audio': true,
+        'video': false,
+      };
+      final stream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      helper.call(number, voiceOnly: true, mediaStream: stream);
+    } catch (e) {
+      debugPrint('[CallHistory] Redial failed: $e');
+    }
+  }
+
+  Widget _buildExpandedHeader(BuildContext context) {
+    final number = widget.record['remote_identity'] as String? ?? '';
+    final direction = _isOutbound ? 'Outbound' : 'Inbound';
+    final status = widget.record['status'] as String? ?? '';
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(8),
+        border:
+            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  number,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(
+                      '$direction · $status · $_durationLabel',
+                      style: TextStyle(
+                          fontSize: 10, color: AppColors.textTertiary),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _timeLabel,
+                  style:
+                      TextStyle(fontSize: 10, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _redial(context),
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.accent.withOpacity(0.12),
+                border: Border.all(
+                    color: AppColors.accent.withOpacity(0.3), width: 0.5),
+              ),
+              child:
+                  Icon(Icons.phone_rounded, size: 16, color: AppColors.accent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecordingSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(8),
+        border:
+            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.fiber_manual_record,
+                size: 8,
+                color: _hasRecording ? AppColors.red : AppColors.textTertiary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Recording',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textTertiary,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const Spacer(),
+              if (!_hasRecording)
+                Text(
+                  'Not Recorded',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textTertiary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+            ],
+          ),
+          if (_hasRecording) ...[
+            const SizedBox(height: 8),
+            _RecordingPlayer(
+                filePath: widget.record['recording_path'] as String),
+          ] else ...[
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: 0,
+                minHeight: 3,
+                backgroundColor: AppColors.border.withOpacity(0.15),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                    AppColors.textTertiary.withOpacity(0.2)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTranscriptSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(8),
+        border:
+            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+      ),
+      child: _loadingTranscripts
+          ? Center(
+              child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: AppColors.accent,
+                ),
+              ),
+            ))
+          : (_transcripts == null || _transcripts!.isEmpty)
+              ? Text(
+                  'No transcript recorded',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textTertiary,
+                    fontStyle: FontStyle.italic,
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Transcript',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textTertiary,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    ..._transcripts!
+                        .map((t) => _TranscriptLine(transcript: t)),
+                  ],
+                ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -482,7 +683,23 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                     ],
                   ),
                 ),
-                // Timestamp
+                // Redial + Timestamp
+                GestureDetector(
+                  onTap: () => _redial(context),
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.accent.withOpacity(0.12),
+                      border: Border.all(
+                          color: AppColors.accent.withOpacity(0.3), width: 0.5),
+                    ),
+                    child: Icon(Icons.phone_rounded,
+                        size: 13, color: AppColors.accent),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Text(
                   _timeLabel,
                   style: TextStyle(
@@ -501,61 +718,15 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               ],
             ),
             if (widget.isExpanded) ...[
-              if (_hasRecording) ...[
-                const SizedBox(height: 10),
-                _RecordingPlayer(
-                    filePath: widget.record['recording_path'] as String),
-              ],
+              const SizedBox(height: 12),
+              // Expanded header: call details + redial
+              _buildExpandedHeader(context),
               const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.bg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: AppColors.border.withOpacity(0.3), width: 0.5),
-                ),
-                child: _loadingTranscripts
-                    ? Center(
-                        child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.5,
-                            color: AppColors.accent,
-                          ),
-                        ),
-                      ))
-                    : (_transcripts == null || _transcripts!.isEmpty)
-                        ? Text(
-                            'No transcript recorded',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textTertiary,
-                              fontStyle: FontStyle.italic,
-                            ),
-                          )
-                        : Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Transcript',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.textTertiary,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              ..._transcripts!.map(
-                                  (t) => _TranscriptLine(transcript: t)),
-                            ],
-                          ),
-              ),
+              // Recording section (always shown)
+              _buildRecordingSection(),
+              const SizedBox(height: 10),
+              // Transcript section
+              _buildTranscriptSection(),
             ],
           ],
         ),
