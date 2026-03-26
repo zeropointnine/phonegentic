@@ -597,10 +597,36 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             }
         }
 
-        // Write mixed audio to recording file (captures everything including
-        // TTS, mic, and remote — even when the event sink is suppressed).
-        if let data = dataToSend, !data.isEmpty, recordingFileHandle != nil {
-            writeRecordingData(data)
+        // Write to recording file: mix in TTS (agent voice) which isn't in
+        // dataToSend (whisper buffer captures remote BEFORE TTS is mixed).
+        if recordingFileHandle != nil {
+            let ttsData = WebRTCAudioProcessor.shared.drainTTSRecordingBuffer()
+            let ttsCount = (ttsData?.count ?? 0) / 2
+            let baseCount = (dataToSend?.count ?? 0) / 2
+            let recCount = max(ttsCount, baseCount)
+
+            if recCount > 0 {
+                var recSamples = [Int16](repeating: 0, count: recCount)
+
+                if let base = dataToSend {
+                    base.withUnsafeBytes { ptr in
+                        let s = ptr.bindMemory(to: Int16.self)
+                        for i in 0..<baseCount { recSamples[i] = s[i] }
+                    }
+                }
+                if let tts = ttsData {
+                    tts.withUnsafeBytes { ptr in
+                        let s = ptr.bindMemory(to: Int16.self)
+                        for i in 0..<ttsCount {
+                            let sum = Int32(recSamples[i]) + Int32(s[i])
+                            recSamples[i] = Int16(clamping: max(-32768, min(32767, sum)))
+                        }
+                    }
+                }
+
+                let recData = recSamples.withUnsafeBufferPointer { Data(buffer: $0) }
+                writeRecordingData(recData)
+            }
         }
 
         guard let sink = eventSink else { return }

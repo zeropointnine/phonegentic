@@ -116,6 +116,11 @@ final class WebRTCAudioProcessor: NSObject {
     /// read by flush timer and mixed with mic audio from inputBuffer.
     let whisperRingBuffer = SPSCRingBuffer(capacity: 24000 * 2)
 
+    /// TTS audio at 24 kHz for call recording. Fed alongside the capture/render
+    /// rings in feedTTS(); drained by AudioTapChannel.flushBuffers() and mixed
+    /// into the WAV file so the agent's voice is captured in recordings.
+    let ttsRecordingRing = SPSCRingBuffer(capacity: 24000 * 30)
+
     /// Mic injection ring: float samples in int16 range at mic native rate.
     /// Fed by CoreAudio IOProc, consumed by CapturePostProcessor when WebRTC's
     /// ADM fails to deliver mic audio (e.g. SDP negotiation issues).
@@ -174,6 +179,7 @@ final class WebRTCAudioProcessor: NSObject {
         isRegistered = false
         ttsCaptureRing.reset()
         ttsRenderRing.reset()
+        ttsRecordingRing.reset()
         whisperRingBuffer.reset()
         micInjectionRing.reset()
         NSLog("[WebRTCAudioProcessor] Unregistered processors")
@@ -197,12 +203,31 @@ final class WebRTCAudioProcessor: NSObject {
 
         let capWritten = ttsCaptureRing.write(floatBuf, count: sampleCount)
         let renWritten = ttsRenderRing.write(floatBuf, count: sampleCount)
+        ttsRecordingRing.write(floatBuf, count: sampleCount)
 
         if capWritten < sampleCount || renWritten < sampleCount {
             NSLog("[WebRTCAudioProcessor] TTS DROP: wanted=%d capWrote=%d renWrote=%d capAvail=%d renAvail=%d",
                   sampleCount, capWritten, renWritten,
                   ttsCaptureRing.availableToRead, ttsRenderRing.availableToRead)
         }
+    }
+
+    /// Read TTS audio queued for call recording (PCM16, 24 kHz mono).
+    func drainTTSRecordingBuffer() -> Data? {
+        let avail = ttsRecordingRing.availableToRead
+        guard avail > 0 else { return nil }
+
+        let floatBuf = UnsafeMutablePointer<Float>.allocate(capacity: avail)
+        defer { floatBuf.deallocate() }
+        let read = ttsRecordingRing.read(into: floatBuf, count: avail)
+        guard read > 0 else { return nil }
+
+        var pcm16 = [Int16](repeating: 0, count: read)
+        for i in 0..<read {
+            let clamped = max(-32768.0, min(32767.0, floatBuf[i]))
+            pcm16[i] = Int16(clamped)
+        }
+        return pcm16.withUnsafeBufferPointer { Data(buffer: $0) }
     }
 
     /// Read captured whisper audio (PCM16, 24 kHz mono).
