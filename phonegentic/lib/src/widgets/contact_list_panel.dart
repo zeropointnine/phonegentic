@@ -257,6 +257,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
       };
       final stream =
           await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      context.read<ContactService>().closeContacts();
       helper.call(number, voiceOnly: true, mediaStream: stream);
     } catch (e) {
       debugPrint('[ContactListPanel] Call failed: $e');

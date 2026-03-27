@@ -505,15 +505,12 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
     return PopupMenuButton<String>(
       onSelected: (value) {
         switch (value) {
-          case 'account':
-            Navigator.pushNamed(context, '/register');
-            break;
-          case 'theme':
-            Provider.of<ThemeProvider>(context, listen: false).toggle();
-            break;
           case 'tear_sheet':
             final ts = context.read<TearSheetService>();
             ts.isActive ? ts.dismissSheet() : ts.openEditor();
+            break;
+          case 'account':
+            Navigator.pushNamed(context, '/register');
             break;
           case 'contacts':
             context.read<ContactService>().toggleContacts();
@@ -535,18 +532,13 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
       itemBuilder: (_) => [
         if (collapsed) ...[
           PopupMenuItem(
-            value: 'tear_sheet',
+            value: 'history',
             child: Row(
               children: [
-                Icon(Icons.receipt_long_rounded,
+                Icon(Icons.history_rounded,
                     size: 18, color: AppColors.textSecondary),
                 const SizedBox(width: 10),
-                Text(
-                  context.read<TearSheetService>().isActive
-                      ? 'Dismiss Tear Sheet'
-                      : 'New Tear Sheet',
-                  style: const TextStyle(fontSize: 13),
-                ),
+                const Text('Call History', style: TextStyle(fontSize: 13)),
               ],
             ),
           ),
@@ -562,16 +554,22 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             ),
           ),
           PopupMenuItem(
-            value: 'history',
+            value: 'tear_sheet',
             child: Row(
               children: [
-                Icon(Icons.history_rounded,
+                Icon(Icons.receipt_long_rounded,
                     size: 18, color: AppColors.textSecondary),
                 const SizedBox(width: 10),
-                const Text('Call History', style: TextStyle(fontSize: 13)),
+                Text(
+                  context.read<TearSheetService>().isActive
+                      ? 'Dismiss Tear Sheet'
+                      : 'New Tear Sheet',
+                  style: const TextStyle(fontSize: 13),
+                ),
               ],
             ),
           ),
+          const PopupMenuDivider(),
           PopupMenuItem(
             value: 'audio',
             child: Row(
@@ -583,7 +581,6 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               ],
             ),
           ),
-          const PopupMenuDivider(),
         ],
         PopupMenuItem(
           value: 'account',
@@ -593,16 +590,6 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
                   size: 18, color: AppColors.textSecondary),
               const SizedBox(width: 10),
               const Text('Settings', style: TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'theme',
-          child: Row(
-            children: [
-              Icon(Icons.contrast, size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 10),
-              const Text('Toggle Theme', style: TextStyle(fontSize: 13)),
             ],
           ),
         ),
