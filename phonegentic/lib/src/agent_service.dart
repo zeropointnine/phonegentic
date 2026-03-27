@@ -195,6 +195,13 @@ class AgentService extends ChangeNotifier {
       _active = _whisper.isConnected;
       _statusText = _active ? 'Connected' : 'Failed';
 
+      if (_active) {
+        // The job function may have loaded while we were connecting.
+        // Re-sync and push the correct instructions now that the session is live.
+        _syncBootContextFromJobFunction();
+        _pushInstructionsIfLive();
+      }
+
       _messages.clear();
       if (_active) {
         final jfName = _jobFunctionService?.selected?.name;
