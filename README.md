@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="phonegnetic/assets/phonegnetic_logo.svg" width="72" height="72" alt="Phonegnetic AI logo" />
+  <img src="phonegentic/assets/phonegentic_logo.svg" width="72" height="72" alt="Phonegentic AI logo" />
 </p>
 
-<h1 align="center">Phonegnetic AI</h1>
+<h1 align="center">Phonegentic AI</h1>
 
 <p align="center">
   A retro-future SIP softphone with a built-in AI voice agent that joins your calls.
@@ -16,9 +16,9 @@
 
 ---
 
-## What is Phonegnetic?
+## What is Phonegentic?
 
-Phonegnetic is a Flutter SIP softphone built on the [`sip_ua`](https://pub.dev/packages/sip_ua) library (a Dart port of [JsSIP](https://github.com/versatica/JsSIP)). What makes it different is a real-time AI voice agent that participates in your calls as a third party.
+Phonegentic is a Flutter SIP softphone built on the [`sip_ua`](https://pub.dev/packages/sip_ua) library (a Dart port of [JsSIP](https://github.com/versatica/JsSIP)). What makes it different is a real-time AI voice agent that participates in your calls as a third party.
 
 The app captures **both sides** of a live SIP/WebRTC call -- your microphone and the remote caller's audio -- taps the raw PCM stream, and pipes it to the **OpenAI Realtime API**. The AI listens, understands context, and speaks back into the call with sub-second latency. Think of it as giving every phone call an AI copilot.
 
@@ -35,7 +35,7 @@ The app captures **both sides** of a live SIP/WebRTC call -- your microphone and
 ```mermaid
 flowchart LR
   Caller["Remote Caller\n(SIP / PSTN)"] <-->|"SIP / WebRTC\n(audio + signalling)"| SIP["SIP Server\n(Telnyx, Asterisk, etc.)"]
-  SIP <-->|"SIP / WebRTC"| App["Phonegnetic App\n(Flutter)"]
+  SIP <-->|"SIP / WebRTC"| App["Phonegentic App\n(Flutter)"]
   App -->|"PCM16 mono 24 kHz\nvia WebSocket"| AI["OpenAI Realtime API\n(transcription + GPT + TTS)"]
   AI -->|"TTS audio + text\nresponses"| App
 ```
@@ -61,12 +61,12 @@ flowchart LR
 
 ```bash
 git clone https://github.com/user/dart-sip-ua.git
-cd dart-sip-ua/phonegnetic
+cd dart-sip-ua/phonegentic
 flutter pub get
 flutter run            # or: flutter run -d macos | chrome | windows | linux
 ```
 
-On first launch the app will attempt to auto-register using the credentials in [`phonegnetic/lib/src/test_credentials.dart`](phonegnetic/lib/src/test_credentials.dart). To use your own account, either edit that file or configure credentials at runtime through **Settings** (the gear icon in the top bar).
+On first launch the app will attempt to auto-register using the credentials in [`phonegentic/lib/src/test_credentials.dart`](phonegentic/lib/src/test_credentials.dart). To use your own account, either edit that file or configure credentials at runtime through **Settings** (the gear icon in the top bar).
 
 ## SIP credentials
 
@@ -95,7 +95,7 @@ Other compatible SIP servers and providers:
 
 ### Option A: Edit `test_credentials.dart` (auto-register on launch)
 
-Open [`phonegnetic/lib/src/test_credentials.dart`](phonegnetic/lib/src/test_credentials.dart) and replace the placeholder values:
+Open [`phonegentic/lib/src/test_credentials.dart`](phonegentic/lib/src/test_credentials.dart) and replace the placeholder values:
 
 ```dart
 static String telnyxUsername = 'YOUR_SIP_USERNAME';
@@ -153,7 +153,7 @@ The **Listen To** setting controls whose audio the agent transcribes:
 
 ## Agent boot context
 
-When the agent joins a call it needs to know **who it is**, **who else is on the call**, **what its job is**, and **what rules to follow**. This is managed by `AgentBootContext` in [`phonegnetic/lib/src/models/agent_context.dart`](phonegnetic/lib/src/models/agent_context.dart).
+When the agent joins a call it needs to know **who it is**, **who else is on the call**, **what its job is**, and **what rules to follow**. This is managed by `AgentBootContext` in [`phonegentic/lib/src/models/agent_context.dart`](phonegentic/lib/src/models/agent_context.dart).
 
 ### How it works
 
@@ -310,4 +310,4 @@ The codecs on your PBX server don't match what WebRTC offers:
 
 
 ## License
-Phonegnetic AI is released under the [MIT license](LICENSE).
+Phonegentic AI is released under the [MIT license](LICENSE).

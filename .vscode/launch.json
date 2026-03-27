@@ -10,21 +10,21 @@
             "type": "dart"
         },
         {
-            "name": "phonegnetic",
-            "cwd": "phonegnetic",
+            "name": "phonegentic",
+            "cwd": "phonegentic",
             "request": "launch",
             "type": "dart"
         },
         {
-            "name": "phonegnetic (profile mode)",
-            "cwd": "phonegnetic",
+            "name": "phonegentic (profile mode)",
+            "cwd": "phonegentic",
             "request": "launch",
             "type": "dart",
             "flutterMode": "profile"
         },
         {
-            "name": "phonegnetic (release mode)",
-            "cwd": "phonegnetic",
+            "name": "phonegentic (release mode)",
+            "cwd": "phonegentic",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
