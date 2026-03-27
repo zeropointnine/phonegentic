@@ -829,7 +829,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
       case CallStateEnum.ACCEPTED:
       case CallStateEnum.CONFIRMED:
-        final whisperOn = _agent.whisperMode;
         actions.addAll([
           ActionButton(
             title: _softMute ? 'Unmute' : 'Mute',
@@ -865,13 +864,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               checked: _videoMuted,
               onPressed: _muteVideo,
             ),
-          ActionButton(
-            title: whisperOn ? 'Whisper' : 'Whisper',
-            icon: Icons.hearing_disabled,
-            checked: whisperOn,
-            fillColor: whisperOn ? AppColors.burntAmber : null,
-            onPressed: () => _agent.toggleWhisperMode(),
-          ),
         ]);
         bottomRow.addAll([
           ActionButton(

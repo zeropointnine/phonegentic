@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../agent_service.dart';
@@ -60,6 +61,13 @@ class _AgentPanelState extends State<AgentPanel> {
     }
   }
 
+  void _sendWhisperOneShot(AgentService agent) {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    _controller.clear();
+    agent.sendWhisperMessage(text);
+  }
+
   String _expandCommand(String cmd) {
     switch (cmd.toLowerCase()) {
       case '/trivia':
@@ -102,8 +110,11 @@ class _AgentPanelState extends State<AgentPanel> {
               _InputBar(
                 controller: _controller,
                 onSend: () => _send(agent),
+                onWhisperSend: () => _sendWhisperOneShot(agent),
+                onToggleWhisper: agent.toggleWhisperMode,
                 active: agent.active,
                 whisperMode: agent.whisperMode,
+                hasActiveCall: agent.hasActiveCall,
               ),
             ],
           ),
@@ -188,6 +199,22 @@ class _AgentHeader extends StatelessWidget {
             tooltip: agent.muted ? 'Unmute' : 'Mute',
           ),
           const SizedBox(width: 6),
+          if (agent.hasActiveCall) ...[
+            _HeaderButton(
+              icon: agent.whisperMode
+                  ? Icons.voice_over_off_rounded
+                  : Icons.record_voice_over_rounded,
+              color: agent.whisperMode
+                  ? AppColors.burntAmber
+                  : AppColors.textSecondary,
+              bgColor: agent.whisperMode
+                  ? AppColors.burntAmber.withOpacity(0.12)
+                  : AppColors.card,
+              onTap: agent.toggleWhisperMode,
+              tooltip: agent.whisperMode ? 'Exit Whisper' : 'Whisper Mode',
+            ),
+            const SizedBox(width: 6),
+          ],
           _HeaderButton(
             icon: Icons.refresh_rounded,
             color: AppColors.textTertiary,
@@ -1045,14 +1072,20 @@ class _ActionChip extends StatelessWidget {
 class _InputBar extends StatefulWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
+  final VoidCallback onWhisperSend;
+  final VoidCallback onToggleWhisper;
   final bool active;
   final bool whisperMode;
+  final bool hasActiveCall;
 
   const _InputBar({
     required this.controller,
     required this.onSend,
+    required this.onWhisperSend,
+    required this.onToggleWhisper,
     required this.active,
     this.whisperMode = false,
+    this.hasActiveCall = false,
   });
 
   @override
@@ -1061,11 +1094,29 @@ class _InputBar extends StatefulWidget {
 
 class _InputBarState extends State<_InputBar> {
   bool _hasText = false;
+  final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onTextChanged);
+    _focusNode.onKeyEvent = _handleKeyEvent;
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.enter &&
+        !HardwareKeyboard.instance.isShiftPressed) {
+      if (_hasText) widget.onSend();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _onTextChanged() {
@@ -1094,14 +1145,8 @@ class _InputBarState extends State<_InputBar> {
         )),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (w)
-            Padding(
-              padding: const EdgeInsets.only(right: 6, bottom: 7),
-              child: Icon(Icons.hearing_disabled,
-                  size: 14, color: AppColors.burntAmber.withOpacity(0.5)),
-            ),
           Expanded(
             child: Container(
               constraints: const BoxConstraints(maxHeight: 120),
@@ -1117,6 +1162,7 @@ class _InputBarState extends State<_InputBar> {
               ),
               child: TextField(
                 controller: widget.controller,
+                focusNode: _focusNode,
                 minLines: 1,
                 maxLines: 5,
                 keyboardType: TextInputType.multiline,
@@ -1135,13 +1181,51 @@ class _InputBarState extends State<_InputBar> {
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 ),
-                onSubmitted: (_) => widget.onSend(),
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
+          // Whisper toggle — only shown during active call
+          if (widget.hasActiveCall)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 0),
+              child: GestureDetector(
+                onTap: widget.onToggleWhisper,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: w
+                        ? AppColors.burntAmber.withOpacity(0.15)
+                        : AppColors.card,
+                    border: Border.all(
+                      color: w
+                          ? AppColors.burntAmber.withOpacity(0.4)
+                          : AppColors.border.withOpacity(0.5),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Icon(
+                    w
+                        ? Icons.voice_over_off_rounded
+                        : Icons.record_voice_over_rounded,
+                    size: 15,
+                    color: w
+                        ? AppColors.burntAmber
+                        : AppColors.textTertiary,
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(width: 4),
+          // Send button — long press for one-shot whisper
           GestureDetector(
             onTap: _hasText ? widget.onSend : null,
+            onLongPress: (_hasText && widget.hasActiveCall && !w)
+                ? widget.onWhisperSend
+                : null,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               width: 34,
@@ -1155,7 +1239,7 @@ class _InputBarState extends State<_InputBar> {
                 ),
               ),
               child: Icon(
-                w ? Icons.hearing_disabled : Icons.arrow_upward_rounded,
+                Icons.arrow_upward_rounded,
                 size: 16,
                 color: _hasText ? Colors.white : AppColors.textTertiary,
               ),
