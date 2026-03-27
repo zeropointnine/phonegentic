@@ -83,7 +83,9 @@ class _ContactListPanelState extends State<ContactListPanel> {
             ),
           ),
           const Spacer(),
-          if (service.selectedContact == null)
+          if (service.selectedContact == null) ...[
+            _ImportButton(),
+            const SizedBox(width: 6),
             GestureDetector(
               onTap: service.openQuickAdd,
               child: Container(
@@ -99,6 +101,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
                     size: 16, color: AppColors.accent),
               ),
             ),
+          ],
           const SizedBox(width: 8),
           GestureDetector(
             onTap: service.closeContacts,
@@ -350,5 +353,64 @@ class _ContactTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ImportButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final service = context.watch<ContactService>();
+    return Tooltip(
+      message: 'Import from macOS Contacts',
+      child: GestureDetector(
+        onTap: service.isImporting ? null : () => _handleImport(context),
+        child: Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            color: AppColors.accent.withOpacity(0.12),
+            border: Border.all(
+                color: AppColors.accent.withOpacity(0.3), width: 0.5),
+          ),
+          child: service.isImporting
+              ? Padding(
+                  padding: const EdgeInsets.all(7),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.accent,
+                  ),
+                )
+              : Icon(Icons.import_contacts_rounded,
+                  size: 16, color: AppColors.accent),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleImport(BuildContext context) async {
+    final service = context.read<ContactService>();
+    final count = await service.importFromMacOS();
+    if (!context.mounted) return;
+
+    if (count >= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Imported $count contacts from macOS'),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else if (service.importError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(service.importError!),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+      service.clearImportError();
+    }
   }
 }

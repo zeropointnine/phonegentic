@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
 
 import 'db/call_history_db.dart';
 
@@ -8,7 +9,9 @@ class ContactService extends ChangeNotifier {
   bool _isOpen = false;
   bool _isQuickAddOpen = false;
   bool _isLoading = false;
+  bool _isImporting = false;
   String _searchQuery = '';
+  String? _importError;
 
   /// Cached phone->contact lookup (normalized phone -> contact map).
   final Map<String, Map<String, dynamic>> _phoneCache = {};
@@ -18,7 +21,9 @@ class ContactService extends ChangeNotifier {
   bool get isOpen => _isOpen;
   bool get isQuickAddOpen => _isQuickAddOpen;
   bool get isLoading => _isLoading;
+  bool get isImporting => _isImporting;
   String get searchQuery => _searchQuery;
+  String? get importError => _importError;
 
   ContactService() {
     loadAll();
@@ -154,6 +159,78 @@ class ContactService extends ChangeNotifier {
     } else {
       openContacts();
     }
+  }
+
+  /// Import contacts from macOS Contacts.app.
+  /// Returns the number of contacts imported/updated, or -1 on error.
+  Future<int> importFromMacOS() async {
+    _importError = null;
+    _isImporting = true;
+    notifyListeners();
+
+    try {
+      final status = await FlutterContacts.permissions.request(
+        PermissionType.read,
+      );
+      if (status != PermissionStatus.granted) {
+        _importError = 'Contacts permission denied. '
+            'Open System Settings > Privacy & Security > Contacts to grant access.';
+        _isImporting = false;
+        notifyListeners();
+        FlutterContacts.permissions.openSettings();
+        return -1;
+      }
+
+      final nativeContacts = await FlutterContacts.getAll(
+        properties: {
+          ContactProperty.name,
+          ContactProperty.phone,
+          ContactProperty.email,
+          ContactProperty.organization,
+        },
+      );
+
+      int imported = 0;
+      for (final c in nativeContacts) {
+        final id = c.id;
+        if (id == null) continue;
+        final displayName = c.displayName ?? '';
+        if (displayName.isEmpty) continue;
+
+        final phone =
+            c.phones.isNotEmpty ? c.phones.first.number : '';
+        final email =
+            c.emails.isNotEmpty ? c.emails.first.address : null;
+        final company = c.organizations.isNotEmpty
+            ? c.organizations.first.name
+            : null;
+
+        await CallHistoryDb.upsertByMacosContactId(
+          macosContactId: id,
+          displayName: displayName,
+          phoneNumber: phone,
+          email: email,
+          company: company,
+        );
+        imported++;
+      }
+
+      await loadAll();
+      _isImporting = false;
+      notifyListeners();
+      return imported;
+    } catch (e) {
+      debugPrint('[ContactService] importFromMacOS failed: $e');
+      _importError = 'Import failed: $e';
+      _isImporting = false;
+      notifyListeners();
+      return -1;
+    }
+  }
+
+  void clearImportError() {
+    _importError = null;
+    notifyListeners();
   }
 
   void openQuickAdd() {

@@ -385,6 +385,46 @@ class CallHistoryDb {
     return db.query('contacts', orderBy: 'display_name ASC');
   }
 
+  /// Insert or update a contact keyed by macOS contact ID.
+  /// Returns the local row id.
+  static Future<int> upsertByMacosContactId({
+    required String macosContactId,
+    required String displayName,
+    String phoneNumber = '',
+    String? email,
+    String? company,
+  }) async {
+    final db = await database;
+    final existing = await db.query(
+      'contacts',
+      where: 'macos_contact_id = ?',
+      whereArgs: [macosContactId],
+    );
+    if (existing.isNotEmpty) {
+      final id = existing.first['id'] as int;
+      await db.update(
+        'contacts',
+        {
+          'display_name': displayName,
+          'phone_number': phoneNumber,
+          if (email != null) 'email': email,
+          if (company != null) 'company': company,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      return id;
+    }
+    return db.insert('contacts', {
+      'display_name': displayName,
+      'phone_number': phoneNumber,
+      'email': email,
+      'company': company,
+      'macos_contact_id': macosContactId,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
   static Future<void> mergeContacts(int sourceId, int targetId) async {
     final db = await database;
     await db.update(
