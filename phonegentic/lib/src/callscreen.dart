@@ -15,7 +15,9 @@ import 'agent_config_service.dart';
 import 'agent_service.dart';
 import 'audio_device_service.dart';
 import 'call_history_service.dart';
+import 'contact_service.dart';
 import 'db/call_history_db.dart';
+import 'tear_sheet_service.dart';
 import 'models/agent_context.dart';
 import 'theme_provider.dart';
 import 'widgets/action_button.dart';
@@ -203,6 +205,14 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       case CallStateEnum.ENDED:
       case CallStateEnum.FAILED:
         _stopRecording();
+        final tearSheet =
+            Provider.of<TearSheetService>(context, listen: false);
+        if (tearSheet.isActive) {
+          final status = callState.state == CallStateEnum.FAILED
+              ? 'failed'
+              : 'completed';
+          tearSheet.onCallEnded(status);
+        }
         _backToDialPad();
         break;
       case CallStateEnum.CONFIRMED:
@@ -596,10 +606,38 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   Widget _buildCallTopBar() {
+    final agent = context.watch<AgentService>();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
+          if (agent.whisperMode)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: AppColors.burntAmber.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                    color: AppColors.burntAmber.withOpacity(0.4), width: 0.5),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.hearing_disabled,
+                      size: 12, color: AppColors.burntAmber),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Whisper',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.burntAmber,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           const Spacer(),
           GestureDetector(
             onTap: () =>
@@ -667,6 +705,18 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
     // Voice / pre-connect overlay
     if (voiceOnly || !_callConfirmed) {
+      final contactService = context.read<ContactService>();
+      final matchedContact = remoteIdentity != null
+          ? contactService.lookupByPhone(remoteIdentity!)
+          : null;
+      final contactName =
+          matchedContact?['display_name'] as String?;
+      final displayInitial = (contactName ?? remoteIdentity ?? '?')
+          .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+      final initial = displayInitial.isEmpty
+          ? '?'
+          : displayInitial.substring(0, 1).toUpperCase();
+
       stackWidgets.add(
         Center(
           child: Column(
@@ -684,10 +734,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 ),
                 child: Center(
                   child: Text(
-                    (remoteIdentity ?? '?')
-                        .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
-                        .substring(0, 1)
-                        .toUpperCase(),
+                    initial,
                     style: const TextStyle(
                       fontSize: 36,
                       fontWeight: FontWeight.w300,
@@ -697,15 +744,34 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 ),
               ),
               const SizedBox(height: 20),
-              Text(
-                remoteIdentity ?? 'Unknown',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
-                  letterSpacing: -0.5,
+              if (contactName != null) ...[
+                Text(
+                  contactName,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.5,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  remoteIdentity ?? '',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ] else
+                Text(
+                  remoteIdentity ?? 'Unknown',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.5,
+                  ),
+                ),
               const SizedBox(height: 8),
               Text(
                 _stateLabel +
@@ -763,6 +829,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
       case CallStateEnum.ACCEPTED:
       case CallStateEnum.CONFIRMED:
+        final whisperOn = _agent.whisperMode;
         actions.addAll([
           ActionButton(
             title: _softMute ? 'Unmute' : 'Mute',
@@ -798,6 +865,13 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               checked: _videoMuted,
               onPressed: _muteVideo,
             ),
+          ActionButton(
+            title: whisperOn ? 'Whisper' : 'Whisper',
+            icon: Icons.hearing_disabled,
+            checked: whisperOn,
+            fillColor: whisperOn ? AppColors.burntAmber : null,
+            onPressed: () => _agent.toggleWhisperMode(),
+          ),
         ]);
         bottomRow.addAll([
           ActionButton(

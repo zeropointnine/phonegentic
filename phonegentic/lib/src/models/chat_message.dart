@@ -1,6 +1,6 @@
 enum ChatRole { user, agent, host, remoteParty, system }
 
-enum MessageType { text, transcript, action, status, callState }
+enum MessageType { text, transcript, action, status, callState, whisper }
 
 class MessageAction {
   final String label;
@@ -80,6 +80,15 @@ class ChatMessage {
   })  : id = id ?? _uid(),
         role = ChatRole.system,
         type = MessageType.callState,
+        timestamp = DateTime.now(),
+        speakerName = null,
+        isStreaming = false,
+        actions = const [];
+
+  ChatMessage.whisper(this.text, {String? id, this.metadata})
+      : id = id ?? _uid(),
+        role = ChatRole.user,
+        type = MessageType.whisper,
         timestamp = DateTime.now(),
         speakerName = null,
         isStreaming = false,

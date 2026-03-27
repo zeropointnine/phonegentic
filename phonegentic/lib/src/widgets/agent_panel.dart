@@ -48,6 +48,11 @@ class _AgentPanelState extends State<AgentPanel> {
       return;
     }
 
+    if (agent.whisperMode) {
+      agent.sendWhisperMessage(text);
+      return;
+    }
+
     if (text.startsWith('/')) {
       agent.sendUserMessage(_expandCommand(text));
     } else {
@@ -98,6 +103,7 @@ class _AgentPanelState extends State<AgentPanel> {
                 controller: _controller,
                 onSend: () => _send(agent),
                 active: agent.active,
+                whisperMode: agent.whisperMode,
               ),
             ],
           ),
@@ -593,6 +599,9 @@ class _MessageBubble extends StatelessWidget {
     if (message.type == MessageType.callState) {
       return _CallStatePill(text: message.text);
     }
+    if (message.type == MessageType.whisper) {
+      return _WhisperBubble(message: message);
+    }
     switch (message.role) {
       case ChatRole.system:
         return _SystemBubble(text: message.text);
@@ -834,6 +843,71 @@ class _UserBubble extends StatelessWidget {
   }
 }
 
+class _WhisperBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _WhisperBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(width: 40),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_formatTime(message.timestamp), style: TextStyle(
+                      fontSize: 10, color: AppColors.textTertiary.withOpacity(0.5),
+                    )),
+                    const SizedBox(width: 6),
+                    Icon(Icons.hearing_disabled, size: 10, color: AppColors.burntAmber.withOpacity(0.6)),
+                    const SizedBox(width: 3),
+                    Text('W', style: TextStyle(
+                      fontSize: 10, fontWeight: FontWeight.w700,
+                      color: AppColors.burntAmber.withOpacity(0.6),
+                    )),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.bg.withOpacity(0.6),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(14),
+                      topRight: Radius.circular(4),
+                      bottomLeft: Radius.circular(14),
+                      bottomRight: Radius.circular(14),
+                    ),
+                    border: Border.all(
+                      color: AppColors.burntAmber.withOpacity(0.15), width: 0.5),
+                  ),
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textTertiary,
+                      fontStyle: FontStyle.italic,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TranscriptBubble extends StatelessWidget {
   final ChatMessage message;
   const _TranscriptBubble({required this.message});
@@ -972,8 +1046,14 @@ class _InputBar extends StatefulWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
   final bool active;
+  final bool whisperMode;
 
-  const _InputBar({required this.controller, required this.onSend, required this.active});
+  const _InputBar({
+    required this.controller,
+    required this.onSend,
+    required this.active,
+    this.whisperMode = false,
+  });
 
   @override
   State<_InputBar> createState() => _InputBarState();
@@ -993,25 +1073,45 @@ class _InputBarState extends State<_InputBar> {
     if (has != _hasText) setState(() => _hasText = has);
   }
 
+  String get _hint {
+    if (!widget.active) return 'Agent offline...';
+    if (widget.whisperMode) return 'Whisper to agent...';
+    return 'Type a message...';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final w = widget.whisperMode;
+    final accentColor = w ? AppColors.burntAmber : AppColors.accent;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
+        color: w ? AppColors.bg : AppColors.surface,
+        border: Border(top: BorderSide(
+          color: w ? AppColors.burntAmber.withOpacity(0.3) : AppColors.border,
+          width: 0.5,
+        )),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          if (w)
+            Padding(
+              padding: const EdgeInsets.only(right: 6, bottom: 7),
+              child: Icon(Icons.hearing_disabled,
+                  size: 14, color: AppColors.burntAmber.withOpacity(0.5)),
+            ),
           Expanded(
             child: Container(
               constraints: const BoxConstraints(maxHeight: 120),
               decoration: BoxDecoration(
-                color: AppColors.card,
+                color: w ? AppColors.card.withOpacity(0.5) : AppColors.card,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: _hasText ? AppColors.accent.withOpacity(0.4) : AppColors.border,
+                  color: _hasText
+                      ? accentColor.withOpacity(0.4)
+                      : (w ? AppColors.burntAmber.withOpacity(0.2) : AppColors.border),
                   width: 0.5,
                 ),
               ),
@@ -1020,10 +1120,18 @@ class _InputBarState extends State<_InputBar> {
                 minLines: 1,
                 maxLines: 5,
                 keyboardType: TextInputType.multiline,
-                style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: w ? AppColors.textSecondary : AppColors.textPrimary,
+                  fontStyle: w ? FontStyle.italic : FontStyle.normal,
+                ),
                 decoration: InputDecoration(
-                  hintText: widget.active ? 'Type a message...' : 'Agent offline...',
-                  hintStyle: TextStyle(color: AppColors.textTertiary, fontSize: 13),
+                  hintText: _hint,
+                  hintStyle: TextStyle(
+                    color: w ? AppColors.burntAmber.withOpacity(0.4) : AppColors.textTertiary,
+                    fontSize: 13,
+                    fontStyle: w ? FontStyle.italic : FontStyle.normal,
+                  ),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 ),
@@ -1040,14 +1148,14 @@ class _InputBarState extends State<_InputBar> {
               height: 34,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
-                color: _hasText ? AppColors.accent : AppColors.card,
+                color: _hasText ? accentColor : AppColors.card,
                 border: Border.all(
-                  color: _hasText ? AppColors.accent : AppColors.border.withOpacity(0.5),
+                  color: _hasText ? accentColor : AppColors.border.withOpacity(0.5),
                   width: 0.5,
                 ),
               ),
               child: Icon(
-                Icons.arrow_upward_rounded,
+                w ? Icons.hearing_disabled : Icons.arrow_upward_rounded,
                 size: 16,
                 color: _hasText ? Colors.white : AppColors.textTertiary,
               ),

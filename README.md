@@ -257,6 +257,52 @@ The system resolves the agent's instructions in this order:
 
 This means you can either give end users a freeform text box (the Settings approach) or wire up structured boot contexts in code for specific workflows.
 
+## Features
+
+### Tear Sheet — AI-driven call queue
+
+Tear Sheet is an automated call queue mode. Instead of manually entering phone numbers, you describe who you want to call in natural language — the AI agent searches your contacts and call history, builds the queue, and dials through it sequentially.
+
+**How it works:**
+
+1. Tap the tear sheet icon (or select **New Tear Sheet** from the menu on narrow screens).
+2. Describe the criteria in the prompt, e.g. *"Contacts not called in 2 weeks"* or *"All contacts tagged lead."*
+3. The agent searches your contacts database via the `search_contacts` tool, then creates the queue with `create_tear_sheet`.
+4. The Tear Sheet strip docks at the top of the screen with play/pause/skip controls.
+5. Press **Play** — the agent calls through the list automatically, reporting outcomes after each call.
+6. Press **Pause** at any time to hold after the current call.
+
+You can also create a Tear Sheet from call history search results using the **Tear Sheet** button in the call history panel header.
+
+**Agent tools:**
+
+| Tool | Description |
+|------|-------------|
+| `search_contacts` | Query the contacts DB by name, phone, tags, or call recency (`not_called_since_days`) |
+| `create_tear_sheet` | Build a call queue from a list of `{phone_number, name}` entries |
+
+### Contacts
+
+A native-feeling contact store inside Phonegentic. When a known contact is called, their name automatically appears above the number on the active call screen.
+
+- **Quick Add** — tap `+` to add a contact with a single field (name or phone). Phonegentic infers the type.
+- **Inline editing** — tap any field on a contact card to edit it in place.
+- **Call screen integration** — matching contacts display as `[Name]` above the number during a call.
+- **Alphabetical index** — the contact list is grouped A–Z with live search.
+
+### Whisper Mode
+
+A real-time, host-only command channel to the AI agent that does not trigger any verbal readback. The agent receives the instruction silently and acts on it — the caller never hears a thing.
+
+- Toggle via the ear icon on the active call screen.
+- While active, anything typed in the agent panel is sent as a silent `[WHISPER]` instruction.
+- The agent adjusts its behavior without acknowledging the instruction aloud.
+- Whisper messages appear in the chat log as grayed-out italic entries labeled **W**.
+
+### Responsive top bar
+
+On narrow windows (below 700px), the Tear Sheet, Contacts, Call History, and Audio Devices buttons collapse into the overflow menu to keep the UI clean.
+
 ## Supported platforms
 
 - [x] iOS

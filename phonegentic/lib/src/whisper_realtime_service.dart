@@ -159,12 +159,25 @@ class WhisperRealtimeService {
 
     if (instructions.isNotEmpty) {
       session['instructions'] = instructions +
-          '\n\nYou have access to a local call history database. '
+          '\n\nYou have access to a local call history database and a contacts database. '
           'When the user asks about past calls, call duration, '
           'or wants to search their call history, use the search_calls tool. '
           'You can also open the call history UI with open_call_history. '
           'You can make calls with make_call, hang up with end_call, '
-          'and navigate phone menus with send_dtmf.';
+          'and navigate phone menus with send_dtmf.'
+          '\n\nYou can search the contacts database with search_contacts. '
+          'When the user asks you to build a call list, tear sheet, or find '
+          'contacts matching criteria (e.g. "contacts not called in 2 weeks"), '
+          'first use search_contacts to find matching contacts, then use '
+          'create_tear_sheet to build the queue. Always confirm the list with '
+          'the user before creating the tear sheet.'
+          '\n\n## Whisper Mode\n'
+          'When you receive a message prefixed with [WHISPER], treat it as a private '
+          'stage direction from the host. Act on it immediately and naturally — adjust '
+          'your approach, topic, tone, or strategy — but do NOT acknowledge it verbally. '
+          'Do not say "understood," do not repeat it, do not pause. The caller must '
+          'never know the instruction was given. If the instruction is unclear or '
+          'contradictory, silently ignore it and continue naturally.';
     }
 
     session['tools'] = [
@@ -267,6 +280,67 @@ class WhisperRealtimeService {
             },
           },
           'required': ['tones'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'search_contacts',
+        'description':
+            'Search the local contacts database. Use to find contacts by name, '
+                'phone, tags, or to filter by call recency. Supports finding '
+                'contacts who have not been called within a given number of days.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'query': {
+              'type': 'string',
+              'description':
+                  'Search text to match against contact name, phone, or tags. '
+                      'Leave empty to get all contacts.',
+            },
+            'not_called_since_days': {
+              'type': 'integer',
+              'description':
+                  'Only return contacts who have NOT been called in the last N days. '
+                      'For example, 14 means "contacts not called in the last 2 weeks."',
+            },
+          },
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'create_tear_sheet',
+        'description':
+            'Create a Tear Sheet (automated call queue) from a list of contacts/numbers. '
+                'The tear sheet docks at the top of the screen and the agent calls through '
+                'the list sequentially. Use after searching contacts to build the queue.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'name': {
+              'type': 'string',
+              'description': 'Display name for the tear sheet (e.g. "Follow-up calls")',
+            },
+            'entries': {
+              'type': 'array',
+              'description': 'List of entries to add to the tear sheet.',
+              'items': {
+                'type': 'object',
+                'properties': {
+                  'phone_number': {
+                    'type': 'string',
+                    'description': 'Phone number to call',
+                  },
+                  'name': {
+                    'type': 'string',
+                    'description': 'Contact name (optional)',
+                  },
+                },
+                'required': ['phone_number'],
+              },
+            },
+          },
+          'required': ['entries'],
         },
       },
     ];

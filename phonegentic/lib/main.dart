@@ -1,6 +1,8 @@
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
+import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
+import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
 import 'package:flutter/material.dart';
@@ -51,9 +53,24 @@ class MyApp extends StatelessWidget {
         Provider<SIPUAHelper>.value(value: _helper),
         Provider<SipUserCubit>(create: (context) => SipUserCubit(sipHelper: _helper)),
         ChangeNotifierProvider<CallHistoryService>(create: (_) => CallHistoryService()),
-        ChangeNotifierProxyProvider<CallHistoryService, AgentService>(
+        ChangeNotifierProvider<ContactService>(create: (_) => ContactService()),
+        ChangeNotifierProxyProvider2<CallHistoryService, ContactService,
+            AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
-          update: (_, history, agent) => agent!..callHistory = history,
+          update: (_, history, contacts, agent) => agent!
+            ..callHistory = history
+            ..contactService = contacts,
+        ),
+        ChangeNotifierProxyProvider2<AgentService, CallHistoryService,
+            TearSheetService>(
+          create: (_) => TearSheetService()..sipHelper = _helper,
+          update: (context, agent, history, tearSheet) {
+            tearSheet!
+              ..agentService = agent
+              ..callHistory = history;
+            agent.tearSheetService = tearSheet;
+            return tearSheet;
+          },
         ),
       ],
       child: MaterialApp(

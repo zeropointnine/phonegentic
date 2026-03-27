@@ -8,8 +8,11 @@ import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
 import 'call_history_service.dart';
+import 'contact_service.dart';
+import 'db/call_history_db.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
+import 'tear_sheet_service.dart';
 import 'whisper_realtime_service.dart';
 
 class AgentService extends ChangeNotifier {
@@ -18,6 +21,7 @@ class AgentService extends ChangeNotifier {
   bool _active = false;
   bool _muted = false;
   bool _speaking = false;
+  bool _whisperMode = false;
   String _statusText = 'Initializing...';
 
   final Queue<double> _levels = Queue<double>();
@@ -43,6 +47,8 @@ class AgentService extends ChangeNotifier {
   bool get hasActiveCall => _callPhase != CallPhase.idle;
 
   CallHistoryService? callHistory;
+  ContactService? contactService;
+  TearSheetService? tearSheetService;
   SIPUAHelper? sipHelper;
 
   StreamSubscription<double>? _levelSub;
@@ -71,6 +77,7 @@ class AgentService extends ChangeNotifier {
   bool get active => _active;
   bool get muted => _muted;
   bool get speaking => _speaking;
+  bool get whisperMode => _whisperMode;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -307,6 +314,12 @@ class AgentService extends ChangeNotifier {
         case 'send_dtmf':
           result = _handleSendDtmf(args);
           break;
+        case 'search_contacts':
+          result = await _handleSearchContacts(args);
+          break;
+        case 'create_tear_sheet':
+          result = await _handleCreateTearSheet(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -399,6 +412,98 @@ class AgentService extends ChangeNotifier {
     return 'Sent DTMF: $tones';
   }
 
+  Future<String> _handleSearchContacts(Map<String, dynamic> args) async {
+    final query = args['query'] as String? ?? '';
+
+    // Search contacts
+    final contacts = query.isEmpty
+        ? await CallHistoryDb.getAllContacts()
+        : await CallHistoryDb.searchContacts(query);
+
+    if (contacts.isEmpty) return 'No contacts found.';
+
+    // For "not called since" filter
+    final notCalledSinceDays = args['not_called_since_days'] as int?;
+
+    List<Map<String, dynamic>> filtered = contacts;
+    if (notCalledSinceDays != null) {
+      final cutoff =
+          DateTime.now().subtract(Duration(days: notCalledSinceDays));
+      final result = <Map<String, dynamic>>[];
+      for (final c in contacts) {
+        final phone = c['phone_number'] as String? ?? '';
+        if (phone.isEmpty) continue;
+        final calls = await CallHistoryDb.searchCalls(
+          contactName: phone,
+          since: cutoff,
+          limit: 1,
+        );
+        if (calls.isEmpty) result.add(c);
+      }
+      filtered = result;
+    }
+
+    if (filtered.isEmpty) return 'No contacts match the criteria.';
+
+    final buf = StringBuffer('Found ${filtered.length} contacts:\n');
+    for (int i = 0; i < filtered.length && i < 50; i++) {
+      final c = filtered[i];
+      final name = c['display_name'] as String? ?? 'Unknown';
+      final phone = c['phone_number'] as String? ?? '';
+      buf.writeln('- $name${phone.isNotEmpty ? " ($phone)" : ""}');
+    }
+    if (filtered.length > 50) buf.writeln('... and ${filtered.length - 50} more.');
+    return buf.toString();
+  }
+
+  Future<String> _handleCreateTearSheet(Map<String, dynamic> args) async {
+    if (tearSheetService == null) return 'Tear sheet service not available.';
+
+    final name = args['name'] as String? ?? 'Tear Sheet';
+    final entries = args['entries'] as List<dynamic>?;
+
+    if (entries == null || entries.isEmpty) {
+      return 'No entries provided. Search contacts first, then call create_tear_sheet with the results.';
+    }
+
+    final numbers = <String>[];
+    final names = <String?>[];
+    for (final entry in entries) {
+      if (entry is Map<String, dynamic>) {
+        final phone = entry['phone_number'] as String? ?? '';
+        if (phone.isNotEmpty) {
+          numbers.add(phone);
+          names.add(entry['name'] as String?);
+        }
+      } else if (entry is String && entry.isNotEmpty) {
+        numbers.add(entry);
+        names.add(null);
+      }
+    }
+
+    if (numbers.isEmpty) return 'No valid phone numbers in entries.';
+
+    final sheetId = await CallHistoryDb.insertTearSheet(name: name);
+    for (int i = 0; i < numbers.length; i++) {
+      await CallHistoryDb.insertTearSheetItem(
+        tearSheetId: sheetId,
+        position: i,
+        phoneNumber: numbers[i],
+        contactName: names[i],
+      );
+    }
+
+    // Load the sheet into the service
+    final sheet = tearSheetService!;
+    // Use the internal load path via createFromNumbers won't work since we
+    // already inserted — reload manually.
+    await sheet.loadSheetById(sheetId);
+
+    return 'Tear sheet "$name" created with ${numbers.length} entries. '
+        'The host can see it docked at the top of the screen. '
+        'Press Play to begin calling, or say "start the tear sheet."';
+  }
+
   void announceRecording() {
     if (!_active) return;
     _whisper.sendSystemDirective(
@@ -421,6 +526,29 @@ class AgentService extends ChangeNotifier {
       _messages.add(ChatMessage.system('Agent is not connected.'));
       notifyListeners();
     }
+  }
+
+  void toggleWhisperMode() {
+    _whisperMode = !_whisperMode;
+    notifyListeners();
+  }
+
+  void sendWhisperMessage(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+
+    _messages.add(ChatMessage.whisper(trimmed));
+    notifyListeners();
+
+    if (_active) {
+      _whisper.sendSystemContext('[WHISPER] $trimmed');
+    }
+
+    callHistory?.addTranscript(
+      role: 'whisper',
+      speakerName: 'Host',
+      text: trimmed,
+    );
   }
 
   void updateSpeakerName(String speakerRole, String name) {

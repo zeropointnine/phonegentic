@@ -26,7 +26,11 @@ class CallHistoryDb {
 
     return databaseFactoryFfi.openDatabase(
       dbPath,
-      options: OpenDatabaseOptions(version: 1, onCreate: _onCreate),
+      options: OpenDatabaseOptions(
+        version: 2,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+      ),
     );
   }
 
@@ -39,9 +43,15 @@ class CallHistoryDb {
         email TEXT,
         company TEXT,
         thumbnail_path TEXT,
-        macos_contact_id TEXT UNIQUE
+        macos_contact_id TEXT UNIQUE,
+        notes TEXT,
+        tags TEXT,
+        created_at TEXT
       )
     ''');
+
+    await db.execute(
+        'CREATE INDEX idx_contacts_phone ON contacts(phone_number)');
 
     await db.execute('''
       CREATE TABLE call_records (
@@ -72,6 +82,28 @@ class CallHistoryDb {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE tear_sheets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE tear_sheet_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tear_sheet_id INTEGER NOT NULL REFERENCES tear_sheets(id),
+        position INTEGER NOT NULL,
+        phone_number TEXT NOT NULL,
+        contact_name TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        call_record_id INTEGER REFERENCES call_records(id),
+        notes TEXT
+      )
+    ''');
+
     await db.execute(
         'CREATE INDEX idx_cr_started ON call_records(started_at)');
     await db.execute(
@@ -79,6 +111,44 @@ class CallHistoryDb {
     await db.execute('CREATE INDEX idx_cr_status ON call_records(status)');
     await db.execute(
         'CREATE INDEX idx_ct_call ON call_transcripts(call_record_id)');
+    await db.execute(
+        'CREATE INDEX idx_tsi_sheet ON tear_sheet_items(tear_sheet_id)');
+  }
+
+  static Future<void> _onUpgrade(
+      Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE contacts ADD COLUMN notes TEXT');
+      await db.execute('ALTER TABLE contacts ADD COLUMN tags TEXT');
+      await db.execute('ALTER TABLE contacts ADD COLUMN created_at TEXT');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone_number)');
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS tear_sheets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+        )
+      ''');
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS tear_sheet_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tear_sheet_id INTEGER NOT NULL REFERENCES tear_sheets(id),
+          position INTEGER NOT NULL,
+          phone_number TEXT NOT NULL,
+          contact_name TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          call_record_id INTEGER REFERENCES call_records(id),
+          notes TEXT
+        )
+      ''');
+
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_tsi_sheet ON tear_sheet_items(tear_sheet_id)');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -242,5 +312,186 @@ class CallHistoryDb {
       orderBy: 'started_at DESC',
       limit: limit,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contacts
+  // ---------------------------------------------------------------------------
+
+  static String normalizePhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.length >= 10) return digits.substring(digits.length - 10);
+    return digits;
+  }
+
+  static Future<int> insertContact({
+    required String displayName,
+    String phoneNumber = '',
+    String? email,
+    String? company,
+    String? notes,
+    String? tags,
+  }) async {
+    final db = await database;
+    return db.insert('contacts', {
+      'display_name': displayName,
+      'phone_number': phoneNumber,
+      'email': email,
+      'company': company,
+      'notes': notes,
+      'tags': tags,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  static Future<void> updateContact(
+      int id, Map<String, dynamic> fields) async {
+    final db = await database;
+    await db.update('contacts', fields, where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<void> deleteContact(int id) async {
+    final db = await database;
+    await db.delete('contacts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<Map<String, dynamic>?> getContactByPhone(
+      String phoneNumber) async {
+    final db = await database;
+    final normalized = normalizePhone(phoneNumber);
+    if (normalized.isEmpty) return null;
+    final results = await db.query('contacts');
+    for (final row in results) {
+      final stored = normalizePhone(row['phone_number'] as String? ?? '');
+      if (stored.isNotEmpty && stored == normalized) return row;
+    }
+    return null;
+  }
+
+  static Future<List<Map<String, dynamic>>> searchContacts(
+      String query) async {
+    final db = await database;
+    return db.query(
+      'contacts',
+      where:
+          'display_name LIKE ? OR phone_number LIKE ? OR email LIKE ?',
+      whereArgs: ['%$query%', '%$query%', '%$query%'],
+      orderBy: 'display_name ASC',
+    );
+  }
+
+  static Future<List<Map<String, dynamic>>> getAllContacts() async {
+    final db = await database;
+    return db.query('contacts', orderBy: 'display_name ASC');
+  }
+
+  static Future<void> mergeContacts(int sourceId, int targetId) async {
+    final db = await database;
+    await db.update(
+      'call_records',
+      {'contact_id': targetId},
+      where: 'contact_id = ?',
+      whereArgs: [sourceId],
+    );
+    await db.delete('contacts', where: 'id = ?', whereArgs: [sourceId]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tear Sheets
+  // ---------------------------------------------------------------------------
+
+  static Future<int> insertTearSheet({required String name}) async {
+    final db = await database;
+    return db.insert('tear_sheets', {
+      'name': name,
+      'created_at': DateTime.now().toIso8601String(),
+      'status': 'pending',
+    });
+  }
+
+  static Future<void> updateTearSheetStatus(int id, String status) async {
+    final db = await database;
+    await db.update(
+      'tear_sheets',
+      {'status': status},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<Map<String, dynamic>?> getTearSheet(int id) async {
+    final db = await database;
+    final rows =
+        await db.query('tear_sheets', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<Map<String, dynamic>?> getActiveTearSheet() async {
+    final db = await database;
+    final rows = await db.query(
+      'tear_sheets',
+      where: "status IN ('active', 'paused', 'pending')",
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<int> insertTearSheetItem({
+    required int tearSheetId,
+    required int position,
+    required String phoneNumber,
+    String? contactName,
+  }) async {
+    final db = await database;
+    return db.insert('tear_sheet_items', {
+      'tear_sheet_id': tearSheetId,
+      'position': position,
+      'phone_number': phoneNumber,
+      'contact_name': contactName,
+      'status': 'pending',
+    });
+  }
+
+  static Future<void> updateTearSheetItemStatus(
+      int id, String status, {int? callRecordId}) async {
+    final db = await database;
+    final fields = <String, dynamic>{'status': status};
+    if (callRecordId != null) fields['call_record_id'] = callRecordId;
+    await db.update('tear_sheet_items', fields,
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<List<Map<String, dynamic>>> getTearSheetItems(
+      int tearSheetId) async {
+    final db = await database;
+    return db.query(
+      'tear_sheet_items',
+      where: 'tear_sheet_id = ?',
+      whereArgs: [tearSheetId],
+      orderBy: 'position ASC',
+    );
+  }
+
+  static Future<void> reorderTearSheetItem(int id, int newPosition) async {
+    final db = await database;
+    await db.update(
+      'tear_sheet_items',
+      {'position': newPosition},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<void> deleteTearSheetItem(int id) async {
+    final db = await database;
+    await db.delete('tear_sheet_items', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<void> deleteTearSheet(int id) async {
+    final db = await database;
+    await db.delete('tear_sheet_items',
+        where: 'tear_sheet_id = ?', whereArgs: [id]);
+    await db.delete('tear_sheets', where: 'id = ?', whereArgs: [id]);
   }
 }

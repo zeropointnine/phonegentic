@@ -10,6 +10,7 @@ import 'package:sip_ua/sip_ua.dart';
 
 import '../agent_service.dart';
 import '../call_history_service.dart';
+import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
 class CallHistoryPanel extends StatefulWidget {
@@ -123,6 +124,49 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                 color: AppColors.accent,
               ),
             ),
+          if (service.searchResults.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: () {
+                final tearSheet =
+                    context.read<TearSheetService>();
+                tearSheet.createFromSearchResults(
+                  service.searchResults,
+                  name: service.searchQuery.isNotEmpty
+                      ? service.searchQuery
+                      : 'From History',
+                );
+                service.closeHistory();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.accent.withOpacity(0.12),
+                  border: Border.all(
+                      color: AppColors.accent.withOpacity(0.3),
+                      width: 0.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.receipt_long_rounded,
+                        size: 12, color: AppColors.accent),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Tear Sheet',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(width: 8),
           GestureDetector(
             onTap: service.closeHistory,

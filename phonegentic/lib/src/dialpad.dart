@@ -12,11 +12,17 @@ import 'package:provider/provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import 'callscreen.dart';
+import 'contact_service.dart';
+import 'tear_sheet_service.dart';
 import 'widgets/action_button.dart';
 import 'widgets/agent_panel.dart';
 import 'widgets/audio_device_sheet.dart';
 import 'widgets/call_history_panel.dart';
+import 'widgets/contact_list_panel.dart';
 import 'widgets/phonegentic_logo.dart';
+import 'widgets/quick_add_overlay.dart';
+import 'widgets/tear_sheet_editor.dart';
+import 'widgets/tear_sheet_strip.dart';
 
 class DialPadWidget extends StatefulWidget {
   final SIPUAHelper? _helper;
@@ -204,34 +210,44 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   Widget build(BuildContext context) {
     currentUserCubit = context.watch<SipUserCubit>();
     final historyService = context.watch<CallHistoryService>();
+    final contactService = context.watch<ContactService>();
+    final tearSheetService = context.watch<TearSheetService>();
     final width = MediaQuery.of(context).size.width;
     final showPanel = width >= 600;
+    final panelWidth = showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0.0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
       body: Stack(
         children: [
-          Row(
+          Column(
             children: [
+              const TearSheetStrip(),
               Expanded(
-                child: _activeCall != null
-                    ? CallScreenWidget(
-                        helper,
-                        _activeCall,
-                        onDismiss: _dismissCallScreen,
-                      )
-                    : Focus(
-                        autofocus: true,
-                        focusNode: _focusNode,
-                        onKeyEvent: _handleKeyEvent,
-                        child: _buildPhoneSection(context),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _activeCall != null
+                          ? CallScreenWidget(
+                              helper,
+                              _activeCall,
+                              onDismiss: _dismissCallScreen,
+                            )
+                          : Focus(
+                              autofocus: true,
+                              focusNode: _focusNode,
+                              onKeyEvent: _handleKeyEvent,
+                              child: _buildPhoneSection(context),
+                            ),
+                    ),
+                    if (showPanel)
+                      SizedBox(
+                        width: panelWidth,
+                        child: const AgentPanel(),
                       ),
-              ),
-              if (showPanel)
-                SizedBox(
-                  width: (width * 0.38).clamp(320.0, 440.0),
-                  child: const AgentPanel(),
+                  ],
                 ),
+              ),
             ],
           ),
           if (historyService.isOpen)
@@ -246,8 +262,45 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               top: 0,
               bottom: 0,
               left: 0,
-              right: showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0,
+              right: panelWidth,
               child: const CallHistoryPanel(),
+            ),
+          if (contactService.isOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: contactService.closeContacts,
+                child: Container(color: Colors.black54),
+              ),
+            ),
+          if (contactService.isOpen)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: panelWidth,
+              child: const ContactListPanel(),
+            ),
+          if (contactService.isQuickAddOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: contactService.closeQuickAdd,
+                child: Container(color: Colors.black38),
+              ),
+            ),
+          if (contactService.isQuickAddOpen)
+            const Positioned.fill(
+              child: QuickAddOverlay(),
+            ),
+          if (tearSheetService.isEditorOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: tearSheetService.closeEditor,
+                child: Container(color: Colors.black38),
+              ),
+            ),
+          if (tearSheetService.isEditorOpen)
+            const Positioned.fill(
+              child: TearSheetEditor(),
             ),
         ],
       ),
@@ -272,73 +325,144 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
     );
   }
 
+  static const double _collapseThreshold = 700;
+
   Widget _buildTopBar(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 78, right: 16, top: 10, bottom: 10),
-      child: Row(
-        children: [
-          const PhonegenticLogo(size: 30),
-          const SizedBox(width: 10),
-          Text(
-            'Phonegentic',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            'AI',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              color: AppColors.accent,
-              letterSpacing: -0.5,
-              shadows: [
-                Shadow(
-                  color: AppColors.phosphor.withOpacity(0.4),
-                  blurRadius: 6,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= _collapseThreshold;
+        return Padding(
+          padding: const EdgeInsets.only(
+              left: 78, right: 16, top: 10, bottom: 10),
+          child: Row(
+            children: [
+              const PhonegenticLogo(size: 30),
+              const SizedBox(width: 10),
+              Text(
+                'Phonegentic',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.5,
                 ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'AI',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.accent,
+                  letterSpacing: -0.5,
+                  shadows: [
+                    Shadow(
+                      color: AppColors.phosphor.withOpacity(0.4),
+                      blurRadius: 6,
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _statusColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: _statusColor.withOpacity(0.25), width: 0.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle, color: _statusColor),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _statusText,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: _statusColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (wide) ...[
+                _buildTearSheetButton(context),
+                const SizedBox(width: 4),
+                _buildContactsButton(context),
+                const SizedBox(width: 4),
+                _buildCallHistoryButton(context),
+                const SizedBox(width: 4),
+                _buildAudioDeviceButton(context),
+                const SizedBox(width: 4),
               ],
-            ),
+              _buildMenuButton(context, collapsed: !wide),
+            ],
           ),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: _statusColor.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _statusColor.withOpacity(0.25), width: 0.5),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: _statusColor),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  _statusText,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: _statusColor,
-                  ),
-                ),
-              ],
-            ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTearSheetButton(BuildContext context) {
+    final tearSheet = context.read<TearSheetService>();
+    return GestureDetector(
+      onTap: () {
+        if (tearSheet.isActive) {
+          tearSheet.dismissSheet();
+        } else {
+          tearSheet.openEditor();
+        }
+      },
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: tearSheet.isActive
+              ? AppColors.accent.withOpacity(0.12)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: tearSheet.isActive
+                ? AppColors.accent.withOpacity(0.4)
+                : AppColors.border.withOpacity(0.5),
+            width: 0.5,
           ),
-          const SizedBox(width: 8),
-          _buildCallHistoryButton(context),
-          const SizedBox(width: 4),
-          _buildAudioDeviceButton(context),
-          const SizedBox(width: 4),
-          _buildMenuButton(context),
-        ],
+        ),
+        child: Icon(
+          Icons.receipt_long_rounded,
+          size: 16,
+          color: tearSheet.isActive
+              ? AppColors.accent
+              : AppColors.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContactsButton(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        context.read<ContactService>().toggleContacts();
+      },
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+        ),
+        child: Icon(Icons.contacts_rounded, size: 16, color: AppColors.textSecondary),
       ),
     );
   }
@@ -377,7 +501,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
     );
   }
 
-  Widget _buildMenuButton(BuildContext context) {
+  Widget _buildMenuButton(BuildContext context, {bool collapsed = false}) {
     return PopupMenuButton<String>(
       onSelected: (value) {
         switch (value) {
@@ -386,6 +510,19 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             break;
           case 'theme':
             Provider.of<ThemeProvider>(context, listen: false).toggle();
+            break;
+          case 'tear_sheet':
+            final ts = context.read<TearSheetService>();
+            ts.isActive ? ts.dismissSheet() : ts.openEditor();
+            break;
+          case 'contacts':
+            context.read<ContactService>().toggleContacts();
+            break;
+          case 'history':
+            context.read<CallHistoryService>().toggleHistory();
+            break;
+          case 'audio':
+            showAudioDeviceSheet(context);
             break;
         }
       },
@@ -396,11 +533,64 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         side: BorderSide(color: AppColors.border, width: 0.5),
       ),
       itemBuilder: (_) => [
+        if (collapsed) ...[
+          PopupMenuItem(
+            value: 'tear_sheet',
+            child: Row(
+              children: [
+                Icon(Icons.receipt_long_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                Text(
+                  context.read<TearSheetService>().isActive
+                      ? 'Dismiss Tear Sheet'
+                      : 'New Tear Sheet',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'contacts',
+            child: Row(
+              children: [
+                Icon(Icons.contacts_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Contacts', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'history',
+            child: Row(
+              children: [
+                Icon(Icons.history_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Call History', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'audio',
+            child: Row(
+              children: [
+                Icon(Icons.headphones_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Audio Devices', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+          const PopupMenuDivider(),
+        ],
         PopupMenuItem(
           value: 'account',
           child: Row(
             children: [
-              Icon(Icons.settings_outlined, size: 18, color: AppColors.textSecondary),
+              Icon(Icons.settings_outlined,
+                  size: 18, color: AppColors.textSecondary),
               const SizedBox(width: 10),
               const Text('Settings', style: TextStyle(fontSize: 13)),
             ],
