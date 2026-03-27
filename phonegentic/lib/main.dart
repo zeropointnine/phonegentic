@@ -2,6 +2,7 @@ import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
+import 'package:phonegentic/src/job_function_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
@@ -54,12 +55,16 @@ class MyApp extends StatelessWidget {
         Provider<SipUserCubit>(create: (context) => SipUserCubit(sipHelper: _helper)),
         ChangeNotifierProvider<CallHistoryService>(create: (_) => CallHistoryService()),
         ChangeNotifierProvider<ContactService>(create: (_) => ContactService()),
-        ChangeNotifierProxyProvider2<CallHistoryService, ContactService,
-            AgentService>(
+        ChangeNotifierProvider<JobFunctionService>(
+          create: (_) => JobFunctionService()..restoreLastUsed(),
+        ),
+        ChangeNotifierProxyProvider3<CallHistoryService, ContactService,
+            JobFunctionService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
-          update: (_, history, contacts, agent) => agent!
+          update: (_, history, contacts, jobFunctions, agent) => agent!
             ..callHistory = history
-            ..contactService = contacts,
+            ..contactService = contacts
+            ..jobFunctionService = jobFunctions,
         ),
         ChangeNotifierProxyProvider2<AgentService, CallHistoryService,
             TearSheetService>(

@@ -163,12 +163,14 @@ class AgentBootContext {
   final String jobFunction;
   final List<Speaker> speakers;
   final List<String> guardrails;
+  final bool textOnly;
 
   const AgentBootContext({
     this.role = _defaultRole,
     this.jobFunction = _defaultJob,
     this.speakers = const [],
     this.guardrails = const [],
+    this.textOnly = false,
   });
 
   factory AgentBootContext.trivia() {
@@ -216,6 +218,15 @@ class AgentBootContext {
     buf.writeln('- When the call ends, stop all interaction immediately.');
     buf.writeln('- If you hear phrases like "press 1", "leave a message", "your call is important", "please hold", "for Spanish press 2", "dial by name", or similar automated prompts at ANY point, ignore them completely — they are from a phone system, not a person.');
     buf.writeln();
+
+    if (textOnly) {
+      buf.writeln('## Output Mode');
+      buf.writeln('You are in TEXT-ONLY mode. You MUST NOT produce any audio or speak aloud.');
+      buf.writeln('All your responses go to the host\'s screen as silent text.');
+      buf.writeln('The remote party cannot see or hear you. Provide concise, '
+          'actionable guidance the host can glance at during the conversation.');
+      buf.writeln();
+    }
 
     buf.writeln('## Job Function');
     buf.writeln(jobFunction);

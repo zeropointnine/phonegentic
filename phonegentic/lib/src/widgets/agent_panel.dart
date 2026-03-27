@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../agent_service.dart';
+import '../job_function_service.dart';
 import '../models/agent_context.dart';
 import '../models/chat_message.dart';
 import '../theme_provider.dart';
@@ -148,6 +149,9 @@ class _AgentHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final jfService = context.watch<JobFunctionService>();
+    final selectedName = jfService.selected?.name ?? 'Phonegentic AI';
+
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
@@ -168,14 +172,10 @@ class _AgentHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Phonegentic AI',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                    letterSpacing: -0.3,
-                  ),
+                _JobFunctionDropdown(
+                  service: jfService,
+                  agent: agent,
+                  selectedName: selectedName,
                 ),
                 const SizedBox(height: 2),
                 Row(
@@ -224,6 +224,162 @@ class _AgentHeader extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Job Function dropdown selector
+// ---------------------------------------------------------------------------
+
+class _JobFunctionDropdown extends StatelessWidget {
+  final JobFunctionService service;
+  final AgentService agent;
+  final String selectedName;
+
+  const _JobFunctionDropdown({
+    required this.service,
+    required this.agent,
+    required this.selectedName,
+  });
+
+  void _onSelected(BuildContext context, int id) async {
+    await service.select(id);
+    agent.updateBootContext(
+      service.buildBootContext(),
+      jobFunctionName: service.selected?.name,
+      whisperByDefault: service.selected?.whisperByDefault,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: PopupMenuButton<int>(
+            onSelected: (id) => _onSelected(context, id),
+            offset: const Offset(0, 32),
+            color: AppColors.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: AppColors.border.withOpacity(0.5), width: 0.5),
+            ),
+            elevation: 8,
+            shadowColor: Colors.black.withOpacity(0.3),
+            itemBuilder: (_) => [
+              ...service.items.map((jf) => PopupMenuItem<int>(
+                    value: jf.id!,
+                    height: 38,
+                    child: Row(
+                      children: [
+                        Icon(
+                          jf.id == service.selected?.id
+                              ? Icons.check_circle_rounded
+                              : Icons.circle_outlined,
+                          size: 14,
+                          color: jf.id == service.selected?.id
+                              ? AppColors.accent
+                              : AppColors.textTertiary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            jf.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: jf.id == service.selected?.id
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: jf.id == service.selected?.id
+                                  ? AppColors.textPrimary
+                                  : AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            service.openEditor(jf);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Icon(Icons.edit_rounded,
+                                size: 13, color: AppColors.textTertiary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+              const PopupMenuDivider(height: 1),
+              PopupMenuItem<int>(
+                value: -1,
+                enabled: false,
+                height: 36,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    service.openEditor();
+                  },
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_rounded, size: 14, color: AppColors.accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        'New Job Function',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    selectedName,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(Icons.expand_more_rounded,
+                    size: 14, color: AppColors.textTertiary),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: () => service.openEditor(),
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              color: AppColors.card,
+              border: Border.all(
+                  color: AppColors.border.withOpacity(0.4), width: 0.5),
+            ),
+            child: Icon(Icons.add_rounded,
+                size: 12, color: AppColors.textTertiary),
+          ),
+        ),
+      ],
     );
   }
 }

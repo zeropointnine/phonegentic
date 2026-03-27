@@ -398,6 +398,26 @@ class WhisperRealtimeService {
     });
   }
 
+  void setModalities(List<String> modalities) {
+    if (!_connected || _ws == null) return;
+    _send({
+      'type': 'session.update',
+      'session': {
+        'modalities': modalities,
+      },
+    });
+  }
+
+  void updateSessionInstructions(String instructions) {
+    if (!_connected || _ws == null) return;
+    _send({
+      'type': 'session.update',
+      'session': {
+        'instructions': instructions,
+      },
+    });
+  }
+
   void sendFunctionCallOutput({
     required String callId,
     required String output,

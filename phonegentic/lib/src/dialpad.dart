@@ -13,12 +13,14 @@ import 'package:sip_ua/sip_ua.dart';
 
 import 'callscreen.dart';
 import 'contact_service.dart';
+import 'job_function_service.dart';
 import 'tear_sheet_service.dart';
 import 'widgets/action_button.dart';
 import 'widgets/agent_panel.dart';
 import 'widgets/audio_device_sheet.dart';
 import 'widgets/call_history_panel.dart';
 import 'widgets/contact_list_panel.dart';
+import 'widgets/job_function_editor.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/quick_add_overlay.dart';
 import 'widgets/tear_sheet_editor.dart';
@@ -212,6 +214,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
     final historyService = context.watch<CallHistoryService>();
     final contactService = context.watch<ContactService>();
     final tearSheetService = context.watch<TearSheetService>();
+    final jobFunctionService = context.watch<JobFunctionService>();
     final width = MediaQuery.of(context).size.width;
     final showPanel = width >= 600;
     final panelWidth = showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0.0;
@@ -301,6 +304,17 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           if (tearSheetService.isEditorOpen)
             const Positioned.fill(
               child: TearSheetEditor(),
+            ),
+          if (jobFunctionService.isEditorOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: jobFunctionService.closeEditor,
+                child: Container(color: Colors.black38),
+              ),
+            ),
+          if (jobFunctionService.isEditorOpen)
+            const Positioned.fill(
+              child: JobFunctionEditor(),
             ),
         ],
       ),

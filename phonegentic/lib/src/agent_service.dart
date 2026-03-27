@@ -10,6 +10,7 @@ import 'agent_config_service.dart';
 import 'call_history_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
+import 'job_function_service.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
@@ -49,7 +50,27 @@ class AgentService extends ChangeNotifier {
   CallHistoryService? callHistory;
   ContactService? contactService;
   TearSheetService? tearSheetService;
+  JobFunctionService? _jobFunctionService;
   SIPUAHelper? sipHelper;
+
+  set jobFunctionService(JobFunctionService? svc) {
+    _jobFunctionService = svc;
+    _syncFromJobFunctionIfNeeded();
+  }
+
+  int? _lastSyncedJobFunctionId;
+
+  void _syncFromJobFunctionIfNeeded() {
+    final selected = _jobFunctionService?.selected;
+    if (selected == null || selected.id == _lastSyncedJobFunctionId) return;
+    _lastSyncedJobFunctionId = selected.id;
+    _bootContext = _jobFunctionService!.buildBootContext();
+    if (selected.whisperByDefault != _whisperMode) {
+      _setWhisperMode(selected.whisperByDefault);
+    }
+    _pushInstructionsIfLive();
+    notifyListeners();
+  }
 
   StreamSubscription<double>? _levelSub;
   StreamSubscription<bool>? _speakingSub;
@@ -84,6 +105,47 @@ class AgentService extends ChangeNotifier {
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
 
+  void _syncBootContextFromJobFunction() {
+    final selected = _jobFunctionService?.selected;
+    if (selected == null) return;
+    _bootContext = _jobFunctionService!.buildBootContext();
+    _lastSyncedJobFunctionId = selected.id;
+  }
+
+  void updateBootContext(
+    AgentBootContext ctx, {
+    String? jobFunctionName,
+    bool? whisperByDefault,
+  }) {
+    _bootContext = ctx;
+    if (jobFunctionName != null) {
+      final mode = whisperByDefault == true ? ' (text-only)' : '';
+      _messages.add(ChatMessage.system(
+        'Switched to "$jobFunctionName"$mode',
+      ));
+    }
+
+    if (whisperByDefault != null && whisperByDefault != _whisperMode) {
+      _setWhisperMode(whisperByDefault);
+    }
+
+    notifyListeners();
+    _pushInstructionsIfLive();
+  }
+
+  void _setWhisperMode(bool enabled) {
+    _whisperMode = enabled;
+    if (_active) {
+      if (enabled) _whisper.stopResponseAudio();
+      _whisper.setModalities(enabled ? ['text'] : ['text', 'audio']);
+    }
+  }
+
+  Future<void> _pushInstructionsIfLive() async {
+    if (!_active) return;
+    _whisper.updateSessionInstructions(_bootContext.toInstructions());
+  }
+
   Speaker get hostSpeaker =>
       _bootContext.speakers.isNotEmpty
           ? _bootContext.speakers.first
@@ -100,6 +162,8 @@ class AgentService extends ChangeNotifier {
 
   Future<void> _init() async {
     try {
+      _syncBootContextFromJobFunction();
+
       final config = await AgentConfigService.loadVoiceConfig();
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
@@ -114,9 +178,12 @@ class AgentService extends ChangeNotifier {
       _messages.add(ChatMessage.system('Connecting to AI...'));
       notifyListeners();
 
-      final instructions = config.instructions.isNotEmpty
-          ? config.instructions
-          : _bootContext.toInstructions();
+      final hasJobFunction = _jobFunctionService?.selected != null;
+      final instructions = hasJobFunction
+          ? _bootContext.toInstructions()
+          : (config.instructions.isNotEmpty
+              ? config.instructions
+              : _bootContext.toInstructions());
 
       await _whisper.connect(
         apiKey: config.apiKey,
@@ -130,12 +197,10 @@ class AgentService extends ChangeNotifier {
 
       _messages.clear();
       if (_active) {
+        final jfName = _jobFunctionService?.selected?.name;
+        final label = jfName != null ? 'Ready as "$jfName".' : 'Ready.';
         _messages.add(ChatMessage.agent(
-          'Ready. I\'m listening to the call and can assist anytime. Type a message or just talk.',
-          actions: const [
-            MessageAction(label: 'Start trivia', value: '/trivia'),
-            MessageAction(label: 'Who\'s speaking?', value: '/speakers'),
-          ],
+          '$label I\'m listening to the call and can assist anytime. Type a message or just talk.',
         ));
       } else {
         _messages.add(ChatMessage.system('Failed to connect to AI agent.'));
@@ -163,6 +228,7 @@ class AgentService extends ChangeNotifier {
 
       int audioChunkCount = 0;
       _audioSub = _whisper.audioResponses.listen((event) {
+        if (_whisperMode) return;
         if (event.pcm16Data.isNotEmpty) {
           audioChunkCount++;
           if (audioChunkCount <= 3 || audioChunkCount % 50 == 0) {
@@ -530,6 +596,14 @@ class AgentService extends ChangeNotifier {
 
   void toggleWhisperMode() {
     _whisperMode = !_whisperMode;
+    if (_active) {
+      if (_whisperMode) {
+        _whisper.stopResponseAudio();
+      }
+      _whisper.setModalities(
+        _whisperMode ? ['text'] : ['text', 'audio'],
+      );
+    }
     notifyListeners();
   }
 

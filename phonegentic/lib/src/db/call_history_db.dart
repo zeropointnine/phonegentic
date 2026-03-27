@@ -4,6 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../models/job_function.dart';
+
 class CallHistoryDb {
   static Database? _db;
 
@@ -27,7 +29,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 4,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -113,6 +115,9 @@ class CallHistoryDb {
         'CREATE INDEX idx_ct_call ON call_transcripts(call_record_id)');
     await db.execute(
         'CREATE INDEX idx_tsi_sheet ON tear_sheet_items(tear_sheet_id)');
+
+    await _createJobFunctionsTable(db);
+    await _seedDefaultJobFunction(db);
   }
 
   static Future<void> _onUpgrade(
@@ -148,6 +153,40 @@ class CallHistoryDb {
 
       await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_tsi_sheet ON tear_sheet_items(tear_sheet_id)');
+    }
+
+    if (oldVersion < 3) {
+      await _createJobFunctionsTable(db);
+      await _seedDefaultJobFunction(db);
+    }
+
+    if (oldVersion < 4) {
+      await db.execute(
+        'ALTER TABLE job_functions ADD COLUMN whisper_by_default INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+  }
+
+  static Future<void> _createJobFunctionsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS job_functions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        job_description TEXT NOT NULL,
+        speakers_json TEXT NOT NULL,
+        guardrails_json TEXT NOT NULL,
+        whisper_by_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  static Future<void> _seedDefaultJobFunction(Database db) async {
+    final existing = await db.query('job_functions', limit: 1);
+    if (existing.isEmpty) {
+      await db.insert('job_functions', JobFunction.triviaDefault().toMap());
     }
   }
 
@@ -533,5 +572,51 @@ class CallHistoryDb {
     await db.delete('tear_sheet_items',
         where: 'tear_sheet_id = ?', whereArgs: [id]);
     await db.delete('tear_sheets', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Job Functions
+  // ---------------------------------------------------------------------------
+
+  static Future<List<Map<String, dynamic>>> getAllJobFunctions() async {
+    final db = await database;
+    return db.query('job_functions', orderBy: 'created_at ASC');
+  }
+
+  static Future<Map<String, dynamic>?> getJobFunction(int id) async {
+    final db = await database;
+    final rows =
+        await db.query('job_functions', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<int> insertJobFunction(JobFunction jf) async {
+    final db = await database;
+    final map = jf.toMap();
+    map.remove('id');
+    return db.insert('job_functions', map);
+  }
+
+  static Future<void> updateJobFunction(JobFunction jf) async {
+    if (jf.id == null) return;
+    final db = await database;
+    await db.update(
+      'job_functions',
+      jf.toMap(),
+      where: 'id = ?',
+      whereArgs: [jf.id],
+    );
+  }
+
+  static Future<void> deleteJobFunction(int id) async {
+    final db = await database;
+    await db.delete('job_functions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<int> jobFunctionCount() async {
+    final db = await database;
+    final result =
+        await db.rawQuery('SELECT COUNT(*) as cnt FROM job_functions');
+    return result.first['cnt'] as int? ?? 0;
   }
 }
