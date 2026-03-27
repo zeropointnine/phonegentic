@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
@@ -861,13 +862,17 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: _downloadRecording,
-            child: Icon(
-              Icons.download_rounded,
-              size: 16,
-              color: AppColors.textSecondary,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.download_rounded,
+                size: 16,
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
         ],
@@ -878,15 +883,35 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
   Future<void> _downloadRecording() async {
     try {
       final src = File(widget.filePath);
-      if (!await src.exists()) return;
-      final home = Platform.environment['HOME'] ?? '/tmp';
-      final downloadsDir = Directory('$home/Downloads');
-      if (!await downloadsDir.exists()) {
-        await downloadsDir.create(recursive: true);
+      if (!await src.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Recording file not found'),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+      final downloadsDir = await getDownloadsDirectory();
+      if (downloadsDir == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Could not access Downloads folder'),
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
       }
       final name = src.uri.pathSegments.last;
       final dest = File('${downloadsDir.path}/$name');
       await src.copy(dest.path);
+      await Process.run('open', [downloadsDir.path]);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -898,6 +923,15 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
       }
     } catch (e) {
       debugPrint('[RecordingPlayer] Download failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: $e'),
+            duration: const Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     }
   }
 }
