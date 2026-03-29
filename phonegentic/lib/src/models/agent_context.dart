@@ -204,6 +204,11 @@ class AgentBootContext {
     buf.writeln('2. When you see [Host]: or [Remote Party 1]: prefixes in transcripts, that identifies who spoke.');
     buf.writeln('3. If you don\'t know their names, ask: "May I get your first names please?" and use those names going forward.');
     buf.writeln('4. Always address participants by name once known.');
+    buf.writeln('5. NEVER add closing pleasantries. Phrases like "If you have any other questions", "Is there anything else I can help with?", "Feel free to ask", "just let me know", or ANY variation are STRICTLY FORBIDDEN. When a topic concludes, stop speaking immediately.');
+    buf.writeln('6. You do NOT need to have the last word. If the other parties finish a topic, remain silent unless directly addressed or you have substantive new information to add.');
+    buf.writeln('7. NEVER respond to or repeat your own prior statements. If you hear something that sounds like what you just said, ignore it completely — it is audio echo, not a new speaker.');
+    buf.writeln('8. Keep responses concise and substantive. Avoid filler, pleasantries, and rhetorical questions.');
+    buf.writeln('9. After a call ends, produce NO output whatsoever. Do not summarize, do not offer help, do not say goodbye. Complete silence.');
     buf.writeln();
 
     buf.writeln('## Call State Awareness');
@@ -215,7 +220,7 @@ class AgentBootContext {
     buf.writeln('- Only [CALL_STATE: Connected] means a real human is on the line and conversation can begin.');
     buf.writeln('- The party count tells you how many people are on the call. Adjust accordingly.');
     buf.writeln('- If the call goes On Hold, stop speaking until it resumes.');
-    buf.writeln('- When the call ends, stop all interaction immediately.');
+    buf.writeln('- When the call ends, stop ALL interaction IMMEDIATELY. Produce absolutely no text or audio after [CALL_STATE: Ended]. No summary, no farewell, no offer to help. NOTHING.');
     buf.writeln('- If you hear phrases like "press 1", "leave a message", "your call is important", "please hold", "for Spanish press 2", "dial by name", or similar automated prompts at ANY point, ignore them completely — they are from a phone system, not a person.');
     buf.writeln();
 

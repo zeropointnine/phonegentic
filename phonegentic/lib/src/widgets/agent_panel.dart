@@ -12,6 +12,10 @@ class AgentPanel extends StatefulWidget {
   final Widget? dragHandle;
   const AgentPanel({Key? key, this.dragHandle}) : super(key: key);
 
+  /// Registered by _InputBar so the dialpad can redirect letter keypresses.
+  static FocusNode? inputFocusNode;
+  static TextEditingController? inputController;
+
   @override
   State<AgentPanel> createState() => _AgentPanelState();
 }
@@ -779,27 +783,41 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPrevious = message.metadata?['isPreviousCall'] == true ||
+        message.metadata?['isPreviousCallHeader'] == true ||
+        message.metadata?['isPreviousCallFooter'] == true;
+
+    Widget child;
     if (message.type == MessageType.callState) {
-      return _CallStatePill(text: message.text);
+      child = _CallStatePill(text: message.text);
+    } else if (message.type == MessageType.whisper) {
+      child = _WhisperBubble(message: message);
+    } else {
+      switch (message.role) {
+        case ChatRole.system:
+          child = _SystemBubble(text: message.text);
+          break;
+        case ChatRole.user:
+          child = _UserBubble(message: message);
+          break;
+        case ChatRole.agent:
+          child = _AgentBubble(
+            message: message,
+            showActions: showActions,
+            onAction: onAction,
+          );
+          break;
+        case ChatRole.host:
+        case ChatRole.remoteParty:
+          child = _TranscriptBubble(message: message);
+          break;
+      }
     }
-    if (message.type == MessageType.whisper) {
-      return _WhisperBubble(message: message);
+
+    if (isPrevious) {
+      return Opacity(opacity: 0.5, child: child);
     }
-    switch (message.role) {
-      case ChatRole.system:
-        return _SystemBubble(text: message.text);
-      case ChatRole.user:
-        return _UserBubble(message: message);
-      case ChatRole.agent:
-        return _AgentBubble(
-          message: message,
-          showActions: showActions,
-          onAction: onAction,
-        );
-      case ChatRole.host:
-      case ChatRole.remoteParty:
-        return _TranscriptBubble(message: message);
-    }
+    return child;
   }
 }
 
@@ -1257,10 +1275,18 @@ class _InputBarState extends State<_InputBar> {
     super.initState();
     widget.controller.addListener(_onTextChanged);
     _focusNode.onKeyEvent = _handleKeyEvent;
+    AgentPanel.inputFocusNode = _focusNode;
+    AgentPanel.inputController = widget.controller;
   }
 
   @override
   void dispose() {
+    if (AgentPanel.inputFocusNode == _focusNode) {
+      AgentPanel.inputFocusNode = null;
+    }
+    if (AgentPanel.inputController == widget.controller) {
+      AgentPanel.inputController = null;
+    }
     _focusNode.dispose();
     super.dispose();
   }

@@ -13,6 +13,7 @@ class VoiceAgentConfig {
   final String voice;
   final String instructions;
   final TranscriptionTarget target;
+  final int echoGuardMs;
 
   const VoiceAgentConfig({
     this.enabled = false,
@@ -21,6 +22,7 @@ class VoiceAgentConfig {
     this.voice = 'coral',
     this.instructions = '',
     this.target = TranscriptionTarget.both,
+    this.echoGuardMs = 2500,
   });
 
   bool get isConfigured => apiKey.isNotEmpty;
@@ -32,6 +34,7 @@ class VoiceAgentConfig {
     String? voice,
     String? instructions,
     TranscriptionTarget? target,
+    int? echoGuardMs,
   }) {
     return VoiceAgentConfig(
       enabled: enabled ?? this.enabled,
@@ -40,6 +43,7 @@ class VoiceAgentConfig {
       voice: voice ?? this.voice,
       instructions: instructions ?? this.instructions,
       target: target ?? this.target,
+      echoGuardMs: echoGuardMs ?? this.echoGuardMs,
     );
   }
 }
@@ -152,6 +156,7 @@ class AgentConfigService {
       instructions: prefs.getString('${_prefix}voice_instructions') ?? '',
       target: TranscriptionTarget.values[
           prefs.getInt('${_prefix}voice_target') ?? 0],
+      echoGuardMs: prefs.getInt('${_prefix}voice_echo_guard_ms') ?? 2500,
     );
   }
 
@@ -163,6 +168,7 @@ class AgentConfigService {
     await prefs.setString('${_prefix}voice_voice', config.voice);
     await prefs.setString('${_prefix}voice_instructions', config.instructions);
     await prefs.setInt('${_prefix}voice_target', config.target.index);
+    await prefs.setInt('${_prefix}voice_echo_guard_ms', config.echoGuardMs);
   }
 
   static Future<TextAgentConfig> loadTextConfig() async {

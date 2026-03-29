@@ -87,7 +87,13 @@ class AgentService extends ChangeNotifier {
 
   // Cooldown after agent stops speaking to let TTS drain from whisper buffer
   DateTime _speakingEndTime = DateTime(2000);
-  static const _echoGuardMs = 1500;
+  int _echoGuardMs = 2500;
+
+  // Recent agent response texts for text-based echo suppression.
+  // If an incoming transcript fuzzy-matches a recent agent response, it is
+  // almost certainly the agent's own TTS being picked up by the mic.
+  final List<String> _recentAgentTexts = [];
+  static const _maxRecentAgentTexts = 5;
 
   // Settling: buffer window after SIP CONFIRMED to filter auto-attendant/IVR
   Timer? _settleTimer;
@@ -155,6 +161,22 @@ class AgentService extends ChangeNotifier {
           ? _bootContext.speakers[1]
           : Speaker(role: 'Remote Party 1', source: 'remote');
 
+  /// Update the remote party's display name (e.g. from contacts DB or
+  /// voiceprint match) and push refreshed instructions to the live session.
+  void setRemotePartyName(String name) {
+    if (_bootContext.speakers.length > 1) {
+      _bootContext.speakers[1].name = name;
+    }
+    notifyListeners();
+    _pushInstructionsIfLive();
+  }
+
+  void _clearRemotePartyName() {
+    if (_bootContext.speakers.length > 1) {
+      _bootContext.speakers[1].name = '';
+    }
+  }
+
   AgentService() {
     _messages.add(ChatMessage.system('Agent starting...'));
     _init();
@@ -165,6 +187,7 @@ class AgentService extends ChangeNotifier {
       _syncBootContextFromJobFunction();
 
       final config = await AgentConfigService.loadVoiceConfig();
+      _echoGuardMs = config.echoGuardMs;
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
         _messages.clear();
@@ -204,6 +227,7 @@ class AgentService extends ChangeNotifier {
 
       _messages.clear();
       if (_active) {
+        await _loadPreviousConversation();
         final jfName = _jobFunctionService?.selected?.name;
         final label = jfName != null ? 'Ready as "$jfName".' : 'Ready.';
         _messages.add(ChatMessage.agent(
@@ -217,6 +241,10 @@ class AgentService extends ChangeNotifier {
       if (!_active) return;
 
       await _whisper.startAudioTap(captureInput: true, captureOutput: true);
+
+      // Initialize the on-device speaker identifier and load known voiceprints
+      await _whisper.initSpeakerIdentifier();
+      await _loadKnownSpeakerEmbeddings();
 
       _levelSub = _whisper.audioLevels.listen((level) {
         _levels.addLast(level);
@@ -236,6 +264,7 @@ class AgentService extends ChangeNotifier {
       int audioChunkCount = 0;
       _audioSub = _whisper.audioResponses.listen((event) {
         if (_whisperMode) return;
+        if (!_callPhase.isActive && _callPhase != CallPhase.idle) return;
         if (event.pcm16Data.isNotEmpty) {
           audioChunkCount++;
           if (audioChunkCount <= 3 || audioChunkCount % 50 == 0) {
@@ -257,6 +286,143 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] Init failed: $e');
       notifyListeners();
     }
+  }
+
+  /// Save the remote party's voiceprint embedding to SQLite for future
+  /// identification, if we have both a known contact and an embedding.
+  Future<void> _saveRemoteVoiceprint() async {
+    try {
+      final rid = _remoteIdentity;
+      if (rid == null || rid.isEmpty) return;
+
+      final contact = contactService?.lookupByPhone(rid);
+      final contactId = contact?['id'] as int?;
+      if (contactId == null) return;
+
+      final embedding = await _whisper.getRemoteSpeakerEmbedding();
+      if (embedding == null || embedding.isEmpty) return;
+
+      await CallHistoryDb.upsertSpeakerEmbedding(
+        contactId: contactId,
+        embedding: embedding,
+      );
+      debugPrint('[AgentService] Saved voiceprint for contact #$contactId');
+    } catch (e) {
+      debugPrint('[AgentService] Failed to save voiceprint: $e');
+    }
+  }
+
+  /// Load stored speaker voiceprint embeddings from SQLite and push them
+  /// to the native speaker identifier so it can match voices on new calls.
+  Future<void> _loadKnownSpeakerEmbeddings() async {
+    try {
+      final rows = await CallHistoryDb.getAllSpeakerEmbeddingsDecoded();
+      if (rows.isEmpty) return;
+
+      final speakers = <Map<String, dynamic>>[];
+      for (final row in rows) {
+        final contactId = row['contact_id'] as int?;
+        final name = row['display_name'] as String? ?? '';
+        final embedding = row['decoded_embedding'] as List<double>?;
+        if (contactId == null || embedding == null) continue;
+
+        speakers.add({
+          'id': 'contact_$contactId',
+          'name': name,
+          'embedding': embedding,
+        });
+      }
+
+      if (speakers.isNotEmpty) {
+        await _whisper.loadKnownSpeakers(speakers);
+        debugPrint('[AgentService] Loaded ${speakers.length} known speaker voiceprints');
+      }
+    } catch (e) {
+      debugPrint('[AgentService] Failed to load speaker embeddings: $e');
+    }
+  }
+
+  /// Load transcripts from the most recent completed call and prepend them
+  /// to the message list so the user sees prior context on startup.
+  Future<void> _loadPreviousConversation() async {
+    try {
+      final recentCalls = await CallHistoryDb.getRecentCalls(limit: 1);
+      if (recentCalls.isEmpty) return;
+
+      final call = recentCalls.first;
+      final callId = call['id'] as int;
+      final transcripts = await CallHistoryDb.getTranscripts(callId);
+      if (transcripts.isEmpty) return;
+
+      final remoteName = call['remote_display_name'] as String? ??
+          call['remote_identity'] as String? ??
+          'Unknown';
+      final startedAt = DateTime.tryParse(
+              call['started_at'] as String? ?? '') ??
+          DateTime.now();
+      final dateLabel =
+          '${startedAt.month}/${startedAt.day}/${startedAt.year} '
+          '${startedAt.hour}:${startedAt.minute.toString().padLeft(2, '0')}';
+
+      _messages.add(ChatMessage.system(
+        'Previous call: $remoteName \u2014 $dateLabel',
+        metadata: const {'isPreviousCallHeader': true},
+      ));
+
+      for (final t in transcripts) {
+        final role = t['role'] as String? ?? 'remote';
+        final speakerName = t['speaker_name'] as String?;
+        final text = t['text'] as String? ?? '';
+        if (text.isEmpty) continue;
+
+        ChatRole chatRole;
+        switch (role) {
+          case 'host':
+            chatRole = ChatRole.host;
+            break;
+          case 'agent':
+            chatRole = ChatRole.agent;
+            break;
+          default:
+            chatRole = ChatRole.remoteParty;
+        }
+
+        if (chatRole == ChatRole.agent) {
+          _messages.add(ChatMessage.agent(text,
+              metadata: const {'isPreviousCall': true}));
+        } else {
+          _messages.add(ChatMessage.transcript(chatRole, text,
+              speakerName: speakerName,
+              metadata: const {'isPreviousCall': true}));
+        }
+      }
+
+      _messages.add(ChatMessage.system('— End of previous call —',
+          metadata: const {'isPreviousCallFooter': true}));
+    } catch (e) {
+      debugPrint('[AgentService] Failed to load previous conversation: $e');
+    }
+  }
+
+  /// Returns true if [text] is a fuzzy substring of any recent agent response,
+  /// indicating it is likely the agent's own TTS being transcribed back.
+  bool _isEchoOfAgentResponse(String text) {
+    if (_recentAgentTexts.isEmpty) return false;
+    final lower = text.toLowerCase();
+    if (lower.length < 8) return false; // too short to match reliably
+    for (final agentText in _recentAgentTexts) {
+      final agentLower = agentText.toLowerCase();
+      // Check if the transcript is contained within a recent agent response
+      if (agentLower.contains(lower)) return true;
+      // Check if a significant portion of the transcript words overlap
+      final tWords = lower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      final aWords = agentLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      if (tWords.isNotEmpty && aWords.isNotEmpty) {
+        final overlap = tWords.intersection(aWords).length;
+        if (overlap / tWords.length >= 0.6) return true;
+      }
+    }
+    return false;
   }
 
   void _onTranscript(TranscriptionEvent event) async {
@@ -294,6 +460,13 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
+    // Text-based echo suppression: if the transcript is a substantial
+    // substring of a recent agent response, it's the agent hearing itself.
+    if (_isEchoOfAgentResponse(text)) {
+      debugPrint('[AgentService] Echo suppressed (text match): "$text"');
+      return;
+    }
+
     // Deduplicate: OpenAI VAD can split the same utterance into multiple
     // items that produce near-identical completed transcriptions.
     final now = DateTime.now();
@@ -304,10 +477,19 @@ class AgentService extends ChangeNotifier {
     _lastTranscriptText = text;
     _lastTranscriptTime = now;
 
-    final dominant = await _whisper.getDominantSpeaker();
-    final isRemote = dominant == 'remote';
+    final info = await _whisper.getSpeakerInfo();
+    final source = info['source'] as String? ?? 'unknown';
+    final voiceprintName = info['identity'] as String? ?? '';
+    final isRemote = source == 'remote';
     final role = isRemote ? ChatRole.remoteParty : ChatRole.host;
     final speaker = isRemote ? remoteSpeaker : hostSpeaker;
+
+    // If voiceprint identified a name and the speaker doesn't have one yet,
+    // update the speaker label and push refreshed instructions.
+    if (voiceprintName.isNotEmpty && speaker.name.isEmpty) {
+      speaker.name = voiceprintName;
+      _pushInstructionsIfLive();
+    }
 
     _messages.add(ChatMessage.transcript(
       role,
@@ -324,6 +506,9 @@ class AgentService extends ChangeNotifier {
   }
 
   void _onResponseText(ResponseTextEvent event) {
+    // After a call ends (or fails), suppress any trailing agent output.
+    if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) return;
+
     if (event.isFinal) {
     if (_streamingMessageId != null) {
       final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
@@ -332,9 +517,15 @@ class AgentService extends ChangeNotifier {
         if (event.text.isNotEmpty) {
           _messages[idx].text = event.text;
         }
+        // Record for echo suppression
+        final finalText = _messages[idx].text;
+        _recentAgentTexts.add(finalText);
+        while (_recentAgentTexts.length > _maxRecentAgentTexts) {
+          _recentAgentTexts.removeAt(0);
+        }
         callHistory?.addTranscript(
           role: 'agent',
-          text: _messages[idx].text,
+          text: finalText,
         );
       }
       _streamingMessageId = null;
@@ -668,16 +859,34 @@ class AgentService extends ChangeNotifier {
         remoteDisplayName: remoteDisplayName ?? _remoteDisplayName,
         localIdentity: localIdentity ?? _localIdentity,
       );
+
+      // Auto-resolve remote party name from the contacts database so
+      // transcript bubbles and agent instructions use the real name.
+      final rid = remoteIdentity ?? _remoteIdentity;
+      if (rid != null && remoteSpeaker.name.isEmpty) {
+        final contact = contactService?.lookupByPhone(rid);
+        final name = contact?['display_name'] as String?;
+        if (name != null && name.isNotEmpty) {
+          setRemotePartyName(name);
+        }
+      }
     }
 
     if (phase == CallPhase.ended || phase == CallPhase.failed) {
       final status = phase == CallPhase.failed ? 'failed' : 'completed';
       callHistory?.endCallRecord(status: status);
+
+      // Store the remote party's voiceprint if we know who they are
+      _saveRemoteVoiceprint();
+
       if (_remoteIdentity != null) _lastDialedNumber = _remoteIdentity;
       _remoteIdentity = null;
       _remoteDisplayName = null;
       _localIdentity = null;
+      _clearRemotePartyName();
       _cancelSettleTimer();
+      _recentAgentTexts.clear();
+      _whisper.resetSpeakerIdentifier();
     }
 
     if (phase == CallPhase.settling) {

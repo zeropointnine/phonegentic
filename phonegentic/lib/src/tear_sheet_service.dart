@@ -285,6 +285,9 @@ class TearSheetService extends ChangeNotifier {
     agentService?.whisper.sendSystemContext(
       '[TEAR_SHEET] Now calling $label — item ${_currentIndex + 1} of ${_items.length}.',
     );
+    if (name.isNotEmpty) {
+      agentService?.setRemotePartyName(name);
+    }
   }
 
   void _sendPausedContext() {

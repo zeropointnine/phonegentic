@@ -13,6 +13,7 @@ import 'package:sip_ua/sip_ua.dart';
 
 import 'callscreen.dart';
 import 'contact_service.dart';
+import 'phone_formatter.dart';
 import 'job_function_service.dart';
 import 'tear_sheet_service.dart';
 import 'widgets/action_button.dart';
@@ -95,15 +96,30 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
       return KeyEventResult.ignored;
     }
     final character = event.character;
-    if (character != null && character.isNotEmpty) {
-      const validChars = '0123456789*#+';
-      if (validChars.contains(character)) {
-        setState(() {
-          _textController!.text += character;
-        });
+    if (character == null || character.isEmpty) return KeyEventResult.ignored;
+
+    const dialChars = '0123456789*#+';
+    if (dialChars.contains(character)) {
+      setState(() {
+        _textController!.text += character;
+      });
+      return KeyEventResult.handled;
+    }
+
+    // Letters → redirect focus to the agent panel text input.
+    if (RegExp(r'^[a-zA-Z]$').hasMatch(character)) {
+      final agentFocus = AgentPanel.inputFocusNode;
+      final agentCtrl = AgentPanel.inputController;
+      if (agentFocus != null && agentCtrl != null) {
+        agentCtrl.text += character;
+        agentCtrl.selection = TextSelection.collapsed(
+          offset: agentCtrl.text.length,
+        );
+        agentFocus.requestFocus();
         return KeyEventResult.handled;
       }
     }
+
     return KeyEventResult.ignored;
   }
 
@@ -347,7 +363,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         final wide = constraints.maxWidth >= _collapseThreshold;
         return Padding(
           padding: const EdgeInsets.only(
-              left: 78, right: 16, top: 10, bottom: 10),
+              left: 78, right: 16, top: 15, bottom: 15),
           child: Row(
             children: [
               const PhonegenticLogo(size: 30),
@@ -612,13 +628,24 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   }
 
   Widget _buildPhoneContent() {
+    final userPhone = TestCredentials.sipUser.displayName;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+            Text(
+              PhoneFormatter.format(userPhone),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 8),
             _buildNumberDisplay(),
             const SizedBox(height: 28),
             _buildNumPad(),
@@ -632,12 +659,13 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   }
 
   Widget _buildNumberDisplay() {
-    final text = _textController?.text ?? '';
+    final raw = _textController?.text ?? '';
+    final display = raw.isEmpty ? '' : PhoneFormatter.format(raw);
     return Column(
       children: [
         SizedBox(
           height: 52,
-          child: text.isEmpty
+          child: raw.isEmpty
               ? Text(
                   'Enter number',
                   style: TextStyle(
@@ -650,12 +678,12 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               : FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
-                    text,
+                    display,
                     style: TextStyle(
                       fontSize: 36,
                       fontWeight: FontWeight.w300,
                       color: AppColors.textPrimary,
-                      letterSpacing: 3,
+                      letterSpacing: 2,
                       shadows: [
                         Shadow(
                           color: AppColors.phosphor.withOpacity(0.35),

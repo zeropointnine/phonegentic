@@ -31,6 +31,8 @@
 		A1B2C3D400000002ADC00001 /* AudioDeviceChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000001ADC00001 /* AudioDeviceChannel.swift */; };
 		B2C3D4E500000002ATC00002 /* AudioTapChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */; };
 		D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */; };
+		E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */; };
+		E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E5F6A7B800000004FLA00002 /* FluidAudio */; };
 		E8C4A047BF41B4A2D0635957 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */; };
 /* End PBXBuildFile section */
 
@@ -92,6 +94,7 @@
 		B56D1DAD0955A41B5C16AD2D /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3D4E5F600000001BRH00001 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCAudioProcessor.swift; sourceTree = "<group>"; };
+		E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerIdentifier.swift; sourceTree = "<group>"; };
 		E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC906358CFE0C48974F10E54 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		ECBD98B4B52730466C82DC36 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
@@ -111,6 +114,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8C22601088434A6BB1FE95FC /* Pods_Runner.framework in Frameworks */,
+				E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +191,7 @@
 				A1B2C3D400000001ADC00001 /* AudioDeviceChannel.swift */,
 				B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */,
 				D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */,
+				E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */,
 				C3D4E5F600000001BRH00001 /* Runner-Bridging-Header.h */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
@@ -258,6 +263,9 @@
 				33CC11202044C79F0003C045 /* PBXTargetDependency */,
 			);
 			name = Runner;
+			packageProductDependencies = (
+				E5F6A7B800000004FLA00002 /* FluidAudio */,
+			);
 			productName = Runner;
 			productReference = 33CC10ED2044A3C60003C045 /* Phonegentic AI.app */;
 			productType = "com.apple.product-type.application";
@@ -302,6 +310,9 @@
 				Base,
 			);
 			mainGroup = 33CC10E42044A3C60003C045;
+			packageReferences = (
+				E5F6A7B800000005FLA00003 /* XCRemoteSwiftPackageReference "FluidAudio" */,
+			);
 			productRefGroup = 33CC10EE2044A3C60003C045 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -453,6 +464,7 @@
 				A1B2C3D400000002ADC00001 /* AudioDeviceChannel.swift in Sources */,
 				B2C3D4E500000002ATC00002 /* AudioTapChannel.swift in Sources */,
 				D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */,
+				E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -570,7 +582,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -667,7 +679,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -717,7 +729,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -843,6 +855,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E5F6A7B800000005FLA00003 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.7.9;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E5F6A7B800000004FLA00002 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E5F6A7B800000005FLA00003 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 33CC10E52044A3C60003C045 /* Project object */;
 }

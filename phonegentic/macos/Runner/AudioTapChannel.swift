@@ -40,6 +40,12 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private var diagCounter: UInt64 = 0
     private var playDiagCounter: UInt64 = 0
 
+    /// Epoch timestamp of the last TTS chunk fed in call mode.
+    /// Used to suppress mic echo from reaching the event sink.
+    private var lastCallModeTTSTime: TimeInterval = 0
+    /// How long (seconds) after the last TTS chunk to keep suppressing mic audio in call mode.
+    private static let callModeTTSSuppression: TimeInterval = 2.0
+
     /// Tracks which audio source was dominant over a sliding window.
     /// "host" = mic, "remote" = remote party, "unknown" = neither or silence.
     private(set) var dominantSpeaker: String = "unknown"
@@ -117,7 +123,21 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             NSLog("[AudioTap] setMicMute=%@", muted ? "YES" : "NO")
             result(nil)
         case "getDominantSpeaker":
-            result(dominantSpeaker)
+            let info = SpeakerIdentifier.shared.speakerInfo(dominantSource: dominantSpeaker)
+            result(info)
+        case "initSpeakerIdentifier":
+            SpeakerIdentifier.shared.initialize()
+            result(nil)
+        case "loadKnownSpeakers":
+            if let speakers = call.arguments as? [[String: Any]] {
+                SpeakerIdentifier.shared.loadKnownSpeakers(speakers)
+            }
+            result(nil)
+        case "resetSpeakerIdentifier":
+            SpeakerIdentifier.shared.reset()
+            result(nil)
+        case "getRemoteSpeakerEmbedding":
+            result(SpeakerIdentifier.shared.getRemoteSpeakerEmbedding())
         case "startCallRecording":
             let args = call.arguments as? [String: Any] ?? [:]
             let path = args["path"] as? String ?? ""
@@ -306,10 +326,15 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                   playDiagCounter, data.count, inCallMode ? "YES" : "NO")
         }
 
+        // Feed to speaker identifier for agent voiceprint capture
+        SpeakerIdentifier.shared.feedAgentTTS(data)
+
         if inCallMode {
-            // In call mode TTS goes into ring buffers — no speaker echo,
-            // so we don't block mic audio from reaching OpenAI.
+            // TTS is mixed into the render stream and plays through speakers.
+            // The mic picks up this echo. Track the timestamp so flushBuffers
+            // can strip mic audio from the event sink during TTS playback.
             WebRTCAudioProcessor.shared.feedTTS(pcm16Data: data)
+            lastCallModeTTSTime = Date().timeIntervalSince1970
         } else {
             // In direct mode TTS plays through speakers. Block mic audio
             // while playing to prevent the agent hearing its own echo.
@@ -496,9 +521,14 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             inputBuffer.removeAll(keepingCapacity: true)
             bufferLock.unlock()
 
+            // While TTS is playing (or recently finished), the mic picks up
+            // the agent's own voice from the speakers. Strip mic audio from
+            // the buffer sent to the AI so it doesn't hear its own echo.
+            let ttsEchoActive = Date().timeIntervalSince1970 - lastCallModeTTSTime < AudioTapChannel.callModeTTSSuppression
+
             let remoteCount = (remoteData?.count ?? 0) / 2
             let micCount = micData.count / 2
-            let maxCount = max(remoteCount, micCount)
+            let maxCount = ttsEchoActive ? remoteCount : max(remoteCount, micCount)
 
             var remoteRMS: Double = 0
             var micRMS: Double = 0
@@ -521,7 +551,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                     }
                 }
 
-                if !micData.isEmpty {
+                if !ttsEchoActive && !micData.isEmpty {
                     micData.withUnsafeBytes { ptr in
                         let samples = ptr.bindMemory(to: Int16.self)
                         var sumSq: Double = 0
@@ -535,9 +565,29 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                             micRMS = (sumSq / Double(micCount)).squareRoot()
                         }
                     }
+                } else if !micData.isEmpty {
+                    micData.withUnsafeBytes { ptr in
+                        let samples = ptr.bindMemory(to: Int16.self)
+                        var sumSq: Double = 0
+                        for i in 0..<micCount {
+                            let s = Double(samples[i])
+                            sumSq += s * s
+                        }
+                        if micCount > 0 {
+                            micRMS = (sumSq / Double(micCount)).squareRoot()
+                        }
+                    }
                 }
 
                 dataToSend = mixed.withUnsafeBufferPointer { Data(buffer: $0) }
+            }
+
+            // Feed separated audio to SpeakerIdentifier for voiceprint matching
+            if let rd = remoteData, !rd.isEmpty {
+                SpeakerIdentifier.shared.feedRemoteAudio(rd)
+            }
+            if !micData.isEmpty {
+                SpeakerIdentifier.shared.feedMicAudio(micData)
             }
 
             // Determine per-flush dominant speaker.

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:logger/logger.dart';
 import 'package:web_socket_channel/io.dart';
@@ -86,14 +87,65 @@ class WhisperRealtimeService {
   bool get muted => _muted;
   set muted(bool value) => _muted = value;
 
-  /// Query native layer for which audio source was louder in the
-  /// most recent flush window. Returns "host", "remote", or "unknown".
-  Future<String> getDominantSpeaker() async {
+  /// Query native layer for speaker info including voiceprint identity.
+  /// Returns a map with keys: "source" (host/remote/unknown),
+  /// "identity" (speaker name or ""), "confidence" (0.0-1.0).
+  Future<Map<String, dynamic>> getSpeakerInfo() async {
     try {
-      final result = await _methodChannel.invokeMethod<String>('getDominantSpeaker');
-      return result ?? 'unknown';
+      final result = await _methodChannel.invokeMethod<Map>('getDominantSpeaker');
+      if (result != null) {
+        return Map<String, dynamic>.from(result);
+      }
+      return {'source': 'unknown', 'identity': '', 'confidence': 0.0};
     } catch (_) {
-      return 'unknown';
+      return {'source': 'unknown', 'identity': '', 'confidence': 0.0};
+    }
+  }
+
+  /// Convenience: returns just the dominant source ("host", "remote", "unknown").
+  Future<String> getDominantSpeaker() async {
+    final info = await getSpeakerInfo();
+    return info['source'] as String? ?? 'unknown';
+  }
+
+  /// Initialize the on-device speaker identifier (FluidAudio / CoreML).
+  Future<void> initSpeakerIdentifier() async {
+    try {
+      await _methodChannel.invokeMethod('initSpeakerIdentifier');
+    } catch (e) {
+      debugPrint('[Whisper] initSpeakerIdentifier failed: $e');
+    }
+  }
+
+  /// Load known speaker profiles into the native speaker identifier.
+  /// Each entry: { "id": String, "name": String, "embedding": List<double> }
+  Future<void> loadKnownSpeakers(List<Map<String, dynamic>> speakers) async {
+    try {
+      await _methodChannel.invokeMethod('loadKnownSpeakers', speakers);
+    } catch (e) {
+      debugPrint('[Whisper] loadKnownSpeakers failed: $e');
+    }
+  }
+
+  /// Reset the speaker identifier state (call at end of each call).
+  Future<void> resetSpeakerIdentifier() async {
+    try {
+      await _methodChannel.invokeMethod('resetSpeakerIdentifier');
+    } catch (e) {
+      debugPrint('[Whisper] resetSpeakerIdentifier failed: $e');
+    }
+  }
+
+  /// Retrieve the current remote speaker's voiceprint embedding (for storage).
+  /// Returns null if no speaker was identified.
+  Future<List<double>?> getRemoteSpeakerEmbedding() async {
+    try {
+      final result = await _methodChannel.invokeMethod<List>('getRemoteSpeakerEmbedding');
+      if (result == null) return null;
+      return result.cast<double>();
+    } catch (e) {
+      debugPrint('[Whisper] getRemoteSpeakerEmbedding failed: $e');
+      return null;
     }
   }
 

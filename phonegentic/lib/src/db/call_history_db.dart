@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -29,7 +30,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -118,6 +119,7 @@ class CallHistoryDb {
 
     await _createJobFunctionsTable(db);
     await _seedDefaultJobFunction(db);
+    await _createSpeakerEmbeddingsTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -165,6 +167,10 @@ class CallHistoryDb {
         'ALTER TABLE job_functions ADD COLUMN whisper_by_default INTEGER NOT NULL DEFAULT 0',
       );
     }
+
+    if (oldVersion < 5) {
+      await _createSpeakerEmbeddingsTable(db);
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -188,6 +194,124 @@ class CallHistoryDb {
     if (existing.isEmpty) {
       await db.insert('job_functions', JobFunction.triviaDefault().toMap());
     }
+  }
+
+  static Future<void> _createSpeakerEmbeddingsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS speaker_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id INTEGER REFERENCES contacts(id),
+        embedding BLOB NOT NULL,
+        sample_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_se_contact ON speaker_embeddings(contact_id)');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Speaker Embeddings
+  // ---------------------------------------------------------------------------
+
+  /// Upsert a speaker embedding for a contact. If one exists, averages the
+  /// stored embedding with the new one (running mean) and increments sample_count.
+  static Future<void> upsertSpeakerEmbedding({
+    required int contactId,
+    required List<double> embedding,
+  }) async {
+    final db = await database;
+    final existing = await db.query(
+      'speaker_embeddings',
+      where: 'contact_id = ?',
+      whereArgs: [contactId],
+    );
+
+    final now = DateTime.now().toIso8601String();
+    final blob = _embeddingToBlob(embedding);
+
+    if (existing.isEmpty) {
+      await db.insert('speaker_embeddings', {
+        'contact_id': contactId,
+        'embedding': blob,
+        'sample_count': 1,
+        'created_at': now,
+        'updated_at': now,
+      });
+    } else {
+      final row = existing.first;
+      final oldBlob = row['embedding'] as List<int>;
+      final oldEmbed = blobToEmbedding(oldBlob);
+      final oldCount = row['sample_count'] as int? ?? 1;
+      final newCount = oldCount + 1;
+
+      // Running mean: new_avg = old_avg + (new - old_avg) / new_count
+      final merged = List<double>.generate(embedding.length, (i) {
+        return oldEmbed[i] + (embedding[i] - oldEmbed[i]) / newCount;
+      });
+
+      await db.update(
+        'speaker_embeddings',
+        {
+          'embedding': _embeddingToBlob(merged),
+          'sample_count': newCount,
+          'updated_at': now,
+        },
+        where: 'contact_id = ?',
+        whereArgs: [contactId],
+      );
+    }
+  }
+
+  /// Get the speaker embedding for a contact, or null if none stored.
+  static Future<List<double>?> getSpeakerEmbedding(int contactId) async {
+    final db = await database;
+    final rows = await db.query(
+      'speaker_embeddings',
+      where: 'contact_id = ?',
+      whereArgs: [contactId],
+    );
+    if (rows.isEmpty) return null;
+    final blob = rows.first['embedding'] as List<int>;
+    return blobToEmbedding(blob);
+  }
+
+  /// Get all stored speaker embeddings with their contact info.
+  /// Each result map includes 'contact_id', 'display_name', 'phone_number',
+  /// and 'decoded_embedding' (List<double>).
+  static Future<List<Map<String, dynamic>>>
+      getAllSpeakerEmbeddingsDecoded() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT se.*, c.display_name, c.phone_number
+      FROM speaker_embeddings se
+      JOIN contacts c ON c.id = se.contact_id
+    ''');
+
+    return rows.map((row) {
+      final blob = row['embedding'] as List<int>;
+      return {
+        ...row,
+        'decoded_embedding': blobToEmbedding(blob),
+      };
+    }).toList();
+  }
+
+  static Uint8List _embeddingToBlob(List<double> embedding) {
+    final byteData = ByteData(embedding.length * 4);
+    for (var i = 0; i < embedding.length; i++) {
+      byteData.setFloat32(i * 4, embedding[i].toDouble(), Endian.little);
+    }
+    return byteData.buffer.asUint8List();
+  }
+
+  static List<double> blobToEmbedding(List<int> blob) {
+    final byteData = ByteData.view(Uint8List.fromList(blob).buffer);
+    final count = blob.length ~/ 4;
+    return List<double>.generate(count, (i) {
+      return byteData.getFloat32(i * 4, Endian.little).toDouble();
+    });
   }
 
   // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import 'audio_device_service.dart';
 import 'call_history_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
+import 'phone_formatter.dart';
 import 'tear_sheet_service.dart';
 import 'models/agent_context.dart';
 import 'theme_provider.dart';
@@ -717,88 +718,93 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ? '?'
           : displayInitial.substring(0, 1).toUpperCase();
 
+      final formattedRemote = remoteIdentity != null
+          ? PhoneFormatter.format(remoteIdentity!)
+          : null;
+
       stackWidgets.add(
         Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Avatar
-              Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.accent.withOpacity(0.15),
-                  border: Border.all(
-                      color: AppColors.accent.withOpacity(0.3), width: 1.5),
-                ),
-                child: Center(
-                  child: Text(
-                    initial,
-                    style: const TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.w300,
-                      color: AppColors.accentLight,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 88,
+                  height: 88,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.accent.withOpacity(0.15),
+                    border: Border.all(
+                        color: AppColors.accent.withOpacity(0.3), width: 1.5),
+                  ),
+                  child: Center(
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.w300,
+                        color: AppColors.accentLight,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              if (contactName != null) ...[
-                Text(
-                  contactName,
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                    letterSpacing: -0.5,
+                const SizedBox(height: 20),
+                if (contactName != null) ...[
+                  Text(
+                    contactName,
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.5,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
+                  const SizedBox(height: 4),
+                  Text(
+                    formattedRemote ?? '',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ] else
+                  Text(
+                    formattedRemote ?? 'Unknown',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                const SizedBox(height: 8),
                 Text(
-                  remoteIdentity ?? '',
+                  _stateLabel +
+                      (_hold
+                          ? ' by ${_holdOriginator?.name ?? 'unknown'}'
+                          : ''),
                   style: TextStyle(
                     fontSize: 14,
-                    color: AppColors.textSecondary,
+                    color: AppColors.textTertiary,
                   ),
                 ),
-              ] else
-                Text(
-                  remoteIdentity ?? 'Unknown',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
-                    letterSpacing: -0.5,
-                  ),
+                const SizedBox(height: 6),
+                ValueListenableBuilder<String>(
+                  valueListenable: _timeLabel,
+                  builder: (context, value, _) {
+                    return Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w400,
+                        color: AppColors.textSecondary,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                    );
+                  },
                 ),
-              const SizedBox(height: 8),
-              Text(
-                _stateLabel +
-                    (_hold
-                        ? ' by ${_holdOriginator?.name ?? 'unknown'}'
-                        : ''),
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppColors.textTertiary,
-                ),
-              ),
-              const SizedBox(height: 6),
-              ValueListenableBuilder<String>(
-                valueListenable: _timeLabel,
-                builder: (context, value, _) {
-                  return Text(
-                    value,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w400,
-                      color: AppColors.textSecondary,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  );
-                },
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       );
