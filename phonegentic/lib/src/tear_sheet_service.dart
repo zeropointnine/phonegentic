@@ -95,7 +95,8 @@ class TearSheetService extends ChangeNotifier {
 
   Future<void> _loadSheet(int sheetId) async {
     _activeTearSheetId = sheetId;
-    _items = await CallHistoryDb.getTearSheetItems(sheetId);
+    _items = List<Map<String, dynamic>>.from(
+        await CallHistoryDb.getTearSheetItems(sheetId));
     _currentIndex = _items.indexWhere((i) => i['status'] == 'pending');
     if (_currentIndex < 0) _currentIndex = 0;
     _isPaused = true;
@@ -256,7 +257,8 @@ class TearSheetService extends ChangeNotifier {
 
   Future<void> _reloadItems() async {
     if (_activeTearSheetId == null) return;
-    _items = await CallHistoryDb.getTearSheetItems(_activeTearSheetId!);
+    _items = List<Map<String, dynamic>>.from(
+        await CallHistoryDb.getTearSheetItems(_activeTearSheetId!));
     if (_currentIndex >= _items.length) {
       _currentIndex = _items.length - 1;
     }

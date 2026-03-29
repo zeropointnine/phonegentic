@@ -614,16 +614,19 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   Widget _buildPhoneContent() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        children: [
-          const Spacer(flex: 1),
-          _buildNumberDisplay(),
-          const SizedBox(height: 28),
-          _buildNumPad(),
-          const SizedBox(height: 20),
-          _buildCallRow(),
-          const Spacer(flex: 2),
-        ],
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            _buildNumberDisplay(),
+            const SizedBox(height: 28),
+            _buildNumPad(),
+            const SizedBox(height: 20),
+            _buildCallRow(),
+            const SizedBox(height: 12),
+          ],
+        ),
       ),
     );
   }
