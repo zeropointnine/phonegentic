@@ -101,6 +101,7 @@ class JobFunctionService extends ChangeNotifier {
           .toList(),
       guardrails: jf.guardrails,
       textOnly: jf.whisperByDefault,
+      elevenLabsVoiceId: jf.elevenLabsVoiceId,
     );
   }
 

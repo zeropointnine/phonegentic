@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../agent_config_service.dart';
 import '../agent_service.dart';
+import '../elevenlabs_api_service.dart';
 import '../job_function_service.dart';
 import '../models/job_function.dart';
 import '../theme_provider.dart';
@@ -29,17 +31,26 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   bool get _isEditing => _existing != null;
   JobFunction? _existing;
 
+  // ElevenLabs voice selection
+  TtsConfig? _ttsConfig;
+  List<ElevenLabsVoice>? _voiceList;
+  bool _voiceListLoading = false;
+  String? _selectedVoiceId;
+
   @override
   void initState() {
     super.initState();
     final jfService = context.read<JobFunctionService>();
     _existing = jfService.editing;
 
+    _loadVoiceConfig();
+
     if (_existing != null) {
       _nameController.text = _existing!.name;
       _roleController.text = _existing!.role;
       _descController.text = _existing!.jobDescription;
       _whisperByDefault = _existing!.whisperByDefault;
+      _selectedVoiceId = _existing!.elevenLabsVoiceId;
       _speakers = _existing!.speakers
           .map((s) => _SpeakerRow(
                 role: TextEditingController(text: s.role),
@@ -66,6 +77,29 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _nameFocus.requestFocus();
     });
+  }
+
+  Future<void> _loadVoiceConfig() async {
+    final tts = await AgentConfigService.loadTtsConfig();
+    if (!mounted) return;
+    setState(() => _ttsConfig = tts);
+    if (tts.provider == TtsProvider.elevenlabs &&
+        tts.elevenLabsApiKey.isNotEmpty) {
+      _fetchVoiceList(tts.elevenLabsApiKey);
+    }
+  }
+
+  Future<void> _fetchVoiceList(String apiKey) async {
+    setState(() => _voiceListLoading = true);
+    try {
+      final voices = await ElevenLabsApiService.listVoices(apiKey);
+      if (mounted) setState(() {
+        _voiceList = voices;
+        _voiceListLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _voiceListLoading = false);
+    }
   }
 
   void _onNameChanged() {
@@ -113,6 +147,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       speakers: speakers.isEmpty ? null : speakers,
       guardrails: guardrails.isEmpty ? null : guardrails,
       whisperByDefault: _whisperByDefault,
+      elevenLabsVoiceId: _selectedVoiceId,
       createdAt: _existing?.createdAt,
     );
 
@@ -277,6 +312,12 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                         ),
                         const SizedBox(height: 14),
                         _buildWhisperToggle(),
+                        if (_ttsConfig != null &&
+                            _ttsConfig!.provider == TtsProvider.elevenlabs &&
+                            _ttsConfig!.elevenLabsApiKey.isNotEmpty) ...[
+                          const SizedBox(height: 14),
+                          _buildVoiceSelector(),
+                        ],
                         const SizedBox(height: 14),
                         _buildSpeakersSection(),
                         const SizedBox(height: 14),
@@ -464,6 +505,87 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildVoiceSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('ElevenLabs Voice'),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withOpacity(0.5), width: 0.5),
+          ),
+          child: _voiceListLoading
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.textTertiary),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text('Loading voices...',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textTertiary)),
+                    ],
+                  ),
+                )
+              : DropdownButton<String>(
+                  value: _selectedVoiceId != null &&
+                          (_voiceList ?? [])
+                              .any((v) => v.voiceId == _selectedVoiceId)
+                      ? _selectedVoiceId
+                      : null,
+                  hint: Text('Default (from settings)',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textTertiary)),
+                  isExpanded: true,
+                  underline: const SizedBox.shrink(),
+                  dropdownColor: AppColors.surface,
+                  style: TextStyle(
+                      fontSize: 12, color: AppColors.textPrimary),
+                  icon: Icon(Icons.unfold_more_rounded,
+                      size: 14, color: AppColors.textTertiary),
+                  items: [
+                    DropdownMenuItem<String>(
+                      value: null,
+                      child: Text('Default (from settings)',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textTertiary)),
+                    ),
+                    ...(_voiceList ?? []).map((v) =>
+                        DropdownMenuItem<String>(
+                          value: v.voiceId,
+                          child: Text(v.name,
+                              overflow: TextOverflow.ellipsis),
+                        )),
+                  ],
+                  onChanged: (v) =>
+                      setState(() => _selectedVoiceId = v),
+                ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Override the TTS voice for this job function. '
+          'Leave as default to use the voice from settings.',
+          style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+        ),
+      ],
     );
   }
 

@@ -32,6 +32,7 @@ class JobFunction {
   final List<SpeakerDef> speakers;
   final List<String> guardrails;
   final bool whisperByDefault;
+  final String? elevenLabsVoiceId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -43,6 +44,7 @@ class JobFunction {
     List<SpeakerDef>? speakers,
     List<String>? guardrails,
     this.whisperByDefault = false,
+    this.elevenLabsVoiceId,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : speakers = speakers ?? List.of(SpeakerDef.defaultSpeakers),
@@ -58,6 +60,7 @@ class JobFunction {
     List<SpeakerDef>? speakers,
     List<String>? guardrails,
     bool? whisperByDefault,
+    String? elevenLabsVoiceId,
     DateTime? updatedAt,
   }) =>
       JobFunction(
@@ -68,6 +71,7 @@ class JobFunction {
         speakers: speakers ?? this.speakers,
         guardrails: guardrails ?? this.guardrails,
         whisperByDefault: whisperByDefault ?? this.whisperByDefault,
+        elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
         createdAt: createdAt,
         updatedAt: updatedAt ?? DateTime.now(),
       );
@@ -80,6 +84,7 @@ class JobFunction {
         'speakers_json': jsonEncode(speakers.map((s) => s.toMap()).toList()),
         'guardrails_json': jsonEncode(guardrails),
         'whisper_by_default': whisperByDefault ? 1 : 0,
+        'elevenlabs_voice_id': elevenLabsVoiceId,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
       };
@@ -99,6 +104,7 @@ class JobFunction {
           .toList(),
       guardrails: (jsonDecode(guardrailsRaw) as List).cast<String>(),
       whisperByDefault: (map['whisper_by_default'] as int? ?? 0) == 1,
+      elevenLabsVoiceId: map['elevenlabs_voice_id'] as String?,
       createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(map['updated_at'] as String? ?? '') ??

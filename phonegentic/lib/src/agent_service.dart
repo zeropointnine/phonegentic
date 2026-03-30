@@ -68,8 +68,11 @@ class AgentService extends ChangeNotifier {
     _lastSyncedJobFunctionId = selected.id;
     _bootContext = _jobFunctionService!.buildBootContext();
     if (selected.whisperByDefault != _whisperMode) {
-      _setWhisperMode(selected.whisperByDefault);
+      if (!_splitPipeline || selected.whisperByDefault) {
+        _setWhisperMode(selected.whisperByDefault);
+      }
     }
+    _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
     _pushInstructionsIfLive();
     notifyListeners();
   }
@@ -144,8 +147,12 @@ class AgentService extends ChangeNotifier {
     }
 
     if (whisperByDefault != null && whisperByDefault != _whisperMode) {
-      _setWhisperMode(whisperByDefault);
+      if (!_splitPipeline || whisperByDefault) {
+        _setWhisperMode(whisperByDefault);
+      }
     }
+
+    _tts?.updateVoiceId(ctx.elevenLabsVoiceId);
 
     notifyListeners();
     _pushInstructionsIfLive();
@@ -237,6 +244,7 @@ class AgentService extends ChangeNotifier {
         // The job function may have loaded while we were connecting.
         // Re-sync and push the correct instructions now that the session is live.
         _syncBootContextFromJobFunction();
+        _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
         _pushInstructionsIfLive();
       }
 

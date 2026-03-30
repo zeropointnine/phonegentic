@@ -164,6 +164,7 @@ class AgentBootContext {
   final List<Speaker> speakers;
   final List<String> guardrails;
   final bool textOnly;
+  final String? elevenLabsVoiceId;
 
   const AgentBootContext({
     this.role = _defaultRole,
@@ -171,6 +172,7 @@ class AgentBootContext {
     this.speakers = const [],
     this.guardrails = const [],
     this.textOnly = false,
+    this.elevenLabsVoiceId,
   });
 
   factory AgentBootContext.trivia() {

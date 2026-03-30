@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../agent_service.dart';
 import '../job_function_service.dart';
 import '../models/agent_context.dart';
+import '../models/job_function.dart';
 import '../models/chat_message.dart';
 import '../theme_provider.dart';
 
@@ -256,6 +257,51 @@ class _JobFunctionDropdown extends StatelessWidget {
     );
   }
 
+  Future<void> _confirmDelete(BuildContext context, JobFunction jf) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text('Delete "${jf.name}"?',
+            style: TextStyle(fontSize: 15, color: AppColors.textPrimary)),
+        content: Text('This cannot be undone.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: TextStyle(color: AppColors.textTertiary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Delete', style: TextStyle(color: AppColors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final deleted = await service.delete(jf.id!);
+    if (!deleted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Cannot delete the last job function.'),
+          backgroundColor: AppColors.red,
+        ),
+      );
+      return;
+    }
+
+    if (context.mounted) {
+      agent.updateBootContext(
+        service.buildBootContext(),
+        jobFunctionName: service.selected?.name,
+        whisperByDefault: service.selected?.whisperByDefault,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -311,6 +357,17 @@ class _JobFunctionDropdown extends StatelessWidget {
                           child: Padding(
                             padding: const EdgeInsets.only(left: 8),
                             child: Icon(Icons.edit_rounded,
+                                size: 13, color: AppColors.textTertiary),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            _confirmDelete(context, jf);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(Icons.delete_outline_rounded,
                                 size: 13, color: AppColors.textTertiary),
                           ),
                         ),

@@ -30,7 +30,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -171,6 +171,12 @@ class CallHistoryDb {
     if (oldVersion < 5) {
       await _createSpeakerEmbeddingsTable(db);
     }
+
+    if (oldVersion < 6) {
+      await db.execute(
+        'ALTER TABLE job_functions ADD COLUMN elevenlabs_voice_id TEXT',
+      );
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -183,6 +189,7 @@ class CallHistoryDb {
         speakers_json TEXT NOT NULL,
         guardrails_json TEXT NOT NULL,
         whisper_by_default INTEGER NOT NULL DEFAULT 0,
+        elevenlabs_voice_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )

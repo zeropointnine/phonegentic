@@ -12,6 +12,7 @@ import 'agent_config_service.dart';
 /// chunks that can be fed directly into [WhisperRealtimeService.playResponseAudio].
 class ElevenLabsTtsService {
   final TtsConfig _config;
+  String? _voiceIdOverride;
 
   WebSocketChannel? _ws;
   StreamSubscription? _wsSub;
@@ -33,6 +34,14 @@ class ElevenLabsTtsService {
 
   bool get isConnected => _connected;
 
+  /// Override the voice used for subsequent generations.
+  /// Pass null to revert to the config default.
+  void updateVoiceId(String? voiceId) {
+    _voiceIdOverride = voiceId;
+    debugPrint('[ElevenLabsTTS] Voice override set: '
+        '${voiceId ?? "(cleared, using default)"}');
+  }
+
   Future<void> _connect() async {
     // Close any existing socket without resetting generation state.
     _wsSub?.cancel();
@@ -43,7 +52,7 @@ class ElevenLabsTtsService {
     _ws = null;
     _connected = false;
 
-    final voiceId = _config.elevenLabsVoiceId;
+    final voiceId = _voiceIdOverride ?? _config.elevenLabsVoiceId;
     final modelId = _config.elevenLabsModelId;
     final uri = Uri.parse(
       'wss://api.elevenlabs.io/v1/text-to-speech/$voiceId/stream-input'
