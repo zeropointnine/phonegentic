@@ -14,6 +14,8 @@ import 'job_function_service.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
+import 'elevenlabs_tts_service.dart';
+import 'text_agent_service.dart';
 import 'whisper_realtime_service.dart';
 
 class AgentService extends ChangeNotifier {
@@ -78,6 +80,16 @@ class AgentService extends ChangeNotifier {
   StreamSubscription<TranscriptionEvent>? _transcriptSub;
   StreamSubscription<ResponseTextEvent>? _responseTextSub;
   StreamSubscription<FunctionCallEvent>? _functionCallSub;
+  StreamSubscription<ResponseTextEvent>? _textAgentSub;
+
+  TextAgentService? _textAgent;
+  TextAgentConfig? _textAgentConfig;
+  bool get _splitPipeline => _textAgent != null;
+
+  ElevenLabsTtsService? _tts;
+  TtsConfig? _ttsConfig;
+  StreamSubscription<Uint8List>? _ttsAudioSub;
+  StreamSubscription<bool>? _ttsSpeakingSub;
 
   String? _streamingMessageId;
 
@@ -150,6 +162,7 @@ class AgentService extends ChangeNotifier {
   Future<void> _pushInstructionsIfLive() async {
     if (!_active) return;
     _whisper.updateSessionInstructions(_bootContext.toInstructions());
+    _textAgent?.updateInstructions(_buildTextAgentInstructions());
   }
 
   Speaker get hostSpeaker =>
@@ -188,6 +201,8 @@ class AgentService extends ChangeNotifier {
 
       final config = await AgentConfigService.loadVoiceConfig();
       _echoGuardMs = config.echoGuardMs;
+      _textAgentConfig = await AgentConfigService.loadTextConfig();
+      _ttsConfig = await AgentConfigService.loadTtsConfig();
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
         _messages.clear();
@@ -255,6 +270,9 @@ class AgentService extends ChangeNotifier {
       });
 
       _speakingSub = _whisper.speakingState.listen((isSpeaking) {
+        // In split pipeline mode, ignore OpenAI's speaking state — we're
+        // throwing away its audio. ElevenLabs controls _speaking instead.
+        if (_splitPipeline) return;
         _speaking = isSpeaking;
         _statusText = isSpeaking ? 'Speaking' : (_muted ? 'Not Listening...' : 'Listening');
         if (!isSpeaking) _speakingEndTime = DateTime.now();
@@ -278,6 +296,8 @@ class AgentService extends ChangeNotifier {
       _responseTextSub = _whisper.responseTexts.listen(_onResponseText);
       _functionCallSub = _whisper.functionCalls.listen(_onFunctionCall);
 
+      _initTextAgent();
+
       debugPrint('[AgentService] Started: model=${config.model} voice=${config.voice}');
     } catch (e) {
       _statusText = 'Error';
@@ -286,6 +306,78 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] Init failed: $e');
       notifyListeners();
     }
+  }
+
+  void _initTextAgent() {
+    final tc = _textAgentConfig;
+    debugPrint('[AgentService] TextAgent config: '
+        'enabled=${tc?.enabled} '
+        'provider=${tc?.provider.name} '
+        'configured=${tc?.isConfigured}');
+    if (tc == null || !tc.enabled || !tc.isConfigured) return;
+    if (tc.provider == TextAgentProvider.openai) return;
+
+    _textAgent = TextAgentService(
+      config: tc,
+      systemInstructions: _buildTextAgentInstructions(),
+    );
+    _textAgentSub = _textAgent!.responses.listen(_appendStreamingResponse);
+
+    // Set the whisper flag so OpenAI audio responses are suppressed on the
+    // Dart side, but do NOT change modalities on the server — text-only
+    // modalities disable VAD which kills transcription.
+    _whisperMode = true;
+
+    _initTts();
+
+    debugPrint('[AgentService] Split pipeline active: ${tc.provider.name} text agent');
+  }
+
+  void _initTts() {
+    final tc = _ttsConfig;
+    debugPrint('[AgentService] TTS config: '
+        'provider=${tc?.provider.name} '
+        'configured=${tc?.isConfigured}');
+    if (tc == null || !tc.isConfigured) return;
+
+    _tts = ElevenLabsTtsService(config: tc);
+
+    int elChunkCount = 0;
+    _ttsAudioSub = _tts!.audioChunks.listen((pcm) {
+      elChunkCount++;
+      if (elChunkCount <= 3 || elChunkCount % 25 == 0) {
+        debugPrint('[AgentService] ElevenLabs audio #$elChunkCount: '
+            '${pcm.length} bytes → playResponseAudio');
+      }
+      _whisper.playResponseAudio(pcm);
+    });
+
+    _ttsSpeakingSub = _tts!.speakingState.listen((speaking) {
+      _speaking = speaking;
+      if (!speaking) {
+        _speakingEndTime = DateTime.now();
+      }
+    });
+
+    debugPrint('[AgentService] ElevenLabs TTS active: '
+        'voice=${tc.elevenLabsVoiceId} model=${tc.elevenLabsModelId}');
+  }
+
+  String _buildTextAgentInstructions() {
+    final hasTts = _tts != null;
+    final ctx = AgentBootContext(
+      role: _bootContext.role,
+      jobFunction: _bootContext.jobFunction,
+      speakers: _bootContext.speakers,
+      guardrails: _bootContext.guardrails,
+      textOnly: !hasTts,
+    );
+    final base = ctx.toInstructions();
+    final prompt = _textAgentConfig?.systemPrompt ?? '';
+    if (prompt.isNotEmpty) {
+      return '$base\n\n## Additional Instructions\n$prompt';
+    }
+    return base;
   }
 
   /// Save the remote party's voiceprint embedding to SQLite for future
@@ -428,8 +520,12 @@ class AgentService extends ChangeNotifier {
   void _onTranscript(TranscriptionEvent event) async {
     if (!event.isFinal || event.text.trim().isEmpty) return;
 
-    // Suppress transcripts while call is still setting up.
-    if (_callPhase.isPreConnect) return;
+    // Suppress transcripts while call is still setting up — but in split
+    // pipeline mode, allow transcripts when idle so the user can talk to the
+    // agent without an active call.
+    if (_callPhase.isPreConnect) {
+      if (!(_splitPipeline && _callPhase == CallPhase.idle)) return;
+    }
 
     // During settling, check for IVR patterns. If detected, extend the
     // settle window. If clean speech arrives, that helps the timer expire
@@ -503,35 +599,56 @@ class AgentService extends ChangeNotifier {
       speakerName: speaker.label,
       text: text,
     );
+
+    _textAgent?.addTranscript(speaker.label, text);
   }
 
   void _onResponseText(ResponseTextEvent event) {
-    // After a call ends (or fails), suppress any trailing agent output.
+    if (_splitPipeline) return;
+    _appendStreamingResponse(event);
+  }
+
+  /// Shared handler for streaming agent responses from either OpenAI
+  /// Realtime or the external text agent (Claude, etc.).
+  void _appendStreamingResponse(ResponseTextEvent event) {
     if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) return;
+    if (event.isFinal) {
+      debugPrint('[AgentService] Claude response final: '
+          '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
+    }
 
     if (event.isFinal) {
-    if (_streamingMessageId != null) {
-      final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
-      if (idx >= 0) {
-        _messages[idx].isStreaming = false;
-        if (event.text.isNotEmpty) {
-          _messages[idx].text = event.text;
+      _tts?.endGeneration();
+
+      if (_streamingMessageId != null) {
+        final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+        if (idx >= 0) {
+          _messages[idx].isStreaming = false;
+          if (event.text.isNotEmpty) {
+            _messages[idx].text = event.text;
+          }
+          final finalText = _messages[idx].text;
+          _recentAgentTexts.add(finalText);
+          while (_recentAgentTexts.length > _maxRecentAgentTexts) {
+            _recentAgentTexts.removeAt(0);
+          }
+          callHistory?.addTranscript(
+            role: 'agent',
+            text: finalText,
+          );
         }
-        // Record for echo suppression
-        final finalText = _messages[idx].text;
-        _recentAgentTexts.add(finalText);
-        while (_recentAgentTexts.length > _maxRecentAgentTexts) {
-          _recentAgentTexts.removeAt(0);
-        }
-        callHistory?.addTranscript(
-          role: 'agent',
-          text: finalText,
-        );
+        _streamingMessageId = null;
       }
-      _streamingMessageId = null;
+      notifyListeners();
+      return;
     }
-    notifyListeners();
-    return;
+
+    // Pipe text delta to ElevenLabs TTS for voice output
+    if (_tts != null && event.text.isNotEmpty) {
+      if (_streamingMessageId == null) {
+        _tts!.startGeneration();
+      }
+      _tts!.sendText(event.text);
     }
 
     if (_streamingMessageId != null) {
@@ -554,6 +671,7 @@ class AgentService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Future<void> _onFunctionCall(FunctionCallEvent event) async {
+    if (_splitPipeline) return;
     debugPrint('[AgentService] Function call: ${event.name} args=${event.arguments}');
 
     String result;
@@ -785,7 +903,12 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
 
     if (_active) {
-      _whisper.sendTextMessage(trimmed);
+      if (_splitPipeline) {
+        debugPrint('[AgentService] User message → Claude: "$trimmed"');
+        _textAgent!.sendUserMessage(trimmed);
+      } else {
+        _whisper.sendTextMessage(trimmed);
+      }
     } else {
       _messages.add(ChatMessage.system('Agent is not connected.'));
       notifyListeners();
@@ -793,6 +916,7 @@ class AgentService extends ChangeNotifier {
   }
 
   void toggleWhisperMode() {
+    if (_splitPipeline) return;
     _whisperMode = !_whisperMode;
     if (_active) {
       if (_whisperMode) {
@@ -813,7 +937,11 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
 
     if (_active) {
-      _whisper.sendSystemContext('[WHISPER] $trimmed');
+      if (_splitPipeline) {
+        _textAgent!.sendUserMessage('[WHISPER from Host]: $trimmed');
+      } else {
+        _whisper.sendSystemContext('[WHISPER] $trimmed');
+      }
     }
 
     callHistory?.addTranscript(
@@ -887,6 +1015,8 @@ class AgentService extends ChangeNotifier {
       _cancelSettleTimer();
       _recentAgentTexts.clear();
       _whisper.resetSpeakerIdentifier();
+      _textAgent?.reset();
+      _tts?.endGeneration();
     }
 
     if (phase == CallPhase.settling) {
@@ -917,6 +1047,7 @@ class AgentService extends ChangeNotifier {
     if (_active) {
       _whisper.sendSystemContext(contextText);
     }
+    _textAgent?.addSystemContext(contextText);
 
     debugPrint('[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
   }
@@ -983,6 +1114,15 @@ class AgentService extends ChangeNotifier {
   }
 
   Future<void> reconnect() async {
+    _textAgentSub?.cancel();
+    _textAgent?.dispose();
+    _textAgent = null;
+    _textAgentConfig = null;
+    _ttsAudioSub?.cancel();
+    _ttsSpeakingSub?.cancel();
+    _tts?.dispose();
+    _tts = null;
+    _ttsConfig = null;
     _levelSub?.cancel();
     _speakingSub?.cancel();
     _audioSub?.cancel();
@@ -1004,6 +1144,11 @@ class AgentService extends ChangeNotifier {
   @override
   void dispose() {
     _cancelSettleTimer();
+    _textAgentSub?.cancel();
+    _textAgent?.dispose();
+    _ttsAudioSub?.cancel();
+    _ttsSpeakingSub?.cancel();
+    _tts?.dispose();
     _levelSub?.cancel();
     _speakingSub?.cancel();
     _audioSub?.cancel();

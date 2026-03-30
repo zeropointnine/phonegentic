@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
+import '../agent_service.dart';
 import '../theme_provider.dart';
 
 class AgentSettingsTab extends StatefulWidget {
@@ -13,13 +15,18 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   VoiceAgentConfig _voice = const VoiceAgentConfig();
   TextAgentConfig _text = const TextAgentConfig();
   CallRecordingConfig _recording = const CallRecordingConfig();
+  TtsConfig _tts = const TtsConfig();
   bool _loaded = false;
+  bool _dirty = false;
+  AgentService? _agent;
 
   final _voiceKeyCtrl = TextEditingController();
   final _voiceInstructionsCtrl = TextEditingController();
   final _textOpenaiKeyCtrl = TextEditingController();
   final _textClaudeKeyCtrl = TextEditingController();
   final _systemPromptCtrl = TextEditingController();
+  final _ttsApiKeyCtrl = TextEditingController();
+  final _ttsVoiceIdCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -28,12 +35,23 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _agent ??= context.read<AgentService>();
+  }
+
+  @override
   void dispose() {
+    if (_dirty) {
+      _agent?.reconnect();
+    }
     _voiceKeyCtrl.dispose();
     _voiceInstructionsCtrl.dispose();
     _textOpenaiKeyCtrl.dispose();
     _textClaudeKeyCtrl.dispose();
     _systemPromptCtrl.dispose();
+    _ttsApiKeyCtrl.dispose();
+    _ttsVoiceIdCtrl.dispose();
     super.dispose();
   }
 
@@ -41,16 +59,20 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final v = await AgentConfigService.loadVoiceConfig();
     final t = await AgentConfigService.loadTextConfig();
     final r = await AgentConfigService.loadCallRecordingConfig();
+    final tts = await AgentConfigService.loadTtsConfig();
     if (!mounted) return;
     setState(() {
       _voice = v;
       _text = t;
       _recording = r;
+      _tts = tts;
       _voiceKeyCtrl.text = v.apiKey;
       _voiceInstructionsCtrl.text = v.instructions;
       _textOpenaiKeyCtrl.text = t.openaiApiKey;
       _textClaudeKeyCtrl.text = t.claudeApiKey;
       _systemPromptCtrl.text = t.systemPrompt;
+      _ttsApiKeyCtrl.text = tts.elevenLabsApiKey;
+      _ttsVoiceIdCtrl.text = tts.elevenLabsVoiceId;
       _loaded = true;
     });
   }
@@ -58,11 +80,19 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   void _updateVoice(VoiceAgentConfig v) {
     setState(() => _voice = v);
     AgentConfigService.saveVoiceConfig(v);
+    _dirty = true;
   }
 
   void _updateText(TextAgentConfig t) {
     setState(() => _text = t);
     AgentConfigService.saveTextConfig(t);
+    _dirty = true;
+  }
+
+  void _updateTts(TtsConfig t) {
+    setState(() => _tts = t);
+    AgentConfigService.saveTtsConfig(t);
+    _dirty = true;
   }
 
   @override
@@ -87,6 +117,11 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             _buildCallRecordingCard(),
             const SizedBox(height: 16),
             _buildTextAgentCard(),
+            if (_text.enabled &&
+                _text.provider != TextAgentProvider.openai) ...[
+              const SizedBox(height: 16),
+              _buildTtsCard(),
+            ],
             const SizedBox(height: 40),
           ],
         ),
@@ -97,6 +132,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   void _updateRecording(CallRecordingConfig r) {
     setState(() => _recording = r);
     AgentConfigService.saveCallRecordingConfig(r);
+    _dirty = true;
   }
 
   // ───── Call Recording ─────
@@ -437,6 +473,46 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     );
   }
 
+  // ───── Voice Output (TTS) ─────
+
+  Widget _buildTtsCard() {
+    final isElevenlabs = _tts.provider == TtsProvider.elevenlabs;
+
+    return _AgentCard(
+      icon: Icons.record_voice_over_rounded,
+      title: 'Voice Output',
+      subtitle: isElevenlabs ? 'ElevenLabs' : 'None',
+      enabled: isElevenlabs,
+      configured: _tts.isConfigured,
+      onToggle: (v) => _updateTts(_tts.copyWith(
+        provider: v ? TtsProvider.elevenlabs : TtsProvider.none,
+      )),
+      children: [
+        if (isElevenlabs) ...[
+          _buildKeyField('API Key', _ttsApiKeyCtrl, (val) {
+            _updateTts(_tts.copyWith(elevenLabsApiKey: val));
+          }),
+          _divider(),
+          _buildTextField('Voice ID', _ttsVoiceIdCtrl,
+              hint: 'e.g. 21m00Tcm4TlvDq8ikWAM', onChanged: (val) {
+            _updateTts(_tts.copyWith(elevenLabsVoiceId: val));
+          }),
+          _divider(),
+          _buildDropdown<String>(
+            'Model',
+            _tts.elevenLabsModelId,
+            const {
+              'eleven_flash_v2_5': 'Flash v2.5 (Fast)',
+              'eleven_multilingual_v2': 'Multilingual v2',
+              'eleven_turbo_v2_5': 'Turbo v2.5',
+            },
+            (v) => _updateTts(_tts.copyWith(elevenLabsModelId: v)),
+          ),
+        ],
+      ],
+    );
+  }
+
   // ───── Shared field builders ─────
 
   Widget _buildKeyField(
@@ -459,6 +535,42 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
                 hintText: 'sk-...',
+                hintStyle:
+                    TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextField(
+      String label, TextEditingController ctrl,
+      {String hint = '', required ValueChanged<String> onChanged}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(label,
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: TextField(
+              controller: ctrl,
+              autocorrect: false,
+              style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: hint,
                 hintStyle:
                     TextStyle(fontSize: 13, color: AppColors.textTertiary),
                 border: InputBorder.none,

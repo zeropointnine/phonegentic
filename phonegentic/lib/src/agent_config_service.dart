@@ -99,6 +99,41 @@ class TextAgentConfig {
   }
 }
 
+enum TtsProvider { none, elevenlabs }
+
+class TtsConfig {
+  final TtsProvider provider;
+  final String elevenLabsApiKey;
+  final String elevenLabsVoiceId;
+  final String elevenLabsModelId;
+
+  const TtsConfig({
+    this.provider = TtsProvider.none,
+    this.elevenLabsApiKey = '',
+    this.elevenLabsVoiceId = '',
+    this.elevenLabsModelId = 'eleven_flash_v2_5',
+  });
+
+  bool get isConfigured {
+    if (provider == TtsProvider.none) return false;
+    return elevenLabsApiKey.isNotEmpty && elevenLabsVoiceId.isNotEmpty;
+  }
+
+  TtsConfig copyWith({
+    TtsProvider? provider,
+    String? elevenLabsApiKey,
+    String? elevenLabsVoiceId,
+    String? elevenLabsModelId,
+  }) {
+    return TtsConfig(
+      provider: provider ?? this.provider,
+      elevenLabsApiKey: elevenLabsApiKey ?? this.elevenLabsApiKey,
+      elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
+      elevenLabsModelId: elevenLabsModelId ?? this.elevenLabsModelId,
+    );
+  }
+}
+
 class CallRecordingConfig {
   final bool autoRecord;
 
@@ -197,6 +232,32 @@ class AgentConfigService {
     await prefs.setString('${_prefix}text_claude_model', config.claudeModel);
     await prefs.setString(
         '${_prefix}text_system_prompt', config.systemPrompt);
+  }
+
+  static Future<TtsConfig> loadTtsConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    return TtsConfig(
+      provider: TtsProvider
+          .values[prefs.getInt('${_prefix}tts_provider') ?? 0],
+      elevenLabsApiKey:
+          prefs.getString('${_prefix}tts_elevenlabs_key') ?? '',
+      elevenLabsVoiceId:
+          prefs.getString('${_prefix}tts_elevenlabs_voice_id') ?? '',
+      elevenLabsModelId:
+          prefs.getString('${_prefix}tts_elevenlabs_model') ??
+              'eleven_flash_v2_5',
+    );
+  }
+
+  static Future<void> saveTtsConfig(TtsConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('${_prefix}tts_provider', config.provider.index);
+    await prefs.setString(
+        '${_prefix}tts_elevenlabs_key', config.elevenLabsApiKey);
+    await prefs.setString(
+        '${_prefix}tts_elevenlabs_voice_id', config.elevenLabsVoiceId);
+    await prefs.setString(
+        '${_prefix}tts_elevenlabs_model', config.elevenLabsModelId);
   }
 
   static Future<CallRecordingConfig> loadCallRecordingConfig() async {

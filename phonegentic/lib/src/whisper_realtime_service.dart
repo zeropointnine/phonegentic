@@ -486,9 +486,15 @@ class WhisperRealtimeService {
     _send({'type': 'response.create'});
   }
 
+  int _audioSendCount = 0;
   void sendAudio(Uint8List pcm16Mono24kHz) {
     _emitAudioLevel(pcm16Mono24kHz);
     if (_muted || !_connected || _ws == null) return;
+    _audioSendCount++;
+    if (_audioSendCount == 1 || _audioSendCount == 50 || _audioSendCount % 500 == 0) {
+      debugPrint('[Whisper] sendAudio #$_audioSendCount: ${pcm16Mono24kHz.length} bytes '
+          '(muted=$_muted connected=$_connected ws=${_ws != null})');
+    }
     final b64 = base64Encode(pcm16Mono24kHz);
     _send({
       'type': 'input_audio_buffer.append',
@@ -534,11 +540,16 @@ class WhisperRealtimeService {
         case 'conversation.item.input_audio_transcription.completed':
           final transcript = msg['transcript'] as String? ?? '';
           final itemId = msg['item_id'] as String? ?? '';
+          debugPrint('[Whisper] Transcription: "$transcript"');
           _transcriptionController.add(TranscriptionEvent(
             text: transcript,
             isFinal: true,
             itemId: itemId,
           ));
+          break;
+
+        case 'conversation.item.input_audio_transcription.failed':
+          debugPrint('[Whisper] TRANSCRIPTION FAILED: ${msg['error'] ?? msg}');
           break;
 
         case 'response.audio.delta':
@@ -630,41 +641,41 @@ class WhisperRealtimeService {
           break;
 
         case 'input_audio_buffer.speech_started':
-          _logger.d('VAD: speech started');
+          debugPrint('[Whisper] VAD: speech started');
           break;
 
         case 'input_audio_buffer.speech_stopped':
-          _logger.d('VAD: speech stopped');
+          debugPrint('[Whisper] VAD: speech stopped');
           break;
 
         case 'input_audio_buffer.committed':
-          _logger.d('Audio buffer committed');
+          debugPrint('[Whisper] Audio buffer committed');
           break;
 
         case 'session.created':
-          _logger.i('Session created');
+          debugPrint('[Whisper] Session created');
           break;
 
         case 'session.updated':
-          _logger.i('Session updated');
+          debugPrint('[Whisper] Session updated');
           break;
 
         case 'response.created':
-          _logger.d('Response generation started');
+          debugPrint('[Whisper] Response generation started');
           break;
 
         case 'response.done':
-          _logger.d('Response complete');
+          debugPrint('[Whisper] Response complete');
           break;
 
         case 'error':
           final error = msg['error'] as Map<String, dynamic>?;
-          _logger.e(
-              'Realtime API error: ${error?['message'] ?? error}');
+          debugPrint('[Whisper] ERROR: ${error?['message'] ?? error}');
           break;
 
         default:
-          _logger.d('Unhandled event: $type');
+          debugPrint('[Whisper] Unhandled event: $type');
+          break;
       }
     } catch (e) {
       _logger.e('Failed to parse Realtime message: $e');

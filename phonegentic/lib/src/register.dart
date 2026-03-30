@@ -208,60 +208,69 @@ class _MyRegisterWidget extends State<RegisterWidget>
   }
 
   Widget _buildTabBar() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(
-          color: AppColors.accent,
-          borderRadius: BorderRadius.circular(7),
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.accent.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withOpacity(0.5), width: 0.5),
+          ),
+          child: TabBar(
+            controller: _tabController,
+            indicator: BoxDecoration(
+              color: AppColors.accent,
+              borderRadius: BorderRadius.circular(7),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.accent.withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-          ],
+            indicatorSize: TabBarIndicatorSize.tab,
+            dividerHeight: 0,
+            labelColor: Colors.white,
+            unselectedLabelColor: AppColors.textSecondary,
+            labelStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2),
+            unselectedLabelStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                letterSpacing: -0.2),
+            tabs: const [
+              Tab(
+                height: 32,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.phone_rounded, size: 14),
+                    SizedBox(width: 6),
+                    Text('Phone'),
+                  ],
+                ),
+              ),
+              Tab(
+                height: 32,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome, size: 14),
+                    SizedBox(width: 6),
+                    Text('Agents'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-        indicatorSize: TabBarIndicatorSize.tab,
-        dividerHeight: 0,
-        labelColor: Colors.white,
-        unselectedLabelColor: AppColors.textSecondary,
-        labelStyle: const TextStyle(
-            fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: -0.2),
-        unselectedLabelStyle: const TextStyle(
-            fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: -0.2),
-        tabs: const [
-          Tab(
-            height: 32,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.phone_rounded, size: 14),
-                SizedBox(width: 6),
-                Text('Phone'),
-              ],
-            ),
-          ),
-          Tab(
-            height: 32,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.auto_awesome, size: 14),
-                SizedBox(width: 6),
-                Text('Agents'),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
