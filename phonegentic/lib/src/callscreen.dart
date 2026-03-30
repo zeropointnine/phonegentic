@@ -23,6 +23,7 @@ import 'models/agent_context.dart';
 import 'theme_provider.dart';
 import 'widgets/action_button.dart';
 import 'widgets/audio_device_sheet.dart';
+import 'widgets/voice_clone_modal.dart';
 
 class CallScreenWidget extends StatefulWidget {
   final SIPUAHelper? _helper;
@@ -63,6 +64,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   int _recSeconds = 0;
   String _recLabel = '0:00';
   int? _endingCallRecordId;
+
+  // Voice sample capture for ElevenLabs voice cloning
+  bool _isSampling = false;
+  String? _sampleParty;
+  String? _samplePath;
+  Timer? _sampleTimer;
+  int _sampleSeconds = 0;
+  String _sampleLabel = '0:00';
+  TtsConfig? _ttsConfig;
 
   late String _transferTarget;
   late Timer _timer;
@@ -127,6 +137,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _initRenderers();
     helper!.addSipUaHelperListener(this);
     _startTimer();
+    _loadTtsConfig();
+  }
+
+  Future<void> _loadTtsConfig() async {
+    final config = await AgentConfigService.loadTtsConfig();
+    if (mounted) setState(() => _ttsConfig = config);
   }
 
   @override
@@ -243,6 +259,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _timer.cancel();
     _recTimer?.cancel();
     _recTimer = null;
+    _sampleTimer?.cancel();
+    _sampleTimer = null;
+    if (_isSampling) {
+      _tapChannel.invokeMethod('stopVoiceSample');
+      _isSampling = false;
+    }
     _exitCallMode();
     Timer(const Duration(seconds: 2), () {
       if (mounted) {
@@ -373,6 +395,91 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _agent.announceRecording();
     }
     setState(() {});
+  }
+
+  // ───── Voice Sample Capture ─────
+
+  Future<void> _startVoiceSample(String party) async {
+    if (_isSampling) return;
+
+    _isSampling = true;
+    _sampleParty = party;
+    _sampleSeconds = 0;
+    _sampleLabel = '0:00';
+    _sampleTimer?.cancel();
+    _sampleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _sampleSeconds++;
+      final m = _sampleSeconds ~/ 60;
+      final s = _sampleSeconds % 60;
+      setState(() => _sampleLabel = '$m:${s.toString().padLeft(2, '0')}');
+    });
+    setState(() {});
+
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final recDir =
+          Directory(p.join(dir.path, 'phonegentic', 'voice_samples'));
+      await recDir.create(recursive: true);
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      _samplePath =
+          p.join(recDir.path, 'sample_${party}_$timestamp.wav');
+
+      await _tapChannel.invokeMethod(
+          'startVoiceSample', {'path': _samplePath, 'party': party});
+      debugPrint('[CallScreen] Voice sample started → $_samplePath ($party)');
+    } catch (e) {
+      debugPrint('[CallScreen] Voice sample failed to start: $e');
+      _samplePath = null;
+      _isSampling = false;
+      _sampleTimer?.cancel();
+      setState(() {});
+    }
+  }
+
+  Future<void> _stopVoiceSample() async {
+    if (!_isSampling) return;
+    _sampleTimer?.cancel();
+    _sampleTimer = null;
+    _isSampling = false;
+    setState(() {});
+
+    try {
+      await _tapChannel.invokeMethod('stopVoiceSample');
+      debugPrint('[CallScreen] Voice sample stopped → $_samplePath');
+    } catch (e) {
+      debugPrint('[CallScreen] Voice sample stop failed: $e');
+    }
+
+    if (_samplePath != null && mounted) {
+      final result = await showVoiceCloneModal(
+        context,
+        apiKey: _ttsConfig?.elevenLabsApiKey ?? '',
+        preRecordedPath: _samplePath,
+        sampleParty: _sampleParty,
+      );
+      if (result != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Voice "${result.name}" created'),
+            backgroundColor: AppColors.green,
+          ),
+        );
+      }
+    }
+    _samplePath = null;
+    _sampleParty = null;
+  }
+
+  void _toggleVoiceSample(String party) async {
+    if (_isSampling && _sampleParty == party) {
+      await _stopVoiceSample();
+    } else if (_isSampling) {
+      await _stopVoiceSample();
+      await _startVoiceSample(party);
+    } else {
+      await _startVoiceSample(party);
+    }
   }
 
   Future<void> _maybeAutoRecord() async {
@@ -871,6 +978,35 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               onPressed: _muteVideo,
             ),
         ]);
+        if (voiceOnly && _ttsConfig != null && _ttsConfig!.isConfigured)
+          actions.addAll([
+            ActionButton(
+              title: _isSampling && _sampleParty == 'host'
+                  ? _sampleLabel
+                  : 'Sample Me',
+              icon: _isSampling && _sampleParty == 'host'
+                  ? Icons.stop_rounded
+                  : Icons.person_rounded,
+              checked: _isSampling && _sampleParty == 'host',
+              fillColor: _isSampling && _sampleParty == 'host'
+                  ? AppColors.accent
+                  : null,
+              onPressed: () => _toggleVoiceSample('host'),
+            ),
+            ActionButton(
+              title: _isSampling && _sampleParty == 'remote'
+                  ? _sampleLabel
+                  : 'Sample Them',
+              icon: _isSampling && _sampleParty == 'remote'
+                  ? Icons.stop_rounded
+                  : Icons.group_rounded,
+              checked: _isSampling && _sampleParty == 'remote',
+              fillColor: _isSampling && _sampleParty == 'remote'
+                  ? AppColors.accent
+                  : null,
+              onPressed: () => _toggleVoiceSample('remote'),
+            ),
+          ]);
         bottomRow.addAll([
           ActionButton(
             title: _hold ? 'Resume' : 'Hold',

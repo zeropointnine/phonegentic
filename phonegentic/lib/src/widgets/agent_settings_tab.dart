@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
+import '../elevenlabs_api_service.dart';
 import '../theme_provider.dart';
+import 'voice_clone_modal.dart';
 
 class AgentSettingsTab extends StatefulWidget {
   const AgentSettingsTab({Key? key}) : super(key: key);
@@ -27,6 +29,10 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _systemPromptCtrl = TextEditingController();
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
+
+  List<ElevenLabsVoice>? _voiceList;
+  bool _voiceListLoading = false;
+  String? _voiceListError;
 
   @override
   void initState() {
@@ -75,6 +81,40 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _ttsVoiceIdCtrl.text = tts.elevenLabsVoiceId;
       _loaded = true;
     });
+    if (tts.elevenLabsApiKey.isNotEmpty) {
+      _fetchVoiceList();
+    }
+  }
+
+  Future<void> _fetchVoiceList() async {
+    final apiKey = _tts.elevenLabsApiKey;
+    if (apiKey.isEmpty) {
+      setState(() {
+        _voiceList = null;
+        _voiceListError = null;
+      });
+      return;
+    }
+    setState(() {
+      _voiceListLoading = true;
+      _voiceListError = null;
+    });
+    try {
+      final voices = await ElevenLabsApiService.listVoices(apiKey);
+      if (mounted) {
+        setState(() {
+          _voiceList = voices;
+          _voiceListLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _voiceListLoading = false;
+          _voiceListError = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
   }
 
   void _updateVoice(VoiceAgentConfig v) {
@@ -491,12 +531,10 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         if (isElevenlabs) ...[
           _buildKeyField('API Key', _ttsApiKeyCtrl, (val) {
             _updateTts(_tts.copyWith(elevenLabsApiKey: val));
+            _fetchVoiceList();
           }),
           _divider(),
-          _buildTextField('Voice ID', _ttsVoiceIdCtrl,
-              hint: 'e.g. 21m00Tcm4TlvDq8ikWAM', onChanged: (val) {
-            _updateTts(_tts.copyWith(elevenLabsVoiceId: val));
-          }),
+          _buildVoiceSelector(),
           _divider(),
           _buildDropdown<String>(
             'Model',
@@ -511,6 +549,168 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         ],
       ],
     );
+  }
+
+  Widget _buildVoiceSelector() {
+    // Fall back to text field if no voice list loaded yet
+    if (_voiceList == null && !_voiceListLoading) {
+      return _buildTextField('Voice ID', _ttsVoiceIdCtrl,
+          hint: 'e.g. 21m00Tcm4TlvDq8ikWAM', onChanged: (val) {
+        _updateTts(_tts.copyWith(elevenLabsVoiceId: val));
+      });
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 100,
+                child: Text('Voice',
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary)),
+              ),
+              if (_voiceListLoading)
+                Expanded(
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.textTertiary),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text('Loading voices...',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textTertiary)),
+                    ],
+                  ),
+                )
+              else if (_voiceList != null)
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: AppColors.border.withOpacity(0.5),
+                          width: 0.5),
+                    ),
+                    child: DropdownButton<String>(
+                      value: _voiceList!.any(
+                              (v) => v.voiceId == _tts.elevenLabsVoiceId)
+                          ? _tts.elevenLabsVoiceId
+                          : null,
+                      hint: Text('Select a voice',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.textTertiary)),
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      dropdownColor: AppColors.card,
+                      style: TextStyle(
+                          fontSize: 13, color: AppColors.textPrimary),
+                      icon: Icon(Icons.unfold_more_rounded,
+                          size: 16, color: AppColors.textTertiary),
+                      items: _voiceList!
+                          .map((v) => DropdownMenuItem<String>(
+                                value: v.voiceId,
+                                child: Text(
+                                  '${v.name}  ',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v != null) {
+                          _ttsVoiceIdCtrl.text = v;
+                          _updateTts(
+                              _tts.copyWith(elevenLabsVoiceId: v));
+                        }
+                      },
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: Text(
+                    _voiceListError ?? 'Enter API key to load voices',
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.textTertiary),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const SizedBox(width: 100),
+              SizedBox(
+                height: 28,
+                child: TextButton.icon(
+                  onPressed: _tts.elevenLabsApiKey.isEmpty
+                      ? null
+                      : _openVoiceCloneModal,
+                  icon: Icon(Icons.add_rounded, size: 14,
+                      color: AppColors.accent),
+                  label: Text('Clone Voice',
+                      style: TextStyle(
+                          fontSize: 12, color: AppColors.accent)),
+                  style: TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      side: BorderSide(
+                          color: AppColors.accent.withOpacity(0.3)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 28,
+                child: TextButton.icon(
+                  onPressed: _tts.elevenLabsApiKey.isEmpty
+                      ? null
+                      : _fetchVoiceList,
+                  icon: Icon(Icons.refresh_rounded, size: 14,
+                      color: AppColors.textTertiary),
+                  label: Text('Refresh',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textTertiary)),
+                  style: TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openVoiceCloneModal() async {
+    final result = await showVoiceCloneModal(
+      context,
+      apiKey: _tts.elevenLabsApiKey,
+    );
+    if (result != null && mounted) {
+      _ttsVoiceIdCtrl.text = result.voiceId;
+      _updateTts(_tts.copyWith(elevenLabsVoiceId: result.voiceId));
+      _fetchVoiceList();
+    }
   }
 
   // ───── Shared field builders ─────

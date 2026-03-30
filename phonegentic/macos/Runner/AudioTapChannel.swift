@@ -64,6 +64,12 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private var recordingBytesWritten: UInt32 = 0
     private var recordingPath: String?
 
+    // MARK: - Voice Sample Capture (single-party audio for voice cloning)
+    private var voiceSampleFileHandle: FileHandle?
+    private var voiceSampleBytesWritten: UInt32 = 0
+    private var voiceSamplePath: String?
+    private var voiceSampleParty: String = "host" // "host" or "remote"
+
     // MARK: - Audio Playback (AVAudioEngine — used outside of calls)
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
@@ -146,6 +152,15 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "stopCallRecording":
             stopCallRecording()
             result(nil)
+        case "startVoiceSample":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let path = args["path"] as? String ?? ""
+            let party = args["party"] as? String ?? "host"
+            startVoiceSample(path: path, party: party)
+            result(nil)
+        case "stopVoiceSample":
+            stopVoiceSample()
+            result(nil)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -206,6 +221,50 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         guard let fh = recordingFileHandle else { return }
         fh.write(data)
         recordingBytesWritten += UInt32(data.count)
+    }
+
+    // MARK: - Voice Sample Capture
+
+    private func startVoiceSample(path: String, party: String) {
+        stopVoiceSample()
+
+        let url = URL(fileURLWithPath: path)
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        FileManager.default.createFile(atPath: path, contents: nil)
+        guard let fh = FileHandle(forWritingAtPath: path) else {
+            NSLog("[AudioTap] Failed to open voice sample file: %@", path)
+            return
+        }
+
+        fh.write(Data(count: 44))
+        voiceSampleFileHandle = fh
+        voiceSampleBytesWritten = 0
+        voiceSamplePath = path
+        voiceSampleParty = party
+        NSLog("[AudioTap] Voice sample started → %@ (party=%@)", path, party)
+    }
+
+    private func stopVoiceSample() {
+        guard let fh = voiceSampleFileHandle else { return }
+
+        let dataSize = voiceSampleBytesWritten
+        let header = buildWAVHeader(sampleRate: 24000, channels: 1, bitsPerSample: 16, dataSize: dataSize)
+        fh.seek(toFileOffset: 0)
+        fh.write(header)
+        fh.closeFile()
+
+        voiceSampleFileHandle = nil
+        NSLog("[AudioTap] Voice sample stopped → %@ (%d bytes audio)", voiceSamplePath ?? "?", dataSize)
+        voiceSamplePath = nil
+        voiceSampleBytesWritten = 0
+    }
+
+    private func writeVoiceSampleData(_ data: Data) {
+        guard let fh = voiceSampleFileHandle else { return }
+        fh.write(data)
+        voiceSampleBytesWritten += UInt32(data.count)
     }
 
     private func buildWAVHeader(sampleRate: UInt32, channels: UInt16, bitsPerSample: UInt16, dataSize: UInt32) -> Data {
@@ -588,6 +647,15 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             }
             if !micData.isEmpty {
                 SpeakerIdentifier.shared.feedMicAudio(micData)
+            }
+
+            // Write single-party audio for voice cloning sample
+            if voiceSampleFileHandle != nil {
+                if voiceSampleParty == "remote", let rd = remoteData, !rd.isEmpty {
+                    writeVoiceSampleData(rd)
+                } else if voiceSampleParty == "host", !micData.isEmpty {
+                    writeVoiceSampleData(micData)
+                }
             }
 
             // Determine per-flush dominant speaker.
