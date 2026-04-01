@@ -35,6 +35,7 @@ The app captures **both sides** of a live SIP/WebRTC call -- your microphone and
 ### System overview
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
   Caller["Remote Caller\n(SIP / PSTN)"]
   SIP["SIP Server\n(Telnyx, Asterisk, etc.)"]
@@ -72,6 +73,7 @@ Phonegentic supports two agent pipeline modes, configured in **Settings > Agents
 **Standard pipeline** — OpenAI Realtime handles transcription, reasoning, and speech output in a single WebSocket connection. Lowest latency, simplest setup.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
   Tap["Audio Tap\n(native)"] -->|"PCM16 mono\n24 kHz"| WS["OpenAI Realtime\nWebSocket"]
   WS -->|transcripts| UI["Agent Panel\n(chat UI)"]
@@ -82,6 +84,7 @@ flowchart LR
 **Split pipeline** — OpenAI Realtime still captures audio and produces transcripts, but reasoning is handled by a separate LLM (Claude) and speech output by ElevenLabs TTS. This lets you mix best-in-class models for each stage.
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart LR
   Tap["Audio Tap\n(native)"] -->|"PCM16"| WS["OpenAI Realtime\n(transcription only)"]
   WS -->|transcripts| TA["TextAgentService\n(Claude)"]
@@ -93,6 +96,7 @@ flowchart LR
 ### Internal services
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 flowchart TB
   subgraph UI["UI Layer"]
     DP["DialPad"]
@@ -150,6 +154,7 @@ flowchart TB
 ### Call lifecycle
 
 ```mermaid
+%%{init: {'theme': 'neutral'}}%%
 sequenceDiagram
     actor User
     participant App as Phonegentic App
