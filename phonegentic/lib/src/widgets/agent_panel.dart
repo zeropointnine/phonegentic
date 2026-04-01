@@ -117,7 +117,9 @@ class _AgentPanelState extends State<AgentPanel> {
                 controller: _controller,
                 onSend: () => _send(agent),
                 onWhisperSend: () => _sendWhisperOneShot(agent),
-                onToggleWhisper: agent.toggleWhisperMode,
+                onToggleWhisper: agent.canToggleWhisper
+                    ? agent.toggleWhisperMode
+                    : null,
                 active: agent.active,
                 whisperMode: agent.whisperMode,
                 hasActiveCall: agent.hasActiveCall,
@@ -204,19 +206,25 @@ class _AgentHeader extends StatelessWidget {
             tooltip: agent.muted ? 'Unmute' : 'Mute',
           ),
           const SizedBox(width: 6),
-          if (agent.hasActiveCall) ...[
+          if (agent.hasActiveCall || agent.whisperMode) ...[
             _HeaderButton(
               icon: agent.whisperMode
                   ? Icons.voice_over_off_rounded
                   : Icons.record_voice_over_rounded,
-              color: agent.whisperMode
-                  ? AppColors.burntAmber
-                  : AppColors.textSecondary,
-              bgColor: agent.whisperMode
+              color: agent.canToggleWhisper
+                  ? (agent.whisperMode
+                      ? AppColors.burntAmber
+                      : AppColors.textSecondary)
+                  : AppColors.textTertiary.withOpacity(0.5),
+              bgColor: agent.canToggleWhisper && agent.whisperMode
                   ? AppColors.burntAmber.withOpacity(0.12)
                   : AppColors.card,
-              onTap: agent.toggleWhisperMode,
-              tooltip: agent.whisperMode ? 'Exit Whisper' : 'Whisper Mode',
+              onTap: agent.canToggleWhisper ? agent.toggleWhisperMode : null,
+              tooltip: !agent.canToggleWhisper
+                  ? 'Whisper locked (split pipeline)'
+                  : agent.whisperMode
+                      ? 'Exit Whisper'
+                      : 'Whisper Mode',
             ),
             const SizedBox(width: 6),
           ],
@@ -1304,7 +1312,7 @@ class _InputBar extends StatefulWidget {
   final TextEditingController controller;
   final VoidCallback onSend;
   final VoidCallback onWhisperSend;
-  final VoidCallback onToggleWhisper;
+  final VoidCallback? onToggleWhisper;
   final bool active;
   final bool whisperMode;
   final bool hasActiveCall;
@@ -1313,7 +1321,7 @@ class _InputBar extends StatefulWidget {
     required this.controller,
     required this.onSend,
     required this.onWhisperSend,
-    required this.onToggleWhisper,
+    this.onToggleWhisper,
     required this.active,
     this.whisperMode = false,
     this.hasActiveCall = false,
@@ -1428,32 +1436,45 @@ class _InputBarState extends State<_InputBar> {
           if (widget.hasActiveCall)
             Padding(
               padding: const EdgeInsets.only(bottom: 0),
-              child: GestureDetector(
-                onTap: widget.onToggleWhisper,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    color: w
-                        ? AppColors.burntAmber.withOpacity(0.15)
-                        : AppColors.card,
-                    border: Border.all(
-                      color: w
-                          ? AppColors.burntAmber.withOpacity(0.4)
-                          : AppColors.border.withOpacity(0.5),
-                      width: 0.5,
+              child: Tooltip(
+                message: widget.onToggleWhisper == null
+                    ? 'Whisper locked (split pipeline)'
+                    : w
+                        ? 'Exit Whisper'
+                        : 'Whisper Mode',
+                child: GestureDetector(
+                  onTap: widget.onToggleWhisper,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: widget.onToggleWhisper == null
+                          ? AppColors.card.withOpacity(0.5)
+                          : w
+                              ? AppColors.burntAmber.withOpacity(0.15)
+                              : AppColors.card,
+                      border: Border.all(
+                        color: widget.onToggleWhisper == null
+                            ? AppColors.border.withOpacity(0.2)
+                            : w
+                                ? AppColors.burntAmber.withOpacity(0.4)
+                                : AppColors.border.withOpacity(0.5),
+                        width: 0.5,
+                      ),
                     ),
-                  ),
-                  child: Icon(
-                    w
-                        ? Icons.voice_over_off_rounded
-                        : Icons.record_voice_over_rounded,
-                    size: 15,
-                    color: w
-                        ? AppColors.burntAmber
-                        : AppColors.textTertiary,
+                    child: Icon(
+                      w
+                          ? Icons.voice_over_off_rounded
+                          : Icons.record_voice_over_rounded,
+                      size: 15,
+                      color: widget.onToggleWhisper == null
+                          ? AppColors.textTertiary.withOpacity(0.4)
+                          : w
+                              ? AppColors.burntAmber
+                              : AppColors.textTertiary,
+                    ),
                   ),
                 ),
               ),

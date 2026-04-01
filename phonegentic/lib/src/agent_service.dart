@@ -120,6 +120,7 @@ class AgentService extends ChangeNotifier {
   bool get muted => _muted;
   bool get speaking => _speaking;
   bool get whisperMode => _whisperMode;
+  bool get canToggleWhisper => !_splitPipeline;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
   List<ChatMessage> get messages => List.unmodifiable(_messages);
