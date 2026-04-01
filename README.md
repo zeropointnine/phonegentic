@@ -476,28 +476,14 @@ On narrow windows (below 700px), the Tear Sheet, Contacts, Call History, and Aud
 
 ## Supported platforms
 
-- [x] iOS
-- [x] Android
-- [x] Web
+- [] iOS
+- [] Android
+- [] Web
 - [x] macOS
-- [x] Windows
-- [x] Linux
+- [ ] Windows
+- [ ] Linux
 
-## Install notes
 
-### Android Proguard
-
-```
--keep class io.flutter.app.** { *; }
--keep class io.flutter.plugin.**  { *; }
--keep class io.flutter.util.**  { *; }
--keep class io.flutter.view.**  { *; }
--keep class io.flutter.**  { *; }
--keep class io.flutter.plugins.**  { *; }
-
--keep class com.cloudwebrtc.webrtc.** {*;}
--keep class org.webrtc.** {*;}
-```
 
 ## FAQ
 
