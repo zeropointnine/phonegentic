@@ -87,13 +87,15 @@
 
     .nav-links a:hover { color: var(--gold); opacity: 1; }
 
+    .nav-links a.btn-github{ color: #000; opacity: 1; }
+
     .btn-github {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       padding: 8px 18px;
-      background: var(--gold);
-      color: var(--bg);
+      background: #efc35a;
+      color: #000;
       font-weight: 600;
       font-size: 0.875rem;
       border-radius: 8px;
@@ -102,7 +104,7 @@
 
     .btn-github:hover { background: var(--gold-dim); opacity: 1; transform: translateY(-1px); }
 
-    .btn-github svg { width: 18px; height: 18px; }
+    .btn-github svg { width: 18px; height: 18px; fill: #000; }
 
     /* ---- HERO ---- */
     .hero {
@@ -552,8 +554,8 @@
   <div class="container">
     <a href="#" class="nav-brand">
       <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-        <path d="M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z" fill="#d4a853"/>
-        <path d="M22 16l1.5 3.3L27 21l-3.5 1.7L22 26l-1.5-3.3L17 21l3.5-1.7L22 16z" fill="#d4a853" opacity="0.6"/>
+        <path d="M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z" fill="#efc35a"/>
+        <path d="M22 16l1.5 3.3L27 21l-3.5 1.7L22 26l-1.5-3.3L17 21l3.5-1.7L22 16z" fill="#efc35a" opacity="0.85"/>
         <path d="M7 18l1 2.2L10 21.5l-2 1.3L7 25l-1-2.2L4 21.5l2-1.3L7 18z" fill="#d4a853" opacity="0.4"/>
       </svg>
       Phonegentic AI
@@ -600,7 +602,7 @@
   <div class="container">
     <span class="section-label">Features</span>
     <h2 class="section-title">Everything you need in a smart softphone</h2>
-    <p class="section-sub">A full SIP softphone with an AI copilot that listens, speaks, and acts — in real time.</p>
+    <p class="section-sub">A full SIP softphone with an AI agent that listens, speaks, and acts — in real time.</p>
     <div class="feature-grid">
       <div class="feature-card">
         <div class="feature-icon">
@@ -771,7 +773,7 @@
 <section class="cta-section">
   <div class="container">
     <div class="cta-box">
-      <h2>Give every call an AI copilot</h2>
+      <h2>Give every call an AI agent</h2>
       <p>Open source, running locally, and ready to go. Clone the repo and start building.</p>
       <a href="https://github.com/reduxdj/phonegentic" class="btn btn-primary" target="_blank" rel="noopener">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
