@@ -32,22 +32,179 @@ The app captures **both sides** of a live SIP/WebRTC call -- your microphone and
 
 ## Architecture
 
+### System overview
+
 ```mermaid
-flowchart LR
-  Caller["Remote Caller\n(SIP / PSTN)"] <-->|"SIP / WebRTC\n(audio + signalling)"| SIP["SIP Server\n(Telnyx, Asterisk, etc.)"]
-  SIP <-->|"SIP / WebRTC"| App["Phonegentic App\n(Flutter)"]
-  App -->|"PCM16 mono 24 kHz\nvia WebSocket"| AI["OpenAI Realtime API\n(transcription + GPT + TTS)"]
-  AI -->|"TTS audio + text\nresponses"| App
+flowchart TB
+  Caller["Remote Caller\n(SIP / PSTN)"]
+  SIP["SIP Server\n(Telnyx, Asterisk, etc.)"]
+  App["Phonegentic App\n(Flutter)"]
+  OAI["OpenAI Realtime API"]
+  Claude["Claude API\n(Anthropic)"]
+  EL["ElevenLabs\nWebSocket TTS"]
+  DB[(SQLite)]
+
+  Caller <-->|"SIP / WebRTC\naudio + signalling"| SIP
+  SIP <-->|"SIP / WebRTC"| App
+
+  App -->|"PCM16 24 kHz\n(mic + remote)"| OAI
+  OAI -->|"transcripts +\nfunction calls"| App
+
+  App -.->|"transcripts"| Claude
+  Claude -.->|"streaming text\nresponses"| App
+
+  App -.->|"text chunks"| EL
+  EL -.->|"PCM16 audio"| App
+
+  App --- DB
+
+  style OAI fill:#10a37f,color:#fff
+  style Claude fill:#d97706,color:#fff
+  style EL fill:#6366f1,color:#fff
 ```
 
-**How the audio pipeline works:**
+<sub>Solid lines = standard pipeline (always active). Dashed lines = split pipeline (optional, when a separate text agent and/or TTS provider is configured).</sub>
+
+### Pipelines
+
+Phonegentic supports two agent pipeline modes, configured in **Settings > Agents**:
+
+**Standard pipeline** — OpenAI Realtime handles transcription, reasoning, and speech output in a single WebSocket connection. Lowest latency, simplest setup.
+
+```mermaid
+flowchart LR
+  Tap["Audio Tap\n(native)"] -->|"PCM16 mono\n24 kHz"| WS["OpenAI Realtime\nWebSocket"]
+  WS -->|transcripts| UI["Agent Panel\n(chat UI)"]
+  WS -->|TTS audio| Play["playResponseAudio\n→ call speaker"]
+  WS -->|function calls| Tools["Agent Tools\n(search, dial, DTMF, …)"]
+```
+
+**Split pipeline** — OpenAI Realtime still captures audio and produces transcripts, but reasoning is handled by a separate LLM (Claude) and speech output by ElevenLabs TTS. This lets you mix best-in-class models for each stage.
+
+```mermaid
+flowchart LR
+  Tap["Audio Tap\n(native)"] -->|"PCM16"| WS["OpenAI Realtime\n(transcription only)"]
+  WS -->|transcripts| TA["TextAgentService\n(Claude)"]
+  TA -->|"streaming text"| UI["Agent Panel"]
+  TA -->|"streaming text"| TTS["ElevenLabsTtsService"]
+  TTS -->|"PCM16 audio"| Play["playResponseAudio\n→ call speaker"]
+```
+
+### Internal services
+
+```mermaid
+flowchart TB
+  subgraph UI["UI Layer"]
+    DP["DialPad"]
+    AP["AgentPanel"]
+    CS["CallScreen"]
+    TS["TearSheetStrip"]
+  end
+
+  subgraph Services["Service Layer (ChangeNotifier / Provider)"]
+    AS["AgentService"]
+    JFS["JobFunctionService"]
+    CHS["CallHistoryService"]
+    ConS["ContactService"]
+    TSS["TearSheetService"]
+    SIP["SipUserCubit"]
+  end
+
+  subgraph IO["I/O Layer"]
+    WR["WhisperRealtimeService\n(OpenAI WebSocket + native audio tap)"]
+    TAS["TextAgentService\n(Claude HTTP streaming)"]
+    EL["ElevenLabsTtsService\n(WebSocket TTS)"]
+    DB[(SQLite\ncall history · contacts\njob functions · voiceprints\ntear sheets)]
+  end
+
+  DP --> SIP
+  AP --> AS
+  CS --> AS
+  TS --> TSS
+
+  AS --> WR
+  AS --> TAS
+  AS --> EL
+  AS --> JFS
+  AS --> CHS
+  AS --> ConS
+  TSS --> AS
+
+  JFS --> DB
+  CHS --> DB
+  ConS --> DB
+  TSS --> DB
+```
+
+### How the audio pipeline works
 
 1. A SIP/WebRTC call is established through any standard SIP server.
 2. A native audio tap on the device captures PCM from both the microphone (host) and the remote WebRTC stream (caller).
 3. The mixed PCM16 mono 24 kHz audio is streamed over a WebSocket to the OpenAI Realtime API.
-4. OpenAI transcribes the speech (`gpt-4o-mini-transcribe`), generates a response (GPT), and returns TTS audio.
+4. OpenAI transcribes the speech, generates a response (or, in split pipeline mode, forwards transcripts to Claude), and returns TTS audio.
 5. The TTS audio is played back into the call so both the host and the remote caller hear the agent.
 6. Transcripts and agent messages appear in a side-panel chat UI in real time.
+7. An IVR/auto-attendant detector suppresses transcripts during the settling window after a call connects, preventing robotic prompts from polluting the conversation.
+8. Speaker identification via on-device voiceprint embeddings labels transcripts with known contact names.
+
+### Call lifecycle
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant App as Phonegentic App
+    participant SIP as SIP Server
+    actor Caller as Remote Caller
+    participant Tap as Audio Tap<br/>(native)
+    participant OAI as OpenAI Realtime API
+
+    Note over App: Agent boots → WebSocket to OpenAI,<br/>sends boot context + instructions
+
+    User->>App: Presses Dial
+    App->>SIP: SIP INVITE (WebRTC)
+    SIP->>Caller: Ring
+    Caller-->>SIP: Answer
+    SIP-->>App: 200 OK → CONFIRMED
+
+    rect rgb(255, 247, 230)
+        Note over App,Tap: Settling phase (~8 s)
+        App->>Tap: enterCallMode()
+        Tap->>Tap: Register WebRTC audio processor
+        App->>OAI: [CALL_STATE: settling] (silent context)
+        Note over App: IVR detector suppresses<br/>robotic prompts
+    end
+
+    rect rgb(230, 255, 235)
+        Note over App: User taps "Party On" or timer expires → connected
+        App->>OAI: [CALL_STATE: connected] (silent context)
+
+        loop Every 100 ms while call is active
+            Tap->>Tap: Capture mic PCM + remote WebRTC PCM
+            Tap->>Tap: Mix to mono PCM16 24 kHz
+            Tap->>App: EventChannel (Uint8List chunk)
+            App->>OAI: input_audio_buffer.append (base64)
+        end
+
+        OAI-->>App: transcription.completed
+        App->>App: Speaker ID (voiceprint + dominant speaker)
+        App->>App: Display transcript in Agent Panel
+
+        Note over OAI: Model reasons + generates response
+
+        OAI-->>App: response.audio.delta (PCM16 TTS)
+        App->>Tap: playResponseAudio (PCM16)
+        Tap->>Tap: Mix TTS into capture path (→ caller)<br/>+ render path (→ host headphones)
+        Note over Tap: Echo suppression: omit mic<br/>from tap mix during TTS
+
+        Note right of Caller: Caller hears AI voice
+        Note right of User: Host hears AI voice
+    end
+
+    User->>App: Hang up
+    App->>SIP: BYE
+    App->>OAI: Disconnect WebSocket
+    Note over App: Save call history + voiceprints
+```
 
 ## Getting started
 
@@ -258,6 +415,15 @@ The system resolves the agent's instructions in this order:
 This means you can either give end users a freeform text box (the Settings approach) or wire up structured boot contexts in code for specific workflows.
 
 ## Features
+
+### Job Functions — switchable agent personas
+
+Job Functions let you define reusable agent personas and swap between them instantly. Each job function bundles a role, job description, speaker definitions, guardrails, whisper-by-default preference, and an optional ElevenLabs voice ID.
+
+- **Dropdown selector** — the agent panel header shows a dropdown of all saved job functions. Selecting one reconnects the agent with the new persona and clears the chat history for a clean start.
+- **CRUD editor** — create, edit, and delete job functions from the full-screen editor (tap the pencil icon next to the dropdown).
+- **Persisted selection** — the last-used job function is saved to `SharedPreferences` and restored on next launch.
+- **Per-function voice** — each job function can specify its own ElevenLabs voice ID, so a sales persona can sound different from a support persona.
 
 ### Tear Sheet — AI-driven call queue
 
