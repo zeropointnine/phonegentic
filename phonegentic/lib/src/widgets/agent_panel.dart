@@ -258,11 +258,7 @@ class _JobFunctionDropdown extends StatelessWidget {
 
   void _onSelected(BuildContext context, int id) async {
     await service.select(id);
-    agent.updateBootContext(
-      service.buildBootContext(),
-      jobFunctionName: service.selected?.name,
-      whisperByDefault: service.selected?.whisperByDefault,
-    );
+    agent.reconnect();
   }
 
   Future<void> _confirmDelete(BuildContext context, JobFunction jf) async {

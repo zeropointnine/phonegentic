@@ -160,11 +160,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
     }
 
     final agent = context.read<AgentService>();
-    agent.updateBootContext(
-      service.buildBootContext(),
-      jobFunctionName: service.selected?.name,
-      whisperByDefault: service.selected?.whisperByDefault,
-    );
+    agent.reconnect();
 
     if (mounted) service.closeEditor();
   }
