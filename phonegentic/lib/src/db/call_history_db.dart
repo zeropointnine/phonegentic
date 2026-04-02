@@ -852,6 +852,14 @@ class CallHistoryDb {
     );
   }
 
+  static Future<void> updateCalendarEvent(CalendarEvent event) async {
+    final db = await database;
+    final map = event.toMap();
+    map.remove('id');
+    await db.update('calendar_events', map,
+        where: 'id = ?', whereArgs: [event.id]);
+  }
+
   static Future<void> deleteCalendarEvent(int id) async {
     final db = await database;
     await db.delete('calendar_events', where: 'id = ?', whereArgs: [id]);

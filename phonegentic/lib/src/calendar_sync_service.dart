@@ -32,6 +32,8 @@ class CalendarSyncService extends ChangeNotifier {
   bool get isOpen => _isOpen;
   List<CalendarEvent> get events => List.unmodifiable(_events);
   String? get lastSwitchMessage => _lastSwitchMessage;
+  bool get hasCalendly => _calendlyService != null;
+  CalendlyService? get calendlyService => _calendlyService;
 
   set jobFunctionService(JobFunctionService jf) {
     _jobFunctionService = jf;
