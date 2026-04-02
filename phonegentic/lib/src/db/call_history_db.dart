@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../models/calendar_event.dart';
 import '../models/job_function.dart';
 
 class CallHistoryDb {
@@ -30,7 +31,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: 7,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -120,6 +121,7 @@ class CallHistoryDb {
     await _createJobFunctionsTable(db);
     await _seedDefaultJobFunction(db);
     await _createSpeakerEmbeddingsTable(db);
+    await _createCalendarEventsTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -176,6 +178,10 @@ class CallHistoryDb {
       await db.execute(
         'ALTER TABLE job_functions ADD COLUMN elevenlabs_voice_id TEXT',
       );
+    }
+
+    if (oldVersion < 7) {
+      await _createCalendarEventsTable(db);
     }
   }
 
@@ -749,5 +755,111 @@ class CallHistoryDb {
     final result =
         await db.rawQuery('SELECT COUNT(*) as cnt FROM job_functions');
     return result.first['cnt'] as int? ?? 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Calendar Events
+  // ---------------------------------------------------------------------------
+
+  static Future<void> _createCalendarEventsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS calendar_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        calendly_event_id TEXT UNIQUE,
+        title TEXT NOT NULL,
+        description TEXT,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        invitee_name TEXT,
+        invitee_email TEXT,
+        event_type TEXT,
+        job_function_id INTEGER REFERENCES job_functions(id),
+        location TEXT,
+        status TEXT DEFAULT 'active',
+        synced_at TEXT,
+        created_at TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ce_start ON calendar_events(start_time)');
+  }
+
+  static Future<int> insertCalendarEvent(CalendarEvent event) async {
+    final db = await database;
+    final map = event.toMap();
+    map.remove('id');
+    return db.insert('calendar_events', map);
+  }
+
+  static Future<void> upsertCalendarEvent(CalendarEvent event) async {
+    final db = await database;
+    if (event.calendlyEventId != null) {
+      final existing = await db.query(
+        'calendar_events',
+        where: 'calendly_event_id = ?',
+        whereArgs: [event.calendlyEventId],
+      );
+      if (existing.isNotEmpty) {
+        final id = existing.first['id'] as int;
+        final map = event.toMap();
+        map.remove('id');
+        await db.update('calendar_events', map,
+            where: 'id = ?', whereArgs: [id]);
+        return;
+      }
+    }
+    final map = event.toMap();
+    map.remove('id');
+    await db.insert('calendar_events', map);
+  }
+
+  static Future<List<CalendarEvent>> getUpcomingEvents({int limit = 20}) async {
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    final rows = await db.query(
+      'calendar_events',
+      where: "end_time >= ? AND status = 'active'",
+      whereArgs: [now],
+      orderBy: 'start_time ASC',
+      limit: limit,
+    );
+    return rows.map((r) => CalendarEvent.fromMap(r)).toList();
+  }
+
+  static Future<List<CalendarEvent>> getEventsBetween(
+      DateTime start, DateTime end) async {
+    final db = await database;
+    final rows = await db.query(
+      'calendar_events',
+      where: "start_time < ? AND end_time > ? AND status = 'active'",
+      whereArgs: [
+        end.toUtc().toIso8601String(),
+        start.toUtc().toIso8601String(),
+      ],
+      orderBy: 'start_time ASC',
+    );
+    return rows.map((r) => CalendarEvent.fromMap(r)).toList();
+  }
+
+  static Future<void> updateCalendarEventJobFunction(
+      int id, int? jobFunctionId) async {
+    final db = await database;
+    await db.update(
+      'calendar_events',
+      {'job_function_id': jobFunctionId},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<void> deleteCalendarEvent(int id) async {
+    final db = await database;
+    await db.delete('calendar_events', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<List<CalendarEvent>> getAllCalendarEvents() async {
+    final db = await database;
+    final rows = await db.query('calendar_events', orderBy: 'start_time ASC');
+    return rows.map((r) => CalendarEvent.fromMap(r)).toList();
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../demo_mode_service.dart';
 import '../theme_provider.dart';
 
 class ContactCard extends StatefulWidget {
@@ -36,17 +38,17 @@ class _ContactCardState extends State<ContactCard> {
     super.dispose();
   }
 
-  String get _displayName =>
+  String get _rawDisplayName =>
       widget.contact['display_name'] as String? ?? 'Unknown';
 
-  String get _initial => _displayName
-      .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
-      .isEmpty
-      ? '?'
-      : _displayName
-          .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
-          .substring(0, 1)
-          .toUpperCase();
+  String _displayName(DemoModeService demo) =>
+      demo.maskDisplayName(_rawDisplayName);
+
+  String _initial(DemoModeService demo) {
+    final name = _displayName(demo);
+    final cleaned = name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    return cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
+  }
 
   void _startEditing(String field, String currentValue) {
     setState(() {
@@ -66,9 +68,18 @@ class _ContactCardState extends State<ContactCard> {
     }
   }
 
-  Widget _buildField(String label, String field, {IconData? icon}) {
-    final value = widget.contact[field] as String? ?? '';
+  Widget _buildField(String label, String field,
+      {IconData? icon, required DemoModeService demo}) {
+    final rawValue = widget.contact[field] as String? ?? '';
     final isEditing = _editingField == field;
+    String value;
+    if (field == 'phone_number' && rawValue.isNotEmpty) {
+      value = demo.maskPhone(rawValue);
+    } else if (field == 'display_name') {
+      value = demo.maskDisplayName(rawValue);
+    } else {
+      value = rawValue;
+    }
 
     return GestureDetector(
       onTap: isEditing ? null : () => _startEditing(field, value),
@@ -130,6 +141,7 @@ class _ContactCardState extends State<ContactCard> {
 
   @override
   Widget build(BuildContext context) {
+    final demo = context.watch<DemoModeService>();
     return Container(
       color: AppColors.surface,
       child: Column(
@@ -147,7 +159,7 @@ class _ContactCardState extends State<ContactCard> {
             ),
             child: Center(
               child: Text(
-                _initial,
+                _initial(demo),
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w600,
@@ -160,7 +172,7 @@ class _ContactCardState extends State<ContactCard> {
           // Name
           GestureDetector(
             onTap: () =>
-                _startEditing('display_name', _displayName),
+                _startEditing('display_name', _rawDisplayName),
             child: _editingField == 'display_name'
                 ? Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -182,7 +194,7 @@ class _ContactCardState extends State<ContactCard> {
                     ),
                   )
                 : Text(
-                    _displayName,
+                    _displayName(demo),
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w600,
@@ -225,13 +237,16 @@ class _ContactCardState extends State<ContactCard> {
             ),
             child: Column(
               children: [
-                _buildField('Phone', 'phone_number', icon: Icons.phone_outlined),
-                _buildField('Email', 'email', icon: Icons.email_outlined),
+                _buildField('Phone', 'phone_number',
+                    icon: Icons.phone_outlined, demo: demo),
+                _buildField('Email', 'email',
+                    icon: Icons.email_outlined, demo: demo),
                 _buildField('Company', 'company',
-                    icon: Icons.business_outlined),
+                    icon: Icons.business_outlined, demo: demo),
                 _buildField('Notes', 'notes',
-                    icon: Icons.note_outlined),
-                _buildField('Tags', 'tags', icon: Icons.label_outlined),
+                    icon: Icons.note_outlined, demo: demo),
+                _buildField('Tags', 'tags',
+                    icon: Icons.label_outlined, demo: demo),
               ],
             ),
           ),

@@ -11,14 +11,17 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
+import 'calendar_sync_service.dart';
 import 'callscreen.dart';
 import 'contact_service.dart';
+import 'demo_mode_service.dart';
 import 'phone_formatter.dart';
 import 'job_function_service.dart';
 import 'tear_sheet_service.dart';
 import 'widgets/action_button.dart';
 import 'widgets/agent_panel.dart';
 import 'widgets/audio_device_sheet.dart';
+import 'widgets/calendar_panel.dart';
 import 'widgets/call_history_panel.dart';
 import 'widgets/contact_list_panel.dart';
 import 'widgets/job_function_editor.dart';
@@ -231,6 +234,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
     final contactService = context.watch<ContactService>();
     final tearSheetService = context.watch<TearSheetService>();
     final jobFunctionService = context.watch<JobFunctionService>();
+    final calendarService = context.watch<CalendarSyncService>();
     final width = MediaQuery.of(context).size.width;
     final showPanel = width >= 600;
     final panelWidth = showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0.0;
@@ -298,6 +302,21 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               left: 0,
               right: panelWidth,
               child: const ContactListPanel(),
+            ),
+          if (calendarService.isOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: calendarService.close,
+                child: Container(color: Colors.black54),
+              ),
+            ),
+          if (calendarService.isOpen)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: panelWidth,
+              child: const CalendarPanel(),
             ),
           if (contactService.isQuickAddOpen)
             Positioned.fill(
@@ -551,6 +570,9 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           case 'audio':
             showAudioDeviceSheet(context);
             break;
+          case 'calendar':
+            context.read<CalendarSyncService>().toggleOpen();
+            break;
         }
       },
       icon: Icon(Icons.more_horiz, color: AppColors.textSecondary, size: 20),
@@ -613,6 +635,17 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           ),
         ],
         PopupMenuItem(
+          value: 'calendar',
+          child: Row(
+            children: [
+              Icon(Icons.calendar_month_rounded,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 10),
+              const Text('Calendar', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'account',
           child: Row(
             children: [
@@ -629,6 +662,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
 
   Widget _buildPhoneContent() {
     final userPhone = TestCredentials.sipUser.displayName;
+    final demoMode = context.watch<DemoModeService>();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: SingleChildScrollView(
@@ -637,7 +671,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           children: [
             const SizedBox(height: 8),
             Text(
-              PhoneFormatter.format(userPhone),
+              demoMode.maskPhone(userPhone),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,

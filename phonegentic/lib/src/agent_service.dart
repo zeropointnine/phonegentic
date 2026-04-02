@@ -7,6 +7,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
+import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
@@ -84,6 +85,7 @@ class AgentService extends ChangeNotifier {
   StreamSubscription<ResponseTextEvent>? _responseTextSub;
   StreamSubscription<FunctionCallEvent>? _functionCallSub;
   StreamSubscription<ResponseTextEvent>? _textAgentSub;
+  StreamSubscription<ToolCallRequest>? _textAgentToolSub;
 
   TextAgentService? _textAgent;
   TextAgentConfig? _textAgentConfig;
@@ -331,6 +333,7 @@ class AgentService extends ChangeNotifier {
       systemInstructions: _buildTextAgentInstructions(),
     );
     _textAgentSub = _textAgent!.responses.listen(_appendStreamingResponse);
+    _textAgentToolSub = _textAgent!.toolCalls.listen(_onTextAgentToolCall);
 
     // Set the whisper flag so OpenAI audio responses are suppressed on the
     // Dart side, but do NOT change modalities on the server — text-only
@@ -372,6 +375,44 @@ class AgentService extends ChangeNotifier {
         'voice=${tc.elevenLabsVoiceId} model=${tc.elevenLabsModelId}');
   }
 
+  CalendarSyncService? _calendarSync;
+  set calendarSyncService(CalendarSyncService s) => _calendarSync = s;
+
+  String _buildCalendarContext() {
+    final sync = _calendarSync;
+    if (sync == null) return '';
+
+    final events = sync.events;
+    if (events.isEmpty) return '';
+
+    final buf = StringBuffer();
+    buf.writeln('\n## Calendar Schedule');
+    buf.writeln('You have access to make_call and end_call tools.');
+    buf.writeln('When a calendar event starts, follow the job function '
+        'instructions. If the event involves a call, use make_call to dial.');
+    buf.writeln('');
+
+    final now = DateTime.now();
+    for (final e in events.take(5)) {
+      final start = e.startTime.toLocal();
+      final end = e.endTime.toLocal();
+      final isNow = start.isBefore(now) && end.isAfter(now);
+      buf.write('- ${isNow ? "[NOW] " : ""}${e.title}: ');
+      buf.write('${_fmtTime(start)} – ${_fmtTime(end)}');
+      if (e.inviteeName != null) buf.write(' (${e.inviteeName})');
+      if (e.location != null) buf.write(' @ ${e.location}');
+      buf.writeln();
+    }
+    return buf.toString();
+  }
+
+  static String _fmtTime(DateTime dt) {
+    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ap = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $ap';
+  }
+
   String _buildTextAgentInstructions() {
     final hasTts = _tts != null;
     final ctx = AgentBootContext(
@@ -382,11 +423,14 @@ class AgentService extends ChangeNotifier {
       textOnly: !hasTts,
     );
     final base = ctx.toInstructions();
+    final calendar = _buildCalendarContext();
     final prompt = _textAgentConfig?.systemPrompt ?? '';
+    final buf = StringBuffer(base);
+    if (calendar.isNotEmpty) buf.write(calendar);
     if (prompt.isNotEmpty) {
-      return '$base\n\n## Additional Instructions\n$prompt';
+      buf.write('\n\n## Additional Instructions\n$prompt');
     }
-    return base;
+    return buf.toString();
   }
 
   /// Save the remote party's voiceprint embedding to SQLite for future
@@ -727,6 +771,34 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  /// Handle tool calls from the Claude text agent (split pipeline).
+  Future<void> _onTextAgentToolCall(ToolCallRequest req) async {
+    debugPrint('[AgentService] Text-agent tool: ${req.name} args=${req.arguments}');
+
+    String result;
+    try {
+      switch (req.name) {
+        case 'make_call':
+          result = await _handleMakeCall(req.arguments);
+          break;
+        case 'end_call':
+          result = _handleEndCall();
+          break;
+        case 'search_contacts':
+          result = await _handleSearchContacts(req.arguments);
+          break;
+        default:
+          result = 'Unknown tool: ${req.name}';
+      }
+    } catch (e) {
+      result = 'Error: $e';
+      debugPrint('[AgentService] Text-agent tool error: $e');
+    }
+
+    debugPrint('[AgentService] Text-agent tool result: $result');
+    _textAgent?.addToolResult(req.id, result);
+  }
+
   Future<String> _handleSearchCalls(Map<String, dynamic> args) async {
     if (callHistory == null) return 'Call history not available.';
 
@@ -938,6 +1010,33 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void addSystemMessage(String text) {
+    _messages.add(ChatMessage.system(text));
+    notifyListeners();
+  }
+
+  /// Send a system-level context update that the model can see and act on.
+  /// Also adds it to the local chat as a system message.
+  void sendSystemEvent(String text, {bool requireResponse = false}) {
+    _messages.add(ChatMessage.system(text));
+    notifyListeners();
+
+    if (_active) {
+      if (requireResponse) {
+        _whisper.sendSystemDirective(text);
+      } else {
+        _whisper.sendSystemContext(text);
+      }
+    }
+    if (_splitPipeline && _textAgent != null) {
+      if (requireResponse) {
+        _textAgent!.sendUserMessage('[SYSTEM EVENT]: $text');
+      } else {
+        _textAgent!.addSystemContext('[SYSTEM EVENT]: $text');
+      }
+    }
+  }
+
   void sendWhisperMessage(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
@@ -1123,6 +1222,7 @@ class AgentService extends ChangeNotifier {
   }
 
   Future<void> reconnect() async {
+    _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
     _textAgent?.dispose();
     _textAgent = null;
@@ -1153,6 +1253,7 @@ class AgentService extends ChangeNotifier {
   @override
   void dispose() {
     _cancelSettleTimer();
+    _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
     _textAgent?.dispose();
     _ttsAudioSub?.cancel();

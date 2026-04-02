@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'theme_provider.dart';
 import 'widgets/agent_settings_tab.dart';
+import 'widgets/user_settings_tab.dart';
 
 class RegisterWidget extends StatefulWidget {
   final SIPUAHelper? _helper;
@@ -41,7 +42,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _registerState = helper!.registerState;
     helper!.addSipUaHelperListener(this);
     _loadSettings();
@@ -202,6 +203,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
         children: [
           _buildPhoneTab(),
           const AgentSettingsTab(),
+          const UserSettingsTab(),
         ],
       ),
     );
@@ -265,6 +267,17 @@ class _MyRegisterWidget extends State<RegisterWidget>
                     Icon(Icons.auto_awesome, size: 14),
                     SizedBox(width: 6),
                     Text('Agents'),
+                  ],
+                ),
+              ),
+              Tab(
+                height: 32,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.person_rounded, size: 14),
+                    SizedBox(width: 6),
+                    Text('User'),
                   ],
                 ),
               ),

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import '../contact_service.dart';
+import '../demo_mode_service.dart';
 import '../theme_provider.dart';
 import 'contact_card.dart';
 
@@ -271,23 +272,17 @@ class _ContactTile extends StatelessWidget {
 
   const _ContactTile({required this.contact, required this.onTap});
 
-  String get _name =>
-      contact['display_name'] as String? ?? 'Unknown';
-
-  String get _phone =>
-      contact['phone_number'] as String? ?? '';
-
-  String get _initial => _name
-      .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
-      .isEmpty
-      ? '?'
-      : _name
-          .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
-          .substring(0, 1)
-          .toUpperCase();
-
   @override
   Widget build(BuildContext context) {
+    final demo = context.watch<DemoModeService>();
+    final rawName = contact['display_name'] as String? ?? 'Unknown';
+    final rawPhone = contact['phone_number'] as String? ?? '';
+    final name = demo.maskDisplayName(rawName);
+    final phone = rawPhone.isNotEmpty ? demo.maskPhone(rawPhone) : '';
+    final cleaned = name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    final initial =
+        cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -312,7 +307,7 @@ class _ContactTile extends StatelessWidget {
               ),
               child: Center(
                 child: Text(
-                  _initial,
+                  initial,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -327,7 +322,7 @@ class _ContactTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _name,
+                    name,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -335,10 +330,10 @@ class _ContactTile extends StatelessWidget {
                       letterSpacing: -0.2,
                     ),
                   ),
-                  if (_phone.isNotEmpty) ...[
+                  if (phone.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Text(
-                      _phone,
+                      phone,
                       style: TextStyle(
                         fontSize: 11,
                         color: AppColors.textTertiary,

@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import 'package:intl/intl.dart';
+
 import '../agent_service.dart';
+import '../calendar_sync_service.dart';
+import '../demo_mode_service.dart';
 import '../job_function_service.dart';
 import '../models/agent_context.dart';
 import '../models/job_function.dart';
@@ -104,6 +108,7 @@ class _AgentPanelState extends State<AgentPanel> {
           child: Column(
             children: [
               _AgentHeader(agent: agent, dragHandle: widget.dragHandle),
+              const _CalendarEventBanner(),
               if (agent.hasActiveCall) _CallInfoBar(agent: agent),
               Expanded(child: _MessageList(
                 messages: agent.messages,
@@ -235,6 +240,187 @@ class _AgentHeader extends StatelessWidget {
             onTap: agent.reconnect,
             tooltip: 'Reconnect',
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calendar Event Banner
+// ---------------------------------------------------------------------------
+
+class _CalendarEventBanner extends StatefulWidget {
+  const _CalendarEventBanner();
+
+  @override
+  State<_CalendarEventBanner> createState() => _CalendarEventBannerState();
+}
+
+class _CalendarEventBannerState extends State<_CalendarEventBanner> {
+  String? _lastPostedMessage;
+  ReminderLevel? _lastNotifiedLevel;
+
+  @override
+  Widget build(BuildContext context) {
+    final sync = context.watch<CalendarSyncService>();
+    final event = sync.nextEvent;
+    final level = sync.reminderLevel;
+
+    final switchMsg = sync.lastSwitchMessage;
+    if (switchMsg != null && switchMsg != _lastPostedMessage) {
+      _lastPostedMessage = switchMsg;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final agent = context.read<AgentService>();
+        agent.sendSystemEvent(switchMsg, requireResponse: true);
+      });
+    }
+
+    if (event != null &&
+        level != ReminderLevel.none &&
+        level != _lastNotifiedLevel) {
+      _lastNotifiedLevel = level;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final agent = context.read<AgentService>();
+        final timeFmt = DateFormat.jm();
+        final startLocal = event.startTime.toLocal();
+        final mins = sync.minutesUntilNext ?? 0;
+
+        String contextMsg;
+        switch (level) {
+          case ReminderLevel.upcoming:
+            contextMsg =
+                '[CALENDAR] Upcoming event "${event.title}" at '
+                '${timeFmt.format(startLocal)} ($mins minutes from now).';
+            break;
+          case ReminderLevel.imminent:
+            contextMsg =
+                '[CALENDAR] Event "${event.title}" starts in $mins minutes '
+                'at ${timeFmt.format(startLocal)}. Prepare now.';
+            break;
+          case ReminderLevel.active:
+            contextMsg =
+                '[CALENDAR] Event "${event.title}" is starting NOW. '
+                'Follow your job function instructions.';
+            break;
+          case ReminderLevel.none:
+            return;
+        }
+        if (event.inviteeName != null) {
+          contextMsg += ' Invitee: ${event.inviteeName}.';
+        }
+        if (event.location != null) {
+          contextMsg += ' Location: ${event.location}.';
+        }
+        agent.sendSystemEvent(contextMsg,
+            requireResponse: level == ReminderLevel.active);
+      });
+    }
+
+    if (event == null || level == ReminderLevel.none) {
+      return const SizedBox.shrink();
+    }
+
+    final timeFmt = DateFormat.jm();
+    final startLocal = event.startTime.toLocal();
+    final minutesLeft = sync.minutesUntilNext ?? 0;
+
+    Color bgColor;
+    Color timeColor;
+    Color iconColor;
+    String prefix;
+
+    switch (level) {
+      case ReminderLevel.upcoming:
+        bgColor = AppColors.surface;
+        timeColor = AppColors.textTertiary;
+        iconColor = AppColors.textTertiary;
+        prefix = 'Next: ${timeFmt.format(startLocal)}';
+        break;
+      case ReminderLevel.imminent:
+        bgColor = AppColors.accent.withOpacity(0.06);
+        timeColor = AppColors.accent;
+        iconColor = AppColors.accent;
+        prefix = minutesLeft <= 0
+            ? 'Starting now'
+            : 'In $minutesLeft min';
+        break;
+      case ReminderLevel.active:
+        bgColor = AppColors.accent.withOpacity(0.08);
+        timeColor = AppColors.accent;
+        iconColor = AppColors.accent;
+        prefix = 'Now';
+        break;
+      case ReminderLevel.none:
+        return const SizedBox.shrink();
+    }
+
+    final jfService = context.read<JobFunctionService>();
+    String? jfChipLabel;
+    if (event.jobFunctionId != null) {
+      final match = jfService.items.where((j) => j.id == event.jobFunctionId);
+      if (match.isNotEmpty) jfChipLabel = match.first.name;
+    }
+
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border(
+          bottom: BorderSide(
+              color: AppColors.border.withOpacity(0.4), width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.calendar_today_rounded,
+              size: 12, color: iconColor),
+          const SizedBox(width: 8),
+          Text(
+            prefix,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: timeColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '–',
+            style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              event.title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+          if (jfChipLabel != null && level == ReminderLevel.imminent) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                jfChipLabel,
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.accent,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -481,15 +667,17 @@ class _CallInfoBar extends StatelessWidget {
   IconData get _directionIcon =>
       agent.isOutbound ? Icons.call_made_rounded : Icons.call_received_rounded;
 
-  String get _remoteLabel {
+  String _remoteLabel(DemoModeService demo) {
     if (agent.remoteDisplayName != null && agent.remoteDisplayName!.isNotEmpty) {
-      return agent.remoteDisplayName!;
+      return demo.maskDisplayName(agent.remoteDisplayName!);
     }
-    return agent.remoteIdentity ?? 'Unknown';
+    final raw = agent.remoteIdentity ?? 'Unknown';
+    return demo.maskPhone(raw);
   }
 
   @override
   Widget build(BuildContext context) {
+    final demo = context.watch<DemoModeService>();
     final phase = agent.callPhase;
     final color = _phaseColor;
 
@@ -527,7 +715,7 @@ class _CallInfoBar extends StatelessWidget {
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        _remoteLabel,
+                        _remoteLabel(demo),
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,

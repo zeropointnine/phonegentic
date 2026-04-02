@@ -10,6 +10,7 @@ import 'package:sip_ua/sip_ua.dart';
 
 import '../agent_service.dart';
 import '../call_history_service.dart';
+import '../demo_mode_service.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
@@ -353,15 +354,22 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     }
   }
 
-  String get _name =>
-      (widget.record['remote_display_name'] as String?)?.isNotEmpty == true
-          ? widget.record['remote_display_name'] as String
-          : widget.record['remote_identity'] as String? ?? 'Unknown';
+  String _name(DemoModeService demo) {
+    final rawName =
+        (widget.record['remote_display_name'] as String?)?.isNotEmpty == true
+            ? widget.record['remote_display_name'] as String
+            : widget.record['remote_identity'] as String? ?? 'Unknown';
+    if ((widget.record['remote_display_name'] as String?)?.isNotEmpty == true) {
+      return demo.maskDisplayName(rawName);
+    }
+    return demo.maskPhone(rawName);
+  }
 
-  String get _initial => _name
-      .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
-      .substring(0, 1)
-      .toUpperCase();
+  String _initial(DemoModeService demo) {
+    final n = _name(demo);
+    final cleaned = n.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    return cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
+  }
 
   bool get _isOutbound => widget.record['direction'] == 'outbound';
 
@@ -429,7 +437,8 @@ class _CallRecordTileState extends State<_CallRecordTile> {
   }
 
   Widget _buildExpandedHeader(BuildContext context) {
-    final number = widget.record['remote_identity'] as String? ?? '';
+    final rawNumber = widget.record['remote_identity'] as String? ?? '';
+    final number = context.read<DemoModeService>().maskPhone(rawNumber);
     final direction = _isOutbound ? 'Outbound' : 'Inbound';
     final status = widget.record['status'] as String? ?? '';
 
@@ -612,6 +621,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
 
   @override
   Widget build(BuildContext context) {
+    final _demo = context.watch<DemoModeService>();
     return GestureDetector(
       onTap: widget.onTap,
       child: AnimatedContainer(
@@ -647,7 +657,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                   ),
                   child: Center(
                     child: Text(
-                      _initial,
+                      _initial(_demo),
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -674,7 +684,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
-                              _name,
+                              _name(_demo),
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 13,

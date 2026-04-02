@@ -7,13 +7,24 @@ import 'package:flutter/foundation.dart';
 import 'agent_config_service.dart';
 import 'whisper_realtime_service.dart';
 
+class ToolCallRequest {
+  final String id;
+  final String name;
+  final Map<String, dynamic> arguments;
+  const ToolCallRequest({
+    required this.id,
+    required this.name,
+    required this.arguments,
+  });
+}
+
 /// Streams call transcripts to an external LLM (Claude, etc.) and
 /// returns streaming text responses via [responses].
 class TextAgentService {
   TextAgentConfig _config;
   String _systemInstructions;
 
-  final List<Map<String, String>> _history = [];
+  final List<Map<String, dynamic>> _history = [];
   final List<String> _pendingContext = [];
   Timer? _debounceTimer;
 
@@ -22,6 +33,9 @@ class TextAgentService {
 
   final _responseController = StreamController<ResponseTextEvent>.broadcast();
   Stream<ResponseTextEvent> get responses => _responseController.stream;
+
+  final _toolCallController = StreamController<ToolCallRequest>.broadcast();
+  Stream<ToolCallRequest> get toolCalls => _toolCallController.stream;
 
   static const _debounceMs = 2500;
   static const _maxHistory = 60;
@@ -56,15 +70,36 @@ class TextAgentService {
   void sendUserMessage(String text) {
     _debounceTimer?.cancel();
     _flushPendingToHistory();
-    _history.add({'role': 'user', 'content': '[Host Message]: $text'});
+    _history.add({
+      'role': 'user',
+      'content': '[Host Message]: $text',
+    });
     _respond();
   }
 
   // ─────────────────────────────── internal ───────────────────────────────
 
+  /// Submit the result of a tool call so the model can continue.
+  void addToolResult(String toolUseId, String result) {
+    _history.add({
+      'role': 'user',
+      'content': [
+        {
+          'type': 'tool_result',
+          'tool_use_id': toolUseId,
+          'content': result,
+        }
+      ],
+    });
+    _respond();
+  }
+
   void _flushPendingToHistory() {
     if (_pendingContext.isEmpty) return;
-    _history.add({'role': 'user', 'content': _pendingContext.join('\n')});
+    _history.add({
+      'role': 'user',
+      'content': _pendingContext.join('\n'),
+    });
     _pendingContext.clear();
   }
 
@@ -100,6 +135,46 @@ class TextAgentService {
     }
   }
 
+  static const _tools = [
+    {
+      'name': 'make_call',
+      'description': 'Initiate an outbound phone call to a number.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'number': {
+            'type': 'string',
+            'description':
+                'Phone number to dial (E.164 or digits). Use "last" to redial.',
+          },
+        },
+        'required': ['number'],
+      },
+    },
+    {
+      'name': 'end_call',
+      'description': 'Hang up the current active call.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {},
+      },
+    },
+    {
+      'name': 'search_contacts',
+      'description': 'Search the local contacts database by name or number.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description': 'Name or phone number to search for.',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+  ];
+
   Future<void> _callClaude() async {
     final uri = Uri.parse('https://api.anthropic.com/v1/messages');
     final request = await _httpClient!.postUrl(uri);
@@ -113,6 +188,7 @@ class TextAgentService {
       'max_tokens': 1024,
       'system': _systemInstructions,
       'messages': _mergedHistory(),
+      'tools': _tools,
       'stream': true,
     });
     request.add(utf8.encode(body));
@@ -126,10 +202,15 @@ class TextAgentService {
     final fullText = StringBuffer();
     String sseBuf = '';
 
+    final toolBlocks = <Map<String, dynamic>>[];
+    String? _activeToolId;
+    String? _activeToolName;
+    final _activeToolInput = StringBuffer();
+
     await for (final chunk in response.transform(utf8.decoder)) {
       sseBuf += chunk;
       final lines = sseBuf.split('\n');
-      sseBuf = lines.removeLast(); // keep incomplete trailing line
+      sseBuf = lines.removeLast();
 
       for (final line in lines) {
         if (!line.startsWith('data: ')) continue;
@@ -138,7 +219,16 @@ class TextAgentService {
 
         try {
           final json = jsonDecode(data) as Map<String, dynamic>;
-          if (json['type'] == 'content_block_delta') {
+          final type = json['type'] as String? ?? '';
+
+          if (type == 'content_block_start') {
+            final cb = json['content_block'] as Map<String, dynamic>?;
+            if (cb?['type'] == 'tool_use') {
+              _activeToolId = cb!['id'] as String?;
+              _activeToolName = cb['name'] as String?;
+              _activeToolInput.clear();
+            }
+          } else if (type == 'content_block_delta') {
             final delta = json['delta'] as Map<String, dynamic>?;
             if (delta?['type'] == 'text_delta') {
               final t = delta!['text'] as String? ?? '';
@@ -147,17 +237,59 @@ class TextAgentService {
                 _responseController
                     .add(ResponseTextEvent(text: t, isFinal: false));
               }
+            } else if (delta?['type'] == 'input_json_delta') {
+              _activeToolInput
+                  .write(delta!['partial_json'] as String? ?? '');
+            }
+          } else if (type == 'content_block_stop') {
+            if (_activeToolId != null && _activeToolName != null) {
+              Map<String, dynamic> parsedInput = {};
+              try {
+                final raw = _activeToolInput.toString();
+                if (raw.isNotEmpty) {
+                  parsedInput =
+                      jsonDecode(raw) as Map<String, dynamic>;
+                }
+              } catch (_) {}
+              toolBlocks.add({
+                'type': 'tool_use',
+                'id': _activeToolId,
+                'name': _activeToolName,
+                'input': parsedInput,
+              });
+              _activeToolId = null;
+              _activeToolName = null;
+              _activeToolInput.clear();
             }
           }
         } catch (_) {}
       }
     }
 
-    final result = fullText.toString();
-    if (result.isNotEmpty) {
-      _history.add({'role': 'assistant', 'content': result});
+    final contentBlocks = <Map<String, dynamic>>[];
+    final textResult = fullText.toString();
+    if (textResult.isNotEmpty) {
+      contentBlocks.add({'type': 'text', 'text': textResult});
+    }
+    contentBlocks.addAll(toolBlocks);
+
+    if (contentBlocks.isNotEmpty) {
+      _history.add({'role': 'assistant', 'content': contentBlocks});
+    }
+
+    if (textResult.isNotEmpty) {
       _responseController
-          .add(ResponseTextEvent(text: result, isFinal: true));
+          .add(ResponseTextEvent(text: textResult, isFinal: true));
+    }
+
+    for (final tool in toolBlocks) {
+      debugPrint('[TextAgent] Tool call: ${tool['name']} '
+          'id=${tool['id']} input=${tool['input']}');
+      _toolCallController.add(ToolCallRequest(
+        id: tool['id'] as String,
+        name: tool['name'] as String,
+        arguments: tool['input'] as Map<String, dynamic>,
+      ));
     }
 
     while (_history.length > _maxHistory) {
@@ -166,17 +298,25 @@ class TextAgentService {
   }
 
   /// Claude requires strictly alternating user / assistant roles.
-  List<Map<String, String>> _mergedHistory() {
+  /// Content can be a plain String or a List of content blocks.
+  List<Map<String, dynamic>> _mergedHistory() {
     if (_history.isEmpty) return [];
-    final out = <Map<String, String>>[];
+    final out = <Map<String, dynamic>>[];
     for (final m in _history) {
-      if (out.isNotEmpty && out.last['role'] == m['role']) {
+      final role = m['role'] as String;
+      final content = m['content'];
+      final isStructured = content is List;
+
+      if (!isStructured &&
+          out.isNotEmpty &&
+          out.last['role'] == role &&
+          out.last['content'] is String) {
         out.last = {
-          'role': m['role']!,
-          'content': '${out.last['content']}\n\n${m['content']}',
+          'role': role,
+          'content': '${out.last['content']}\n\n$content',
         };
       } else {
-        out.add(Map.of(m));
+        out.add(Map<String, dynamic>.of(m));
       }
     }
     return out;
@@ -192,6 +332,7 @@ class TextAgentService {
   void dispose() {
     _debounceTimer?.cancel();
     _responseController.close();
+    _toolCallController.close();
     _httpClient?.close();
   }
 }

@@ -17,7 +17,7 @@ import 'audio_device_service.dart';
 import 'call_history_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
-import 'phone_formatter.dart';
+import 'demo_mode_service.dart';
 import 'tear_sheet_service.dart';
 import 'models/agent_context.dart';
 import 'theme_provider.dart';
@@ -814,11 +814,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     // Voice / pre-connect overlay
     if (voiceOnly || !_callConfirmed) {
       final contactService = context.read<ContactService>();
+      final demoMode = context.watch<DemoModeService>();
       final matchedContact = remoteIdentity != null
           ? contactService.lookupByPhone(remoteIdentity!)
           : null;
-      final contactName =
+      final rawContactName =
           matchedContact?['display_name'] as String?;
+      final contactName = rawContactName != null
+          ? demoMode.maskDisplayName(rawContactName)
+          : null;
       final displayInitial = (contactName ?? remoteIdentity ?? '?')
           .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
       final initial = displayInitial.isEmpty
@@ -826,7 +830,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           : displayInitial.substring(0, 1).toUpperCase();
 
       final formattedRemote = remoteIdentity != null
-          ? PhoneFormatter.format(remoteIdentity!)
+          ? demoMode.maskPhone(remoteIdentity!)
           : null;
 
       stackWidgets.add(

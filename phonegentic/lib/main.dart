@@ -1,7 +1,9 @@
 import 'package:phonegentic/src/agent_service.dart';
+import 'package:phonegentic/src/calendar_sync_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
+import 'package:phonegentic/src/demo_mode_service.dart';
 import 'package:phonegentic/src/job_function_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
@@ -58,6 +60,9 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<JobFunctionService>(
           create: (_) => JobFunctionService()..restoreLastUsed(),
         ),
+        ChangeNotifierProvider<DemoModeService>(
+          create: (_) => DemoModeService()..load(),
+        ),
         ChangeNotifierProxyProvider3<CallHistoryService, ContactService,
             JobFunctionService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
@@ -75,6 +80,15 @@ class MyApp extends StatelessWidget {
               ..callHistory = history;
             agent.tearSheetService = tearSheet;
             return tearSheet;
+          },
+        ),
+        ChangeNotifierProxyProvider2<JobFunctionService, AgentService,
+            CalendarSyncService>(
+          create: (_) => CalendarSyncService()..start(),
+          update: (_, jf, agent, sync) {
+            sync!..jobFunctionService = jf;
+            agent.calendarSyncService = sync;
+            return sync;
           },
         ),
       ],
