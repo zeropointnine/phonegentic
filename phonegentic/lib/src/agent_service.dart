@@ -843,6 +843,9 @@ class AgentService extends ChangeNotifier {
       }
     }
 
+    // Strip formatting so the SIP URI doesn't get mangled (e.g. "+1 415-533-1352" → "+14155331352")
+    number = number.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+
     try {
       final mediaConstraints = <String, dynamic>{
         'audio': true,
@@ -850,7 +853,11 @@ class AgentService extends ChangeNotifier {
       };
       final stream =
           await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      sipHelper!.call(number, voiceOnly: true, mediaStream: stream);
+      final success =
+          await sipHelper!.call(number, voiceOnly: true, mediaStream: stream);
+      if (!success) {
+        return 'Failed to make call: SIP not connected. User needs to register first.';
+      }
       return 'Call initiated to $number';
     } catch (e) {
       return 'Failed to make call: $e';
