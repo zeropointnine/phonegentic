@@ -235,6 +235,14 @@ class AgentBootContext {
       buf.writeln();
     }
 
+    buf.writeln('## Messaging (SMS)');
+    buf.writeln('When SMS is configured for this device, you may use tools to '
+        'send a new text (send_sms), reply in the conversation the host has '
+        'open (reply_sms), or search prior messages (search_messages). Use '
+        'these whenever your job description or the host calls for texting, '
+        'confirmations by SMS, or message lookup — not only during voice calls.');
+    buf.writeln();
+
     buf.writeln('## Job Function');
     buf.writeln(jobFunction);
     buf.writeln();

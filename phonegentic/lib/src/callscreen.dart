@@ -138,6 +138,18 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     helper!.addSipUaHelperListener(this);
     _startTimer();
     _loadTtsConfig();
+    _syncCallState();
+  }
+
+  void _syncCallState() {
+    if (call == null) return;
+    final s = call!.state;
+    if (s == CallStateEnum.CONFIRMED || s == CallStateEnum.ACCEPTED) {
+      _state = s;
+      _callConfirmed = true;
+    } else if (s != CallStateEnum.NONE) {
+      _state = s;
+    }
   }
 
   Future<void> _loadTtsConfig() async {
@@ -183,6 +195,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   void callStateChanged(Call call, CallState callState) {
+    if (call.id != widget._call?.id) return;
+    if (!mounted) return;
+
     // Capture the call record ID before _pushCallPhase clears it, so
     // _stopRecording can save the recording path after the file is finalized.
     if (callState.state == CallStateEnum.ENDED ||
@@ -299,7 +314,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       }
       _remoteStream = stream;
     }
-    setState(() => _resizeLocalVideo());
+    if (mounted) setState(() => _resizeLocalVideo());
   }
 
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
@@ -333,9 +348,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _recSeconds++;
       final m = _recSeconds ~/ 60;
       final s = _recSeconds % 60;
-      setState(() => _recLabel = '$m:${s.toString().padLeft(2, '0')}');
+      if (mounted) setState(() => _recLabel = '$m:${s.toString().padLeft(2, '0')}');
     });
-    setState(() {});
+    if (mounted) setState(() {});
 
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -359,22 +374,27 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _recTimer?.cancel();
     _recTimer = null;
     _isRecording = false;
-    setState(() {});
+    if (mounted) setState(() {});
+
+    final savedPath = _recordingPath;
+    final savedRecordId = _endingCallRecordId;
 
     try {
       await _tapChannel.invokeMethod('stopCallRecording');
-      debugPrint('[CallScreen] Recording stopped → $_recordingPath');
+      debugPrint('[CallScreen] Recording stopped → $savedPath');
     } catch (e) {
       debugPrint('[CallScreen] Recording stop failed: $e');
     }
 
-    if (_recordingPath != null) {
-      final history =
-          Provider.of<CallHistoryService>(context, listen: false);
-      final recordId = history.activeCallRecordId ?? _endingCallRecordId;
+    if (savedPath != null) {
+      final recordId = savedRecordId ??
+          (mounted
+              ? Provider.of<CallHistoryService>(context, listen: false)
+                  .activeCallRecordId
+              : null);
       if (recordId != null) {
         try {
-          await CallHistoryDb.updateRecordingPath(recordId, _recordingPath!);
+          await CallHistoryDb.updateRecordingPath(recordId, savedPath);
           debugPrint(
               '[CallScreen] Recording path saved for record #$recordId');
         } catch (e) {
@@ -411,9 +431,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _sampleSeconds++;
       final m = _sampleSeconds ~/ 60;
       final s = _sampleSeconds % 60;
-      setState(() => _sampleLabel = '$m:${s.toString().padLeft(2, '0')}');
+      if (mounted) setState(() => _sampleLabel = '$m:${s.toString().padLeft(2, '0')}');
     });
-    setState(() {});
+    if (mounted) setState(() {});
 
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -433,7 +453,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _samplePath = null;
       _isSampling = false;
       _sampleTimer?.cancel();
-      setState(() {});
+      if (mounted) setState(() {});
     }
   }
 
@@ -442,7 +462,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _sampleTimer?.cancel();
     _sampleTimer = null;
     _isSampling = false;
-    setState(() {});
+    if (mounted) setState(() {});
 
     try {
       await _tapChannel.invokeMethod('stopVoiceSample');
@@ -484,10 +504,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   Future<void> _maybeAutoRecord() async {
     final config = await AgentConfigService.loadCallRecordingConfig();
+    if (!mounted) return;
     if (config.autoRecord) {
       await _startRecording();
       _agent.announceRecording();
-      setState(() {});
+      if (mounted) setState(() {});
     }
   }
 
@@ -611,6 +632,50 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 onPressed: () {
                   call!.refer(_transferTarget);
                   Navigator.of(context).pop();
+                }),
+          ],
+        );
+      },
+    );
+  }
+
+  void _handleAddCall() {
+    String addCallTarget = '';
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          backgroundColor: AppColors.card,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: const Text('Add Call'),
+          content: TextField(
+            autofocus: true,
+            onChanged: (text) => addCallTarget = text,
+            decoration:
+                const InputDecoration(hintText: 'Phone number'),
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.phone,
+          ),
+          actions: [
+            TextButton(
+                child: const Text('Cancel'),
+                onPressed: () => Navigator.of(ctx).pop()),
+            TextButton(
+                child: const Text('Call'),
+                onPressed: () async {
+                  Navigator.of(ctx).pop();
+                  final number = addCallTarget.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+                  if (number.isEmpty) return;
+                  try {
+                    final stream = await navigator.mediaDevices.getUserMedia(
+                        <String, dynamic>{'audio': true, 'video': false});
+                    await helper!.call(number, voiceOnly: true, mediaStream: stream);
+                    debugPrint('[CallScreen] Conference leg initiated → $number');
+                  } catch (e) {
+                    debugPrint('[CallScreen] Add call failed: $e');
+                  }
                 }),
           ],
         );
@@ -1017,6 +1082,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             icon: _hold ? Icons.play_arrow : Icons.pause,
             checked: _hold,
             onPressed: _handleHold,
+          ),
+          ActionButton(
+            title: 'Add Call',
+            icon: Icons.person_add,
+            onPressed: _handleAddCall,
           ),
           _circleBtn(Icons.call_end, AppColors.red, '', _handleHangup),
           ActionButton(

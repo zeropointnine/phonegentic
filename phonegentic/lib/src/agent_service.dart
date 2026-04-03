@@ -393,9 +393,12 @@ class AgentService extends ChangeNotifier {
 
     final buf = StringBuffer();
     buf.writeln('\n## Calendar Schedule');
-    buf.writeln('You have access to make_call and end_call tools.');
+    buf.writeln(
+        'You have make_call, end_call, and (when configured) SMS tools '
+        '(send_sms, reply_sms, search_messages).');
     buf.writeln('When a calendar event starts, follow the job function '
-        'instructions. If the event involves a call, use make_call to dial.');
+        'instructions. If the event involves a call, use make_call to dial; '
+        'if it involves texting, use the SMS tools as appropriate.');
     buf.writeln('');
 
     final now = DateTime.now();

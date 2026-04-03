@@ -58,6 +58,8 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     /// When true, audio flows through WebRTC pipeline processors
     /// instead of direct CoreAudio capture + AVAudioEngine playback.
     private var inCallMode = false
+    /// Reference count for concurrent calls sharing call mode.
+    private var callModeRefCount = 0
 
     // MARK: - Call Recording (WAV file written from flushBuffers)
     private var recordingFileHandle: FileHandle?
@@ -296,6 +298,8 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     // MARK: - Call Mode (WebRTC pipeline injection)
 
     private func enterCallMode() {
+        callModeRefCount += 1
+        NSLog("[AudioTap] enterCallMode refCount=%d", callModeRefCount)
         guard !inCallMode else { return }
         inCallMode = true
 
@@ -316,6 +320,9 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     }
 
     private func exitCallMode() {
+        callModeRefCount = max(0, callModeRefCount - 1)
+        NSLog("[AudioTap] exitCallMode refCount=%d", callModeRefCount)
+        guard callModeRefCount == 0 else { return }
         guard inCallMode else { return }
         inCallMode = false
 

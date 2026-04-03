@@ -52,7 +52,9 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   bool _audioMuted = false;
   bool _speakerOn = false;
   bool _hasAttemptedAutoRegister = false;
-  Call? _activeCall;
+  final Map<String?, Call> _calls = {};
+  Call? _focusedCall;
+  Call? get _activeCall => _focusedCall;
 
   @override
   void initState() {
@@ -257,6 +259,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
                           ? CallScreenWidget(
                               helper,
                               _activeCall,
+                              key: ValueKey(_activeCall!.id),
                               onDismiss: _dismissCallScreen,
                             )
                           : Focus(
@@ -930,34 +933,51 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   void callStateChanged(Call call, CallState callState) {
     switch (callState.state) {
       case CallStateEnum.CALL_INITIATION:
-        setState(() => _activeCall = call);
+        setState(() {
+          _calls[call.id] = call;
+          _focusedCall = call;
+        });
         break;
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
         setState(() {
-          _audioMuted = false;
-          _speakerOn = false;
+          _calls.remove(call.id);
+          if (_focusedCall?.id == call.id && _calls.isNotEmpty) {
+            _focusedCall = _calls.values.first;
+          }
+          // When no calls remain, keep _focusedCall set so the CallScreen
+          // shows "Call Ended" for 2 seconds before onDismiss clears it.
+          if (_calls.isEmpty) {
+            _audioMuted = false;
+            _speakerOn = false;
+          }
         });
         if (callState.state == CallStateEnum.FAILED) {
           reRegisterWithCurrentUser();
         }
         break;
       case CallStateEnum.MUTED:
-        setState(() {
-          if (callState.audio == true) _audioMuted = true;
-        });
+        if (call.id == _focusedCall?.id) {
+          setState(() {
+            if (callState.audio == true) _audioMuted = true;
+          });
+        }
         break;
       case CallStateEnum.UNMUTED:
-        setState(() {
-          if (callState.audio == true) _audioMuted = false;
-        });
+        if (call.id == _focusedCall?.id) {
+          setState(() {
+            if (callState.audio == true) _audioMuted = false;
+          });
+        }
         break;
       default:
     }
   }
 
   void _dismissCallScreen() {
-    setState(() => _activeCall = null);
+    setState(() {
+      _focusedCall = _calls.values.isNotEmpty ? _calls.values.first : null;
+    });
   }
 
   void reRegisterWithCurrentUser() async {
