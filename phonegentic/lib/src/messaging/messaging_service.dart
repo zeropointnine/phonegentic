@@ -9,7 +9,9 @@ import 'messaging_config.dart';
 import 'messaging_provider.dart';
 import 'models/sms_conversation.dart';
 import 'models/sms_message.dart';
+import 'phone_numbers.dart';
 import 'telnyx_messaging_provider.dart';
+import 'twilio_messaging_provider.dart';
 import 'webhook_listener.dart';
 
 class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
@@ -78,25 +80,67 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _loadProvider() async {
-    final config = await TelnyxMessagingConfig.load();
-    if (!config.isConfigured) {
-      _provider = null;
-      return;
+    final backend = await MessagingSettings.loadBackend();
+    final telnyxConfig = await TelnyxMessagingConfig.load();
+    final twilioConfig = await TwilioMessagingConfig.load();
+
+    MessagingProvider? next;
+
+    if (backend == MessagingBackend.twilio && twilioConfig.isConfigured) {
+      next = TwilioMessagingProvider(
+        accountSid: twilioConfig.accountSid,
+        authToken: twilioConfig.authToken,
+        fromNumber: twilioConfig.fromNumber,
+        pollingIntervalSeconds: twilioConfig.pollingIntervalSeconds,
+      );
+    } else if (backend == MessagingBackend.telnyx && telnyxConfig.isConfigured) {
+      next = TelnyxMessagingProvider(
+        apiKey: telnyxConfig.apiKey,
+        fromNumber: telnyxConfig.fromNumber,
+        messagingProfileId: telnyxConfig.messagingProfileId.isEmpty
+            ? null
+            : telnyxConfig.messagingProfileId,
+        pollingIntervalSeconds: telnyxConfig.pollingIntervalSeconds,
+      );
+    } else if (twilioConfig.isConfigured) {
+      next = TwilioMessagingProvider(
+        accountSid: twilioConfig.accountSid,
+        authToken: twilioConfig.authToken,
+        fromNumber: twilioConfig.fromNumber,
+        pollingIntervalSeconds: twilioConfig.pollingIntervalSeconds,
+      );
+    } else if (telnyxConfig.isConfigured) {
+      next = TelnyxMessagingProvider(
+        apiKey: telnyxConfig.apiKey,
+        fromNumber: telnyxConfig.fromNumber,
+        messagingProfileId: telnyxConfig.messagingProfileId.isEmpty
+            ? null
+            : telnyxConfig.messagingProfileId,
+        pollingIntervalSeconds: telnyxConfig.pollingIntervalSeconds,
+      );
     }
-    final telnyx = TelnyxMessagingProvider(
-      apiKey: config.apiKey,
-      fromNumber: config.fromNumber,
-      messagingProfileId:
-          config.messagingProfileId.isEmpty ? null : config.messagingProfileId,
-      pollingIntervalSeconds: config.pollingIntervalSeconds,
-    );
-    _provider = telnyx;
+
+    _provider = next;
+    if (_provider == null) return;
+
     _incomingSub?.cancel();
     _incomingSub = _provider!.incomingMessages.listen(_onIncomingMessage);
     await _provider!.connect();
 
-    if (config.webhookUrl.isNotEmpty) {
-      _webhookListener = WebhookListener(provider: telnyx);
+    final webhookUrl = _provider is TwilioMessagingProvider
+        ? twilioConfig.webhookUrl
+        : telnyxConfig.webhookUrl;
+    if (webhookUrl.isNotEmpty) {
+      _webhookListener = WebhookListener(
+        onTelnyxJson: _provider is TelnyxMessagingProvider
+            ? (m) =>
+                (_provider as TelnyxMessagingProvider).handleWebhookPayload(m)
+            : null,
+        onTwilioForm: _provider is TwilioMessagingProvider
+            ? (f) =>
+                (_provider as TwilioMessagingProvider).handleWebhookForm(f)
+            : null,
+      );
       await _webhookListener!.start();
     }
   }
@@ -150,7 +194,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   // ---------------------------------------------------------------------------
 
   Future<void> selectConversation(String remotePhone) async {
-    _selectedRemotePhone = TelnyxMessagingProvider.ensureE164(remotePhone);
+    _selectedRemotePhone = ensureE164(remotePhone);
     await _loadMessages(_selectedRemotePhone!);
     _startReadTimer();
     notifyListeners();
@@ -174,11 +218,12 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     _lastError = null;
     if (_provider == null) {
-      _lastError = 'Messaging not configured. Set up Telnyx in Settings.';
+      _lastError =
+          'Messaging not configured. Set up SMS in Settings (Telnyx or Twilio).';
       notifyListeners();
       return null;
     }
-    final from = (_provider as TelnyxMessagingProvider).fromNumber;
+    final from = _provider!.fromNumber;
     if (from.isEmpty) {
       _lastError = 'No "from" number configured in Settings.';
       notifyListeners();
@@ -194,7 +239,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     // Optimistic update: show the message in the UI immediately
-    final normalizedTo = TelnyxMessagingProvider.ensureE164(to);
+    final normalizedTo = ensureE164(to);
     final optimistic = SmsMessage(
       from: from,
       to: normalizedTo,
@@ -262,9 +307,11 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
         }
         if (msg.status == SmsStatus.failed) {
           await _updateMessageStatus(messageId, SmsStatus.failed);
-          _lastError =
-              'Message delivery failed. Check your Telnyx 10DLC registration '
-              '(required for US numbers since Feb 2025) and account balance.';
+          _lastError = _provider!.providerType == 'twilio'
+              ? 'Message delivery failed. Check Twilio A2P 10DLC / toll-free '
+                  'registration and account balance.'
+              : 'Message delivery failed. Check your Telnyx 10DLC registration '
+                  '(required for US numbers since Feb 2025) and account balance.';
           notifyListeners();
           return;
         }
@@ -294,6 +341,11 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     if (s.contains('40310')) return 'Invalid "to" number — check the phone number.';
     if (s.contains('40300')) return 'Message rejected — check your Telnyx account.';
     if (s.contains('40010')) return 'Not 10DLC registered — required for US numbers.';
+    if (s.contains('21211')) return 'Invalid phone number (Twilio).';
+    if (s.contains('21610')) return 'Unverified or invalid Twilio "from" number.';
+    if (s.contains('20003') || s.contains('Authenticate')) {
+      return 'Twilio authentication failed — check Account SID and Auth Token.';
+    }
     if (s.contains('401') || s.contains('403')) return 'Auth failed — check your API key.';
     return s.length > 120 ? '${s.substring(0, 120)}...' : s;
   }
@@ -425,24 +477,22 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Trigger an on-demand poll (useful for pull-to-refresh).
   Future<void> syncNow() async {
-    if (_provider is TelnyxMessagingProvider) {
-      try {
-        final telnyx = _provider as TelnyxMessagingProvider;
-        final recent = await telnyx.listMessages(
-          since: DateTime.now().subtract(const Duration(days: 1)),
-          pageSize: 50,
-        );
-        for (final msg in recent) {
-          await _persistMessage(msg);
-        }
-        await _refreshConversations();
-        if (_selectedRemotePhone != null) {
-          await _loadMessages(_selectedRemotePhone!);
-        }
-        notifyListeners();
-      } catch (e) {
-        debugPrint('[MessagingService] Sync error: $e');
+    if (_provider == null) return;
+    try {
+      final recent = await _provider!.listMessages(
+        since: DateTime.now().subtract(const Duration(days: 1)),
+        pageSize: 50,
+      );
+      for (final msg in recent) {
+        await _persistMessage(msg);
       }
+      await _refreshConversations();
+      if (_selectedRemotePhone != null) {
+        await _loadMessages(_selectedRemotePhone!);
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[MessagingService] Sync error: $e');
     }
   }
 

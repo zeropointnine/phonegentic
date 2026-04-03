@@ -240,7 +240,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
-                  'Set up Telnyx Messaging in Settings',
+                  'Set up SMS (Telnyx or Twilio) in Settings',
                   style: TextStyle(
                       fontSize: 12, color: AppColors.textTertiary.withOpacity(0.6)),
                 ),

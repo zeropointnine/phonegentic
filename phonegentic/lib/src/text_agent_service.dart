@@ -161,16 +161,59 @@ class TextAgentService {
     },
     {
       'name': 'search_contacts',
-      'description': 'Search the local contacts database by name or number.',
+      'description':
+          'Search the local contacts database by name, phone, or tags. '
+          'Use not_called_since_days to find contacts with no outbound calls in N days.',
       'input_schema': {
         'type': 'object',
         'properties': {
           'query': {
             'type': 'string',
-            'description': 'Name or phone number to search for.',
+            'description':
+                'Name or phone to match. Leave empty to consider all contacts '
+                '(useful with not_called_since_days).',
+          },
+          'not_called_since_days': {
+            'type': 'integer',
+            'description':
+                'Only contacts with no calls in the last N days (e.g. 14 = two weeks).',
           },
         },
-        'required': ['query'],
+      },
+    },
+    {
+      'name': 'create_tear_sheet',
+      'description':
+          'Create a tear sheet (sequential outbound call queue) from contacts. '
+          'Search contacts first, then pass each chosen row as an entry with '
+          'phone_number and optional name.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'name': {
+            'type': 'string',
+            'description': 'Label for this tear sheet (e.g. "Follow-up calls").',
+          },
+          'entries': {
+            'type': 'array',
+            'description': 'Contacts to call in order.',
+            'items': {
+              'type': 'object',
+              'properties': {
+                'phone_number': {
+                  'type': 'string',
+                  'description': 'Number to dial (E.164 or stored format).',
+                },
+                'name': {
+                  'type': 'string',
+                  'description': 'Contact display name (optional).',
+                },
+              },
+              'required': ['phone_number'],
+            },
+          },
+        },
+        'required': ['entries'],
       },
     },
   ];

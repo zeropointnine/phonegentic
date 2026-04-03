@@ -808,6 +808,9 @@ class AgentService extends ChangeNotifier {
         case 'search_contacts':
           result = await _handleSearchContacts(req.arguments);
           break;
+        case 'create_tear_sheet':
+          result = await _handleCreateTearSheet(req.arguments);
+          break;
         case 'send_sms':
           result = await _handleSendSms(req.arguments);
           break;
@@ -835,7 +838,7 @@ class AgentService extends ChangeNotifier {
 
   Future<String> _handleSendSms(Map<String, dynamic> args) async {
     if (messagingService == null || !messagingService!.isConfigured) {
-      return 'Messaging is not configured. Set up Telnyx Messaging in Settings.';
+      return 'Messaging is not configured. Set up SMS (Telnyx or Twilio) in Settings.';
     }
     final to = args['to'] as String?;
     final text = args['text'] as String?;
@@ -1045,14 +1048,19 @@ class AgentService extends ChangeNotifier {
     final numbers = <String>[];
     final names = <String?>[];
     for (final entry in entries) {
-      if (entry is Map<String, dynamic>) {
-        final phone = entry['phone_number'] as String? ?? '';
+      if (entry is Map) {
+        final m = Map<String, dynamic>.from(entry);
+        final raw = m['phone_number'] as String? ??
+            m['phone'] as String? ??
+            m['number'] as String? ??
+            '';
+        final phone = raw.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
         if (phone.isNotEmpty) {
           numbers.add(phone);
-          names.add(entry['name'] as String?);
+          names.add(m['name'] as String? ?? m['display_name'] as String?);
         }
       } else if (entry is String && entry.isNotEmpty) {
-        numbers.add(entry);
+        numbers.add(entry.replaceAll(RegExp(r'[\s\-\(\)\.]'), ''));
         names.add(null);
       }
     }
@@ -1076,8 +1084,10 @@ class AgentService extends ChangeNotifier {
     await sheet.loadSheetById(sheetId);
 
     return 'Tear sheet "$name" created with ${numbers.length} entries. '
-        'The host can see it docked at the top of the screen. '
-        'Press Play to begin calling, or say "start the tear sheet."';
+        'The host should see a tear sheet bar (full width at the top of the window, '
+        'and under the agent header on the right) with a Play button. '
+        'There is also a receipt icon in the agent header to pause/play or open a new sheet. '
+        'Press Play to begin calling, or ask the host to say "start the tear sheet."';
   }
 
   void announceRecording() {

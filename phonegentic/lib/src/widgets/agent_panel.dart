@@ -11,6 +11,7 @@ import '../job_function_service.dart';
 import '../models/agent_context.dart';
 import '../models/job_function.dart';
 import '../models/chat_message.dart';
+import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
 class AgentPanel extends StatefulWidget {
@@ -109,6 +110,14 @@ class _AgentPanelState extends State<AgentPanel> {
             children: [
               _AgentHeader(agent: agent, dragHandle: widget.dragHandle),
               const _CalendarEventBanner(),
+              Consumer<TearSheetService>(
+                builder: (context, tearSheet, _) {
+                  if (!tearSheet.isActive) {
+                    return const SizedBox.shrink();
+                  }
+                  return _PanelTearSheetBar(service: tearSheet);
+                },
+              ),
               if (agent.hasActiveCall) _CallInfoBar(agent: agent),
               Expanded(child: _MessageList(
                 messages: agent.messages,
@@ -162,6 +171,7 @@ class _AgentHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final jfService = context.watch<JobFunctionService>();
+    final tearSheet = context.watch<TearSheetService>();
     final selectedName = jfService.selected?.name ?? 'Phonegentic AI';
 
     return Container(
@@ -204,6 +214,30 @@ class _AgentHeader extends StatelessWidget {
             ),
           ),
           _HeaderButton(
+            icon: Icons.receipt_long_rounded,
+            color: tearSheet.isActive
+                ? AppColors.accent
+                : AppColors.textSecondary,
+            bgColor: tearSheet.isActive
+                ? AppColors.accent.withOpacity(0.12)
+                : AppColors.card,
+            onTap: () {
+              if (tearSheet.isActive) {
+                if (tearSheet.isPaused) {
+                  tearSheet.play();
+                } else {
+                  tearSheet.pause();
+                }
+              } else {
+                tearSheet.openEditor();
+              }
+            },
+            tooltip: tearSheet.isActive
+                ? (tearSheet.isPaused ? 'Play tear sheet' : 'Pause tear sheet')
+                : 'Tear sheet',
+          ),
+          const SizedBox(width: 6),
+          _HeaderButton(
             icon: agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
             color: agent.muted ? AppColors.red : AppColors.textSecondary,
             bgColor: agent.muted ? AppColors.red.withOpacity(0.12) : AppColors.card,
@@ -239,6 +273,78 @@ class _AgentHeader extends StatelessWidget {
             bgColor: AppColors.card,
             onTap: agent.reconnect,
             tooltip: 'Reconnect',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Tear sheet queue controls in the agent column (Play is visible next to chat).
+class _PanelTearSheetBar extends StatelessWidget {
+  final TearSheetService service;
+
+  const _PanelTearSheetBar({required this.service});
+
+  @override
+  Widget build(BuildContext context) {
+    final n = service.items.length;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withOpacity(0.07),
+        border: Border(
+          bottom: BorderSide(
+              color: AppColors.border.withOpacity(0.4), width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.receipt_long_rounded, size: 16, color: AppColors.accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Tear sheet',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                Text(
+                  n == 0
+                      ? 'Queue loaded'
+                      : '${service.doneCount}/$n called — ${service.isPaused ? "paused" : "running"}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _HeaderButton(
+            icon: service.isPaused
+                ? Icons.play_arrow_rounded
+                : Icons.pause_rounded,
+            color: service.isPaused ? AppColors.green : AppColors.burntAmber,
+            bgColor: service.isPaused
+                ? AppColors.green.withOpacity(0.12)
+                : AppColors.burntAmber.withOpacity(0.12),
+            onTap: service.isPaused ? service.play : service.pause,
+            tooltip: service.isPaused ? 'Play' : 'Pause',
+          ),
+          const SizedBox(width: 4),
+          _HeaderButton(
+            icon: Icons.close_rounded,
+            color: AppColors.textTertiary,
+            bgColor: AppColors.card,
+            onTap: service.dismissSheet,
+            tooltip: 'Dismiss tear sheet',
           ),
         ],
       ),

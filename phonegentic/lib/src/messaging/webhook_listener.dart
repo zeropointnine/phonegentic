@@ -4,21 +4,23 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
-import 'telnyx_messaging_provider.dart';
-
-/// Lightweight local HTTP server that receives Telnyx webhook POSTs and
-/// forwards them to a [TelnyxMessagingProvider].
+/// Local HTTP server for carrier inbound webhooks.
 ///
-/// The user configures Telnyx to POST to this server's address (typically
-/// via an ngrok / cloudflare tunnel). When no webhook URL is configured,
-/// the provider falls back to polling automatically.
+/// Telnyx posts JSON; Twilio posts `application/x-www-form-urlencoded`.
+/// When no webhook URL is configured in settings, providers fall back to
+/// polling.
 class WebhookListener {
-  final TelnyxMessagingProvider provider;
+  final void Function(Map<String, dynamic> json)? onTelnyxJson;
+  final void Function(Map<String, String> form)? onTwilioForm;
   final int port;
 
   HttpServer? _server;
 
-  WebhookListener({required this.provider, this.port = 4190});
+  WebhookListener({
+    this.onTelnyxJson,
+    this.onTwilioForm,
+    this.port = 4190,
+  });
 
   bool get isRunning => _server != null;
 
@@ -49,8 +51,18 @@ class WebhookListener {
 
     try {
       final body = await utf8.decoder.bind(request).join();
-      final json = jsonDecode(body) as Map<String, dynamic>;
-      provider.handleWebhookPayload(json);
+      final mime = request.headers.contentType?.mimeType ?? '';
+      final looksTwilio =
+          body.contains('MessageSid=') || body.contains('SmsSid=');
+      if (looksTwilio && onTwilioForm != null) {
+        onTwilioForm!(_parseFormBody(body));
+      } else if (mime.contains('json') ||
+          body.trimLeft().startsWith('{') ||
+          body.trimLeft().startsWith('[')) {
+        onTelnyxJson?.call(jsonDecode(body) as Map<String, dynamic>);
+      } else if (onTwilioForm != null) {
+        onTwilioForm!(_parseFormBody(body));
+      }
       request.response
         ..statusCode = HttpStatus.ok
         ..write('OK');
@@ -61,5 +73,13 @@ class WebhookListener {
         ..write('Bad request');
     }
     await request.response.close();
+  }
+
+  static Map<String, String> _parseFormBody(String body) {
+    try {
+      return Map<String, String>.from(Uri.splitQueryString(body));
+    } catch (_) {
+      return {};
+    }
   }
 }

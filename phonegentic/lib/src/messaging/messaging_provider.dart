@@ -7,6 +7,9 @@ import 'models/sms_message.dart';
 abstract class MessagingProvider {
   String get providerType;
 
+  /// Default outbound sender (E.164 or as stored in settings).
+  String get fromNumber;
+
   /// Send an SMS (or MMS when [mediaUrls] is non-empty).
   Future<SmsMessage> sendMessage({
     required String to,

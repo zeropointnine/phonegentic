@@ -7,6 +7,7 @@ import '../demo_mode_service.dart';
 import '../messaging/messaging_config.dart';
 import '../messaging/messaging_service.dart';
 import '../messaging/telnyx_messaging_provider.dart';
+import '../messaging/twilio_messaging_provider.dart';
 import '../theme_provider.dart';
 import '../user_config_service.dart';
 
@@ -21,19 +22,26 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   CalendlyConfig _calendly = const CalendlyConfig();
   DemoModeConfig _demo = const DemoModeConfig();
   TelnyxMessagingConfig _telnyxMsg = const TelnyxMessagingConfig();
+  TwilioMessagingConfig _twilioMsg = const TwilioMessagingConfig();
+  MessagingBackend _messagingBackend = MessagingBackend.telnyx;
   bool _loaded = false;
   bool _calendlyExpanded = false;
-  bool _telnyxMsgExpanded = false;
+  bool _smsExpanded = false;
   bool _testingConnection = false;
   String? _connectionStatus;
   bool _testingTelnyxMsg = false;
   String? _telnyxMsgStatus;
+  bool _testingTwilioMsg = false;
+  String? _twilioMsgStatus;
 
   final _calendlyKeyCtrl = TextEditingController();
   final _fakeNumberCtrl = TextEditingController();
   final _telnyxMsgKeyCtrl = TextEditingController();
   final _telnyxMsgFromCtrl = TextEditingController();
   final _telnyxMsgProfileCtrl = TextEditingController();
+  final _twilioSidCtrl = TextEditingController();
+  final _twilioTokenCtrl = TextEditingController();
+  final _twilioFromCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -48,6 +56,9 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _telnyxMsgKeyCtrl.dispose();
     _telnyxMsgFromCtrl.dispose();
     _telnyxMsgProfileCtrl.dispose();
+    _twilioSidCtrl.dispose();
+    _twilioTokenCtrl.dispose();
+    _twilioFromCtrl.dispose();
     super.dispose();
   }
 
@@ -55,16 +66,23 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final c = await UserConfigService.loadCalendlyConfig();
     final d = await UserConfigService.loadDemoModeConfig();
     final t = await TelnyxMessagingConfig.load();
+    final tw = await TwilioMessagingConfig.load();
+    final backend = await MessagingSettings.loadBackend();
     if (!mounted) return;
     setState(() {
       _calendly = c;
       _demo = d;
       _telnyxMsg = t;
+      _twilioMsg = tw;
+      _messagingBackend = backend;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
       _telnyxMsgKeyCtrl.text = t.apiKey;
       _telnyxMsgFromCtrl.text = t.fromNumber;
       _telnyxMsgProfileCtrl.text = t.messagingProfileId;
+      _twilioSidCtrl.text = tw.accountSid;
+      _twilioTokenCtrl.text = tw.authToken;
+      _twilioFromCtrl.text = tw.fromNumber;
       _loaded = true;
     });
   }
@@ -90,8 +108,50 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   void _updateTelnyxMsg(TelnyxMessagingConfig t) {
     setState(() => _telnyxMsg = t);
     t.save();
-    if (t.isConfigured) {
-      context.read<MessagingService>().reconfigure();
+    context.read<MessagingService>().reconfigure();
+  }
+
+  void _updateTwilioMsg(TwilioMessagingConfig t) {
+    setState(() => _twilioMsg = t);
+    t.save();
+    context.read<MessagingService>().reconfigure();
+  }
+
+  Future<void> _setMessagingBackend(MessagingBackend b) async {
+    setState(() => _messagingBackend = b);
+    await MessagingSettings.saveBackend(b);
+    if (!mounted) return;
+    context.read<MessagingService>().reconfigure();
+  }
+
+  Future<void> _testTwilioMsgConnection() async {
+    if (_twilioMsg.accountSid.isEmpty || _twilioMsg.authToken.isEmpty) {
+      setState(() => _twilioMsgStatus = 'Enter Account SID and Auth Token');
+      return;
+    }
+    setState(() {
+      _testingTwilioMsg = true;
+      _twilioMsgStatus = null;
+    });
+    try {
+      final provider = TwilioMessagingProvider(
+        accountSid: _twilioMsg.accountSid,
+        authToken: _twilioMsg.authToken,
+        fromNumber: _twilioMsg.fromNumber.isEmpty ? '+10000000000' : _twilioMsg.fromNumber,
+      );
+      final ok = await provider.testConnection();
+      if (!mounted) return;
+      setState(() {
+        _twilioMsgStatus =
+            ok ? 'Connected to Twilio' : 'Invalid credentials or network error';
+        _testingTwilioMsg = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _twilioMsgStatus = 'Network error — check your connection';
+        _testingTwilioMsg = false;
+      });
     }
   }
 
@@ -226,27 +286,48 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               ],
               Divider(
                   height: 0.5, color: AppColors.border.withOpacity(0.5)),
-              _buildTelnyxMsgHeader(),
-              if (_telnyxMsgExpanded) ...[
+              _buildSmsHeader(),
+              if (_smsExpanded) ...[
                 Divider(
                     height: 0.5,
                     color: AppColors.border.withOpacity(0.5)),
-                _buildKeyField('API Key', _telnyxMsgKeyCtrl, (val) {
-                  _updateTelnyxMsg(_telnyxMsg.copyWith(apiKey: val));
-                  setState(() => _telnyxMsgStatus = null);
-                }),
-                _divider(),
-                _buildPlainField('From Number', _telnyxMsgFromCtrl,
-                    '+18005551234', (val) {
-                  _updateTelnyxMsg(_telnyxMsg.copyWith(fromNumber: val));
-                }),
-                _divider(),
-                _buildPlainField('Profile ID', _telnyxMsgProfileCtrl,
-                    'Optional', (val) {
-                  _updateTelnyxMsg(
-                      _telnyxMsg.copyWith(messagingProfileId: val));
-                }),
-                _buildTelnyxMsgTestRow(),
+                _buildMessagingBackendRow(),
+                if (_messagingBackend == MessagingBackend.telnyx) ...[
+                  _divider(),
+                  _buildKeyField('API Key', _telnyxMsgKeyCtrl, (val) {
+                    _updateTelnyxMsg(_telnyxMsg.copyWith(apiKey: val));
+                    setState(() => _telnyxMsgStatus = null);
+                  }),
+                  _divider(),
+                  _buildPlainField('From Number', _telnyxMsgFromCtrl,
+                      '+18005551234', (val) {
+                    _updateTelnyxMsg(_telnyxMsg.copyWith(fromNumber: val));
+                  }),
+                  _divider(),
+                  _buildPlainField('Profile ID', _telnyxMsgProfileCtrl,
+                      'Optional', (val) {
+                    _updateTelnyxMsg(
+                        _telnyxMsg.copyWith(messagingProfileId: val));
+                  }),
+                  _buildTelnyxMsgTestRow(),
+                ] else ...[
+                  _divider(),
+                  _buildPlainField('Account SID', _twilioSidCtrl, 'AC…', (val) {
+                    _updateTwilioMsg(_twilioMsg.copyWith(accountSid: val));
+                    setState(() => _twilioMsgStatus = null);
+                  }),
+                  _divider(),
+                  _buildKeyField('Auth Token', _twilioTokenCtrl, (val) {
+                    _updateTwilioMsg(_twilioMsg.copyWith(authToken: val));
+                    setState(() => _twilioMsgStatus = null);
+                  }),
+                  _divider(),
+                  _buildPlainField('From Number', _twilioFromCtrl,
+                      '+18005551234', (val) {
+                    _updateTwilioMsg(_twilioMsg.copyWith(fromNumber: val));
+                  }),
+                  _buildTwilioMsgTestRow(),
+                ],
               ],
             ],
           ),
@@ -546,12 +627,19 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     );
   }
 
-  // ───── Telnyx Messaging ─────
+  // ───── SMS / MMS (Telnyx or Twilio) ─────
 
-  Widget _buildTelnyxMsgHeader() {
+  bool get _smsConfiguredForBackend {
+    if (_messagingBackend == MessagingBackend.twilio) {
+      return _twilioMsg.isConfigured;
+    }
+    return _telnyxMsg.isConfigured;
+  }
+
+  Widget _buildSmsHeader() {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => setState(() => _telnyxMsgExpanded = !_telnyxMsgExpanded),
+      onTap: () => setState(() => _smsExpanded = !_smsExpanded),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
@@ -561,13 +649,13 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               height: 32,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
-                color: _telnyxMsg.isConfigured
+                color: _smsConfiguredForBackend
                     ? AppColors.accent.withOpacity(0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.sms_rounded,
                   size: 17,
-                  color: _telnyxMsg.isConfigured
+                  color: _smsConfiguredForBackend
                       ? AppColors.accent
                       : AppColors.textTertiary),
             ),
@@ -577,7 +665,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Telnyx Messaging',
+                    'SMS & MMS',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -589,7 +677,9 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   Row(
                     children: [
                       Text(
-                        'SMS & MMS messaging',
+                        _messagingBackend == MessagingBackend.twilio
+                            ? 'Twilio'
+                            : 'Telnyx',
                         style: TextStyle(
                             fontSize: 11, color: AppColors.textTertiary),
                       ),
@@ -598,17 +688,17 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: _telnyxMsg.isConfigured
+                          color: _smsConfiguredForBackend
                               ? AppColors.green.withOpacity(0.12)
                               : AppColors.orange.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          _telnyxMsg.isConfigured ? 'Configured' : 'Not Set',
+                          _smsConfiguredForBackend ? 'Configured' : 'Not Set',
                           style: TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.w600,
-                            color: _telnyxMsg.isConfigured
+                            color: _smsConfiguredForBackend
                                 ? AppColors.green
                                 : AppColors.orange,
                           ),
@@ -620,7 +710,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               ),
             ),
             Icon(
-              _telnyxMsgExpanded
+              _smsExpanded
                   ? Icons.expand_less_rounded
                   : Icons.expand_more_rounded,
               size: 20,
@@ -628,6 +718,99 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildMessagingBackendRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Provider',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<MessagingBackend>(
+                value: _messagingBackend,
+                isExpanded: true,
+                style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                dropdownColor: AppColors.surface,
+                items: const [
+                  DropdownMenuItem(
+                    value: MessagingBackend.telnyx,
+                    child: Text('Telnyx'),
+                  ),
+                  DropdownMenuItem(
+                    value: MessagingBackend.twilio,
+                    child: Text('Twilio'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  _setMessagingBackend(v);
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTwilioMsgTestRow() {
+    final isSuccess =
+        _twilioMsgStatus != null && _twilioMsgStatus!.startsWith('Connected');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: _testingTwilioMsg ? null : _testTwilioMsgConnection,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: _testingTwilioMsg
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+            ),
+          ),
+          if (_twilioMsgStatus != null) ...[
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _twilioMsgStatus!,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isSuccess ? AppColors.green : AppColors.red,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

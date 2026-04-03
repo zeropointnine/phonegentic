@@ -6,11 +6,13 @@ import 'package:http/http.dart' as http;
 
 import 'messaging_provider.dart';
 import 'models/sms_message.dart';
+import 'phone_numbers.dart';
 
 class TelnyxMessagingProvider implements MessagingProvider {
   static const _baseUrl = 'https://api.telnyx.com/v2';
 
   final String apiKey;
+  @override
   final String fromNumber;
   final String? messagingProfileId;
   final int pollingIntervalSeconds;
@@ -432,25 +434,6 @@ class TelnyxMessagingProvider implements MessagingProvider {
     return RegExp(
       r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
     ).hasMatch(s);
-  }
-
-  /// Strip formatting and ensure proper E.164 with country code.
-  static String ensureE164(String number) {
-    var n = number.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
-    if (n.startsWith('+')) return n;
-    // 10-digit North American number without country code
-    if (RegExp(r'^\d{10}$').hasMatch(n)) {
-      return '+1$n';
-    }
-    // 11-digit starting with 1 (e.g. 14155331352)
-    if (n.length == 11 && n.startsWith('1')) {
-      return '+$n';
-    }
-    // Anything else: just prepend +
-    if (n.isNotEmpty) {
-      return '+$n';
-    }
-    return n;
   }
 }
 
