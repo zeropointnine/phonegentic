@@ -277,7 +277,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             ],
           ),
           if (historyService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: historyService.closeHistory,
                 child: Container(color: Colors.black54),
@@ -292,7 +296,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const CallHistoryPanel(),
             ),
           if (contactService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: contactService.closeContacts,
                 child: Container(color: Colors.black54),
@@ -307,7 +315,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const ContactListPanel(),
             ),
           if (calendarService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: calendarService.close,
                 child: Container(color: Colors.black54),
@@ -322,7 +334,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const CalendarPanel(),
             ),
           if (messagingService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: messagingService.close,
                 child: Container(color: Colors.black54),
@@ -337,37 +353,61 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const MessagingPanel(),
             ),
           if (contactService.isQuickAddOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: contactService.closeQuickAdd,
                 child: Container(color: Colors.black38),
               ),
             ),
           if (contactService.isQuickAddOpen)
-            const Positioned.fill(
-              child: QuickAddOverlay(),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const QuickAddOverlay(),
             ),
           if (tearSheetService.isEditorOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: tearSheetService.closeEditor,
                 child: Container(color: Colors.black38),
               ),
             ),
           if (tearSheetService.isEditorOpen)
-            const Positioned.fill(
-              child: TearSheetEditor(),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const TearSheetEditor(),
             ),
           if (jobFunctionService.isEditorOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: jobFunctionService.closeEditor,
                 child: Container(color: Colors.black38),
               ),
             ),
           if (jobFunctionService.isEditorOpen)
-            const Positioned.fill(
-              child: JobFunctionEditor(),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const JobFunctionEditor(),
             ),
         ],
       ),
