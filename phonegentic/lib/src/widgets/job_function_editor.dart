@@ -37,6 +37,9 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   bool _voiceListLoading = false;
   String? _selectedVoiceId;
 
+  // Mute policy override (null = use global, 0 = autoToggle, 1 = stayMuted)
+  int? _mutePolicyOverride;
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +54,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       _descController.text = _existing!.jobDescription;
       _whisperByDefault = _existing!.whisperByDefault;
       _selectedVoiceId = _existing!.elevenLabsVoiceId;
+      _mutePolicyOverride = _existing!.mutePolicyOverride;
       _speakers = _existing!.speakers
           .map((s) => _SpeakerRow(
                 role: TextEditingController(text: s.role),
@@ -148,6 +152,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       guardrails: guardrails.isEmpty ? null : guardrails,
       whisperByDefault: _whisperByDefault,
       elevenLabsVoiceId: _selectedVoiceId,
+      mutePolicyOverride: _mutePolicyOverride,
       createdAt: _existing?.createdAt,
     );
 
@@ -308,6 +313,8 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                         ),
                         const SizedBox(height: 14),
                         _buildWhisperToggle(),
+                        const SizedBox(height: 14),
+                        _buildMutePolicyOverride(),
                         if (_ttsConfig != null &&
                             _ttsConfig!.provider == TtsProvider.elevenlabs &&
                             _ttsConfig!.elevenLabsApiKey.isNotEmpty) ...[
@@ -503,6 +510,83 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       ),
     );
   }
+
+  Widget _buildMutePolicyOverride() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Agent Voice During Calls'),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border:
+                Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+          ),
+          child: Column(
+            children: [
+              _mutePolicyTile(null, 'Use global setting'),
+              _thinDivider(),
+              _mutePolicyTile(0, 'Auto unmute on call'),
+              _thinDivider(),
+              _mutePolicyTile(1, 'Stay muted'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _mutePolicyTile(int? value, String label) {
+    final selected = _mutePolicyOverride == value;
+    return GestureDetector(
+      onTap: () => setState(() => _mutePolicyOverride = value),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.border,
+                  width: selected ? 4.5 : 1.5,
+                ),
+                color: selected ? AppColors.accent : Colors.transparent,
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.onAccent,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _thinDivider() => Divider(
+      height: 0.5, indent: 12, color: AppColors.border.withOpacity(0.3));
 
   Widget _buildVoiceSelector() {
     return Column(

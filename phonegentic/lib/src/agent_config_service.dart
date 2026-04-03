@@ -2,6 +2,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/agent_context.dart';
 
+enum AgentMutePolicy {
+  /// Unmute (voice on) when a call starts, mute (text-only) when it ends.
+  autoToggle,
+
+  /// Stay muted unless the user manually unmutes.
+  stayMuted,
+}
+
 enum TextAgentProvider { openai, claude }
 
 enum TranscriptionTarget { both, localOnly, remoteOnly }
@@ -271,5 +279,16 @@ class AgentConfigService {
       CallRecordingConfig config) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('${_prefix}call_auto_record', config.autoRecord);
+  }
+
+  static Future<AgentMutePolicy> loadMutePolicy() async {
+    final prefs = await SharedPreferences.getInstance();
+    final idx = prefs.getInt('${_prefix}mute_policy') ?? 0;
+    return AgentMutePolicy.values[idx.clamp(0, AgentMutePolicy.values.length - 1)];
+  }
+
+  static Future<void> saveMutePolicy(AgentMutePolicy policy) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('${_prefix}mute_policy', policy.index);
   }
 }

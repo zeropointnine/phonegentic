@@ -457,6 +457,64 @@ class WhisperRealtimeService {
           },
         },
       },
+      {
+        'type': 'function',
+        'name': 'start_voice_sample',
+        'description':
+            'Start capturing a voice sample from the specified call party for '
+                'voice cloning. Use this to record audio that will be sent to '
+                'ElevenLabs to create a cloned voice. Let them speak for at '
+                'least 10-15 seconds before stopping.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'party': {
+              'type': 'string',
+              'enum': ['remote', 'host'],
+              'description':
+                  'Which call party to sample: "remote" for the other caller, '
+                      '"host" for the app user.',
+            },
+          },
+          'required': ['party'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'stop_and_clone_voice',
+        'description':
+            'Stop the active voice sample and upload it to ElevenLabs to '
+                'create a cloned voice. Returns the new voice_id on success. '
+                'Must call start_voice_sample first.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'voice_name': {
+              'type': 'string',
+              'description':
+                  'A friendly name for the cloned voice (e.g. "Sarah\'s Voice").',
+            },
+          },
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'set_agent_voice',
+        'description':
+            'Change the agent\'s speaking voice mid-call. Use a voice_id '
+                'returned by stop_and_clone_voice or any ElevenLabs voice ID. '
+                'All subsequent agent speech will use this voice.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'voice_id': {
+              'type': 'string',
+              'description': 'The ElevenLabs voice ID to switch to.',
+            },
+          },
+          'required': ['voice_id'],
+        },
+      },
     ];
 
     _send({'type': 'session.update', 'session': session});

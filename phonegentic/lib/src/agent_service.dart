@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
@@ -11,6 +15,7 @@ import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
+import 'elevenlabs_api_service.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
 import 'models/agent_context.dart';
@@ -28,6 +33,7 @@ class AgentService extends ChangeNotifier {
   bool _speaking = false;
   bool _whisperMode = false;
   String _statusText = 'Initializing...';
+  AgentMutePolicy _globalMutePolicy = AgentMutePolicy.autoToggle;
 
   final Queue<double> _levels = Queue<double>();
   static const int waveformBars = 14;
@@ -95,10 +101,16 @@ class AgentService extends ChangeNotifier {
 
   ElevenLabsTtsService? _tts;
   TtsConfig? _ttsConfig;
+  bool _ttsMuted = false;
   StreamSubscription<Uint8List>? _ttsAudioSub;
   StreamSubscription<bool>? _ttsSpeakingSub;
 
   String? _streamingMessageId;
+
+  // Agent-initiated voice sampling state
+  static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
+  bool _agentSampling = false;
+  String? _agentSamplePath;
 
   // Deduplication: skip identical transcripts arriving within a short window
   String _lastTranscriptText = '';
@@ -117,19 +129,35 @@ class AgentService extends ChangeNotifier {
   // Settling: buffer window after SIP CONFIRMED to filter auto-attendant/IVR
   Timer? _settleTimer;
   int _ivrHitsInSettle = 0;
-  static const _settleWindowMs = 8000;
-  static const _settleExtendMs = 5000;
+  static const _settleWindowMs = 4000;
+  static const _settleExtendMs = 4000;
+
+  // Deferred greeting: nudge the agent to begin if the line stays quiet
+  // after transitioning to connected.
+  Timer? _connectedGreetTimer;
+  static const _connectedGreetDelayMs = 3000;
 
   bool get active => _active;
   bool get muted => _muted;
   bool get speaking => _speaking;
-  bool get whisperMode => _whisperMode;
-  bool get canToggleWhisper => !_splitPipeline;
+  bool get whisperMode => _splitPipeline ? _ttsMuted : _whisperMode;
+  bool get canToggleWhisper => true;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
+
+  /// Resolve the effective mute policy: job function override wins over global.
+  AgentMutePolicy get _effectiveMutePolicy {
+    final override = _jobFunctionService?.selected?.mutePolicyOverride;
+    if (override != null &&
+        override >= 0 &&
+        override < AgentMutePolicy.values.length) {
+      return AgentMutePolicy.values[override];
+    }
+    return _globalMutePolicy;
+  }
 
   void _syncBootContextFromJobFunction() {
     final selected = _jobFunctionService?.selected;
@@ -208,6 +236,7 @@ class AgentService extends ChangeNotifier {
   Future<void> _init() async {
     try {
       _syncBootContextFromJobFunction();
+      _globalMutePolicy = await AgentConfigService.loadMutePolicy();
 
       final config = await AgentConfigService.loadVoiceConfig();
       _echoGuardMs = config.echoGuardMs;
@@ -356,12 +385,19 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] TTS config: '
         'provider=${tc?.provider.name} '
         'configured=${tc?.isConfigured}');
-    if (tc == null || !tc.isConfigured) return;
+
+    // Allow TTS init with just an API key — the voice can come from the
+    // job function via updateVoiceId() even if no default voice is set.
+    final hasApiKey = tc != null &&
+        tc.provider == TtsProvider.elevenlabs &&
+        tc.elevenLabsApiKey.isNotEmpty;
+    if (!hasApiKey) return;
 
     _tts = ElevenLabsTtsService(config: tc);
 
     int elChunkCount = 0;
     _ttsAudioSub = _tts!.audioChunks.listen((pcm) {
+      if (_ttsMuted) return;
       elChunkCount++;
       if (elChunkCount <= 3 || elChunkCount % 25 == 0) {
         debugPrint('[AgentService] ElevenLabs audio #$elChunkCount: '
@@ -581,6 +617,10 @@ class AgentService extends ChangeNotifier {
   void _onTranscript(TranscriptionEvent event) async {
     if (!event.isFinal || event.text.trim().isEmpty) return;
 
+    // A real transcript arrived — cancel any pending connected greeting
+    // so the agent doesn't talk over whoever is already speaking.
+    _cancelConnectedGreeting();
+
     // Suppress transcripts while call is still setting up — but in split
     // pipeline mode, allow transcripts when idle so the user can talk to the
     // agent without an active call.
@@ -775,6 +815,15 @@ class AgentService extends ChangeNotifier {
         case 'search_messages':
           result = await _handleSearchMessages(args);
           break;
+        case 'start_voice_sample':
+          result = await _handleStartVoiceSample(args);
+          break;
+        case 'stop_and_clone_voice':
+          result = await _handleStopAndCloneVoice(args);
+          break;
+        case 'set_agent_voice':
+          result = await _handleSetAgentVoice(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -819,6 +868,15 @@ class AgentService extends ChangeNotifier {
           break;
         case 'search_messages':
           result = await _handleSearchMessages(req.arguments);
+          break;
+        case 'start_voice_sample':
+          result = await _handleStartVoiceSample(req.arguments);
+          break;
+        case 'stop_and_clone_voice':
+          result = await _handleStopAndCloneVoice(req.arguments);
+          break;
+        case 'set_agent_voice':
+          result = await _handleSetAgentVoice(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -1090,6 +1148,112 @@ class AgentService extends ChangeNotifier {
         'Press Play to begin calling, or ask the host to say "start the tear sheet."';
   }
 
+  // ---------------------------------------------------------------------------
+  // Voice sampling / cloning / swap tools (alter ego flow)
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleStartVoiceSample(Map<String, dynamic> args) async {
+    if (_agentSampling) return 'Already sampling. Stop the current sample first.';
+    if (!_callPhase.isActive && _callPhase != CallPhase.settling) {
+      return 'No active call to sample from.';
+    }
+
+    final party = (args['party'] as String?)?.toLowerCase() ?? 'remote';
+    if (party != 'remote' && party != 'host') {
+      return 'Invalid party "$party". Use "remote" or "host".';
+    }
+
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final recDir =
+          Directory(p.join(dir.path, 'phonegentic', 'voice_samples'));
+      await recDir.create(recursive: true);
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      _agentSamplePath =
+          p.join(recDir.path, 'agent_sample_${party}_$timestamp.wav');
+
+      await _tapChannel.invokeMethod(
+          'startVoiceSample', {'path': _agentSamplePath, 'party': party});
+
+      _agentSampling = true;
+      _messages.add(ChatMessage.system('Voice sampling started ($party)'));
+      notifyListeners();
+      debugPrint('[AgentService] Agent-initiated voice sample → $_agentSamplePath ($party)');
+      return 'Voice sampling started for $party party. '
+          'Let them speak for at least 10-15 seconds, then call stop_and_clone_voice.';
+    } catch (e) {
+      debugPrint('[AgentService] startVoiceSample failed: $e');
+      _agentSamplePath = null;
+      return 'Failed to start voice sample: $e';
+    }
+  }
+
+  Future<String> _handleStopAndCloneVoice(Map<String, dynamic> args) async {
+    if (!_agentSampling || _agentSamplePath == null) {
+      return 'No voice sample in progress. Call start_voice_sample first.';
+    }
+
+    final apiKey = _ttsConfig?.elevenLabsApiKey ?? '';
+    if (apiKey.isEmpty) {
+      return 'ElevenLabs API key is not configured. Cannot clone voice.';
+    }
+
+    try {
+      await _tapChannel.invokeMethod('stopVoiceSample');
+      _agentSampling = false;
+      debugPrint('[AgentService] Voice sample stopped → $_agentSamplePath');
+    } catch (e) {
+      _agentSampling = false;
+      debugPrint('[AgentService] stopVoiceSample failed: $e');
+      return 'Failed to stop voice sample: $e';
+    }
+
+    final name = (args['voice_name'] as String?)?.trim().isNotEmpty == true
+        ? args['voice_name'] as String
+        : 'Alter Ego ${DateTime.now().millisecondsSinceEpoch}';
+
+    try {
+      _messages.add(ChatMessage.system('Cloning voice...'));
+      notifyListeners();
+
+      final voiceId = await ElevenLabsApiService.addVoice(
+        apiKey,
+        name: name,
+        filePaths: [_agentSamplePath!],
+      );
+
+      _agentSamplePath = null;
+      _messages.add(ChatMessage.system('Voice "$name" cloned successfully'));
+      notifyListeners();
+      debugPrint('[AgentService] Voice cloned: $voiceId ($name)');
+      return 'Voice cloned successfully. voice_id=$voiceId name="$name". '
+          'Call set_agent_voice with this voice_id to start speaking in their voice.';
+    } catch (e) {
+      _agentSamplePath = null;
+      debugPrint('[AgentService] Voice clone failed: $e');
+      return 'Voice cloning failed: $e';
+    }
+  }
+
+  Future<String> _handleSetAgentVoice(Map<String, dynamic> args) async {
+    final voiceId = args['voice_id'] as String?;
+    if (voiceId == null || voiceId.isEmpty) {
+      return 'No voice_id provided.';
+    }
+
+    if (_tts == null) {
+      return 'ElevenLabs TTS is not active. Cannot change voice.';
+    }
+
+    _tts!.updateVoiceId(voiceId);
+    _messages.add(ChatMessage.system('Agent voice changed to $voiceId'));
+    notifyListeners();
+    debugPrint('[AgentService] Agent voice swapped to: $voiceId');
+    return 'Voice updated. You are now speaking with voice_id=$voiceId. '
+        'All subsequent speech will use this voice.';
+  }
+
   void announceRecording() {
     if (!_active) return;
     _whisper.sendSystemDirective(
@@ -1120,7 +1284,13 @@ class AgentService extends ChangeNotifier {
   }
 
   void toggleWhisperMode() {
-    if (_splitPipeline) return;
+    if (_splitPipeline) {
+      // In split pipeline, toggle mutes ElevenLabs TTS output.
+      // OpenAI stays in whisper mode (transcription only).
+      _ttsMuted = !_ttsMuted;
+      notifyListeners();
+      return;
+    }
     _whisperMode = !_whisperMode;
     if (_active) {
       if (_whisperMode) {
@@ -1131,6 +1301,47 @@ class AgentService extends ChangeNotifier {
       );
     }
     notifyListeners();
+  }
+
+  /// Apply the mute policy on call phase transitions.
+  void _applyMutePolicy(CallPhase phase) {
+    final policy = _effectiveMutePolicy;
+    if (policy != AgentMutePolicy.autoToggle) return;
+
+    if (phase == CallPhase.settling || phase == CallPhase.connected) {
+      // Unmute: enable voice output when a call connects
+      if (_splitPipeline) {
+        if (_ttsMuted) {
+          _ttsMuted = false;
+          notifyListeners();
+        }
+      } else {
+        if (_whisperMode) {
+          _whisperMode = false;
+          if (_active) {
+            _whisper.setModalities(['text', 'audio']);
+          }
+          notifyListeners();
+        }
+      }
+    } else if (phase == CallPhase.ended || phase == CallPhase.failed) {
+      // Mute: go text-only when the call ends
+      if (_splitPipeline) {
+        if (!_ttsMuted) {
+          _ttsMuted = true;
+          notifyListeners();
+        }
+      } else {
+        if (!_whisperMode) {
+          _whisperMode = true;
+          if (_active) {
+            _whisper.stopResponseAudio();
+            _whisper.setModalities(['text']);
+          }
+          notifyListeners();
+        }
+      }
+    }
   }
 
   void addSystemMessage(String text) {
@@ -1210,6 +1421,9 @@ class AgentService extends ChangeNotifier {
     if (localIdentity != null) _localIdentity = localIdentity;
     if (outbound != null) _isOutbound = outbound;
 
+    // Auto-mute/unmute based on policy
+    _applyMutePolicy(phase);
+
     // Start/end call history records
     if (phase == CallPhase.initiating || phase == CallPhase.ringing) {
       callHistory?.startCallRecord(
@@ -1244,10 +1458,20 @@ class AgentService extends ChangeNotifier {
       _localIdentity = null;
       _clearRemotePartyName();
       _cancelSettleTimer();
+      _cancelConnectedGreeting();
       _recentAgentTexts.clear();
       _whisper.resetSpeakerIdentifier();
       _textAgent?.reset();
       _tts?.endGeneration();
+
+      // Clean up any agent-initiated voice sampling still in progress
+      if (_agentSampling) {
+        try {
+          _tapChannel.invokeMethod('stopVoiceSample');
+        } catch (_) {}
+        _agentSampling = false;
+        _agentSamplePath = null;
+      }
     }
 
     if (phase == CallPhase.settling) {
@@ -1279,6 +1503,12 @@ class AgentService extends ChangeNotifier {
       _whisper.sendSystemContext(contextText);
     }
     _textAgent?.addSystemContext(contextText);
+
+    if (phase == CallPhase.connected) {
+      _scheduleConnectedGreeting();
+    } else {
+      _cancelConnectedGreeting();
+    }
 
     debugPrint(
         '[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
@@ -1327,6 +1557,33 @@ class AgentService extends ChangeNotifier {
     );
   }
 
+  /// Schedule a deferred nudge so the agent begins the conversation if the
+  /// line stays quiet after connected. Cancelled when a transcript arrives
+  /// first (the transcript flow will prompt the agent naturally).
+  void _scheduleConnectedGreeting() {
+    _connectedGreetTimer?.cancel();
+    _connectedGreetTimer = Timer(
+      const Duration(milliseconds: _connectedGreetDelayMs),
+      () {
+        if (_callPhase != CallPhase.connected) return;
+        const prompt =
+            '[SYSTEM] The call is connected and the line is quiet. '
+            'Begin the conversation per your job function instructions.';
+        if (_splitPipeline && _textAgent != null) {
+          _textAgent!.sendUserMessage(prompt);
+        } else if (_active) {
+          _whisper.sendSystemDirective(prompt);
+        }
+        debugPrint('[AgentService] Connected greeting triggered (line quiet)');
+      },
+    );
+  }
+
+  void _cancelConnectedGreeting() {
+    _connectedGreetTimer?.cancel();
+    _connectedGreetTimer = null;
+  }
+
   /// Host manually confirms a real person is on the line, skipping the
   /// settle window immediately.
   void confirmPartyConnected() {
@@ -1365,6 +1622,7 @@ class AgentService extends ChangeNotifier {
     _active = false;
     _speaking = false;
     _muted = false;
+    _ttsMuted = false;
     _levels.clear();
     _messages.clear();
     _streamingMessageId = null;
@@ -1376,6 +1634,7 @@ class AgentService extends ChangeNotifier {
   @override
   void dispose() {
     _cancelSettleTimer();
+    _cancelConnectedGreeting();
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
     _textAgent?.dispose();

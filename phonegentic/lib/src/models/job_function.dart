@@ -33,6 +33,9 @@ class JobFunction {
   final List<String> guardrails;
   final bool whisperByDefault;
   final String? elevenLabsVoiceId;
+  /// Per-job mute policy override. null = use global setting.
+  /// 0 = autoToggle, 1 = stayMuted (matches AgentMutePolicy.index).
+  final int? mutePolicyOverride;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -45,6 +48,7 @@ class JobFunction {
     List<String>? guardrails,
     this.whisperByDefault = false,
     this.elevenLabsVoiceId,
+    this.mutePolicyOverride,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : speakers = speakers ?? List.of(SpeakerDef.defaultSpeakers),
@@ -61,6 +65,8 @@ class JobFunction {
     List<String>? guardrails,
     bool? whisperByDefault,
     String? elevenLabsVoiceId,
+    int? mutePolicyOverride,
+    bool clearMutePolicy = false,
     DateTime? updatedAt,
   }) =>
       JobFunction(
@@ -72,6 +78,7 @@ class JobFunction {
         guardrails: guardrails ?? this.guardrails,
         whisperByDefault: whisperByDefault ?? this.whisperByDefault,
         elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
+        mutePolicyOverride: clearMutePolicy ? null : (mutePolicyOverride ?? this.mutePolicyOverride),
         createdAt: createdAt,
         updatedAt: updatedAt ?? DateTime.now(),
       );
@@ -85,6 +92,7 @@ class JobFunction {
         'guardrails_json': jsonEncode(guardrails),
         'whisper_by_default': whisperByDefault ? 1 : 0,
         'elevenlabs_voice_id': elevenLabsVoiceId,
+        'mute_policy_override': mutePolicyOverride,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
       };
@@ -105,6 +113,7 @@ class JobFunction {
       guardrails: (jsonDecode(guardrailsRaw) as List).cast<String>(),
       whisperByDefault: (map['whisper_by_default'] as int? ?? 0) == 1,
       elevenLabsVoiceId: map['elevenlabs_voice_id'] as String?,
+      mutePolicyOverride: map['mute_policy_override'] as int?,
       createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(map['updated_at'] as String? ?? '') ??

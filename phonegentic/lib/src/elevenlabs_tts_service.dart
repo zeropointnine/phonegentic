@@ -53,6 +53,12 @@ class ElevenLabsTtsService {
     _connected = false;
 
     final voiceId = _voiceIdOverride ?? _config.elevenLabsVoiceId;
+    if (voiceId.isEmpty) {
+      debugPrint('[ElevenLabsTTS] No voice ID set — skipping connection');
+      _generating = false;
+      _speakingController.add(false);
+      return;
+    }
     final modelId = _config.elevenLabsModelId;
     final uri = Uri.parse(
       'wss://api.elevenlabs.io/v1/text-to-speech/$voiceId/stream-input'

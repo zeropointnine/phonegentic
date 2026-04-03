@@ -31,7 +31,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 8,
+        version: 9,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -188,6 +188,12 @@ class CallHistoryDb {
     if (oldVersion < 8) {
       await _createSmsMessagesTable(db);
     }
+
+    if (oldVersion < 9) {
+      await db.execute(
+        'ALTER TABLE job_functions ADD COLUMN mute_policy_override INTEGER',
+      );
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -201,6 +207,7 @@ class CallHistoryDb {
         guardrails_json TEXT NOT NULL,
         whisper_by_default INTEGER NOT NULL DEFAULT 0,
         elevenlabs_voice_id TEXT,
+        mute_policy_override INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
