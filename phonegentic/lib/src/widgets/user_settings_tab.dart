@@ -4,6 +4,9 @@ import 'package:provider/provider.dart';
 import '../calendar_sync_service.dart';
 import '../calendly_service.dart';
 import '../demo_mode_service.dart';
+import '../messaging/messaging_config.dart';
+import '../messaging/messaging_service.dart';
+import '../messaging/telnyx_messaging_provider.dart';
 import '../theme_provider.dart';
 import '../user_config_service.dart';
 
@@ -17,13 +20,20 @@ class UserSettingsTab extends StatefulWidget {
 class _UserSettingsTabState extends State<UserSettingsTab> {
   CalendlyConfig _calendly = const CalendlyConfig();
   DemoModeConfig _demo = const DemoModeConfig();
+  TelnyxMessagingConfig _telnyxMsg = const TelnyxMessagingConfig();
   bool _loaded = false;
   bool _calendlyExpanded = false;
+  bool _telnyxMsgExpanded = false;
   bool _testingConnection = false;
   String? _connectionStatus;
+  bool _testingTelnyxMsg = false;
+  String? _telnyxMsgStatus;
 
   final _calendlyKeyCtrl = TextEditingController();
   final _fakeNumberCtrl = TextEditingController();
+  final _telnyxMsgKeyCtrl = TextEditingController();
+  final _telnyxMsgFromCtrl = TextEditingController();
+  final _telnyxMsgProfileCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -35,18 +45,26 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   void dispose() {
     _calendlyKeyCtrl.dispose();
     _fakeNumberCtrl.dispose();
+    _telnyxMsgKeyCtrl.dispose();
+    _telnyxMsgFromCtrl.dispose();
+    _telnyxMsgProfileCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     final c = await UserConfigService.loadCalendlyConfig();
     final d = await UserConfigService.loadDemoModeConfig();
+    final t = await TelnyxMessagingConfig.load();
     if (!mounted) return;
     setState(() {
       _calendly = c;
       _demo = d;
+      _telnyxMsg = t;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
+      _telnyxMsgKeyCtrl.text = t.apiKey;
+      _telnyxMsgFromCtrl.text = t.fromNumber;
+      _telnyxMsgProfileCtrl.text = t.messagingProfileId;
       _loaded = true;
     });
   }
@@ -66,6 +84,44 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     demoService.setEnabled(d.enabled);
     if (d.fakeNumber != demoService.fakeNumber) {
       demoService.setFakeNumber(d.fakeNumber);
+    }
+  }
+
+  void _updateTelnyxMsg(TelnyxMessagingConfig t) {
+    setState(() => _telnyxMsg = t);
+    t.save();
+    if (t.isConfigured) {
+      context.read<MessagingService>().reconfigure();
+    }
+  }
+
+  Future<void> _testTelnyxMsgConnection() async {
+    if (_telnyxMsg.apiKey.isEmpty) {
+      setState(() => _telnyxMsgStatus = 'Enter an API key first');
+      return;
+    }
+    setState(() {
+      _testingTelnyxMsg = true;
+      _telnyxMsgStatus = null;
+    });
+    try {
+      final provider = TelnyxMessagingProvider(
+        apiKey: _telnyxMsg.apiKey,
+        fromNumber: _telnyxMsg.fromNumber,
+      );
+      final ok = await provider.testConnection();
+      if (!mounted) return;
+      setState(() {
+        _telnyxMsgStatus =
+            ok ? 'Connected to Telnyx Messaging' : 'Invalid API key';
+        _testingTelnyxMsg = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _telnyxMsgStatus = 'Network error — check your connection';
+        _testingTelnyxMsg = false;
+      });
     }
   }
 
@@ -167,6 +223,30 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 _buildTestConnectionRow(),
                 _divider(),
                 _buildSyncMacToggle(),
+              ],
+              Divider(
+                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+              _buildTelnyxMsgHeader(),
+              if (_telnyxMsgExpanded) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withOpacity(0.5)),
+                _buildKeyField('API Key', _telnyxMsgKeyCtrl, (val) {
+                  _updateTelnyxMsg(_telnyxMsg.copyWith(apiKey: val));
+                  setState(() => _telnyxMsgStatus = null);
+                }),
+                _divider(),
+                _buildPlainField('From Number', _telnyxMsgFromCtrl,
+                    '+18005551234', (val) {
+                  _updateTelnyxMsg(_telnyxMsg.copyWith(fromNumber: val));
+                }),
+                _divider(),
+                _buildPlainField('Profile ID', _telnyxMsgProfileCtrl,
+                    'Optional', (val) {
+                  _updateTelnyxMsg(
+                      _telnyxMsg.copyWith(messagingProfileId: val));
+                }),
+                _buildTelnyxMsgTestRow(),
               ],
             ],
           ),
@@ -466,7 +546,181 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     );
   }
 
+  // ───── Telnyx Messaging ─────
+
+  Widget _buildTelnyxMsgHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _telnyxMsgExpanded = !_telnyxMsgExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _telnyxMsg.isConfigured
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.sms_rounded,
+                  size: 17,
+                  color: _telnyxMsg.isConfigured
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Telnyx Messaging',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'SMS & MMS messaging',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _telnyxMsg.isConfigured
+                              ? AppColors.green.withOpacity(0.12)
+                              : AppColors.orange.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _telnyxMsg.isConfigured ? 'Configured' : 'Not Set',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: _telnyxMsg.isConfigured
+                                ? AppColors.green
+                                : AppColors.orange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _telnyxMsgExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTelnyxMsgTestRow() {
+    final isSuccess =
+        _telnyxMsgStatus != null && _telnyxMsgStatus!.startsWith('Connected');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: _testingTelnyxMsg ? null : _testTelnyxMsgConnection,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: _testingTelnyxMsg
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+            ),
+          ),
+          if (_telnyxMsgStatus != null) ...[
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _telnyxMsgStatus!,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isSuccess ? AppColors.green : AppColors.red,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   // ───── Shared helpers ─────
+
+  Widget _buildPlainField(String label, TextEditingController ctrl,
+      String hint, ValueChanged<String> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(label,
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: TextField(
+              controller: ctrl,
+              autocorrect: false,
+              style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: hint,
+                hintStyle:
+                    TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildKeyField(
       String label, TextEditingController ctrl, ValueChanged<String> onChanged) {

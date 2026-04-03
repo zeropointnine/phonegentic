@@ -1685,7 +1685,7 @@ class _InputBarState extends State<_InputBar> {
               child: Icon(
                 Icons.arrow_upward_rounded,
                 size: 16,
-                color: _hasText ? Colors.white : AppColors.textTertiary,
+                color: _hasText ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),

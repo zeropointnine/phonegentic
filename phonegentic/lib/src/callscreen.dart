@@ -1029,7 +1029,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
-        bottomRow.add(_circleBtn(Icons.call_end, Colors.grey, '', () {}));
+        bottomRow.add(_circleBtn(Icons.call_end, AppColors.burntAmber.withOpacity(0.4), '', () {}));
         break;
 
       case CallStateEnum.PROGRESS:
@@ -1082,7 +1082,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 ),
               ],
             ),
-            child: Icon(icon, size: 28, color: Colors.white),
+            child: Icon(icon, size: 28, color: AppColors.onAccent),
           ),
         ),
         if (label.isNotEmpty) ...[

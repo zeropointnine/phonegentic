@@ -493,7 +493,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white,
+                    color: AppColors.onAccent,
                   ),
                 ),
               ),

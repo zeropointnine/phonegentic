@@ -395,6 +395,68 @@ class WhisperRealtimeService {
           'required': ['entries'],
         },
       },
+      {
+        'type': 'function',
+        'name': 'send_sms',
+        'description':
+            'Send an SMS or MMS message to a phone number. Use when the user or caller asks '
+                'you to text someone, send a message, or follow up via text.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'to': {
+              'type': 'string',
+              'description': 'Phone number to send to (E.164 format, e.g. +18005551234)',
+            },
+            'text': {
+              'type': 'string',
+              'description': 'The message body to send',
+            },
+            'media_url': {
+              'type': 'string',
+              'description': 'Optional URL of an image to attach (MMS)',
+            },
+          },
+          'required': ['to', 'text'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'reply_sms',
+        'description':
+            'Reply to the currently selected SMS conversation. Use when '
+                'the user asks to respond to or reply to a text message.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'text': {
+              'type': 'string',
+              'description': 'The reply message body',
+            },
+          },
+          'required': ['text'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'search_messages',
+        'description':
+            'Search the SMS message history. Use when the user asks about '
+                'past text messages or wants to find a specific message.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'query': {
+              'type': 'string',
+              'description': 'Search text to match against message body or phone number',
+            },
+            'contact_name': {
+              'type': 'string',
+              'description': 'Contact name to filter by',
+            },
+          },
+        },
+      },
     ];
 
     _send({'type': 'session.update', 'session': session});

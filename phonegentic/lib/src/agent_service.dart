@@ -12,6 +12,7 @@ import 'call_history_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
 import 'job_function_service.dart';
+import 'messaging/messaging_service.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
@@ -53,6 +54,7 @@ class AgentService extends ChangeNotifier {
   CallHistoryService? callHistory;
   ContactService? contactService;
   TearSheetService? tearSheetService;
+  MessagingService? messagingService;
   JobFunctionService? _jobFunctionService;
   SIPUAHelper? sipHelper;
 
@@ -175,14 +177,12 @@ class AgentService extends ChangeNotifier {
     _textAgent?.updateInstructions(_buildTextAgentInstructions());
   }
 
-  Speaker get hostSpeaker =>
-      _bootContext.speakers.isNotEmpty
-          ? _bootContext.speakers.first
-          : Speaker(role: 'Host', source: 'mic');
-  Speaker get remoteSpeaker =>
-      _bootContext.speakers.length > 1
-          ? _bootContext.speakers[1]
-          : Speaker(role: 'Remote Party 1', source: 'remote');
+  Speaker get hostSpeaker => _bootContext.speakers.isNotEmpty
+      ? _bootContext.speakers.first
+      : Speaker(role: 'Host', source: 'mic');
+  Speaker get remoteSpeaker => _bootContext.speakers.length > 1
+      ? _bootContext.speakers[1]
+      : Speaker(role: 'Remote Party 1', source: 'remote');
 
   /// Update the remote party's display name (e.g. from contacts DB or
   /// voiceprint match) and push refreshed instructions to the live session.
@@ -216,7 +216,8 @@ class AgentService extends ChangeNotifier {
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
         _messages.clear();
-        _messages.add(ChatMessage.system('Voice agent not configured. Go to Settings > Agents to set up.'));
+        _messages.add(ChatMessage.system(
+            'Voice agent not configured. Go to Settings > Agents to set up.'));
         notifyListeners();
         return;
       }
@@ -285,7 +286,9 @@ class AgentService extends ChangeNotifier {
         // throwing away its audio. ElevenLabs controls _speaking instead.
         if (_splitPipeline) return;
         _speaking = isSpeaking;
-        _statusText = isSpeaking ? 'Speaking' : (_muted ? 'Not Listening...' : 'Listening');
+        _statusText = isSpeaking
+            ? 'Speaking'
+            : (_muted ? 'Not Listening...' : 'Listening');
         if (!isSpeaking) _speakingEndTime = DateTime.now();
         notifyListeners();
       });
@@ -297,7 +300,8 @@ class AgentService extends ChangeNotifier {
         if (event.pcm16Data.isNotEmpty) {
           audioChunkCount++;
           if (audioChunkCount <= 3 || audioChunkCount % 50 == 0) {
-            debugPrint('[AgentService] TTS chunk #$audioChunkCount: ${event.pcm16Data.length} bytes');
+            debugPrint(
+                '[AgentService] TTS chunk #$audioChunkCount: ${event.pcm16Data.length} bytes');
           }
           _whisper.playResponseAudio(event.pcm16Data);
         }
@@ -309,7 +313,8 @@ class AgentService extends ChangeNotifier {
 
       _initTextAgent();
 
-      debugPrint('[AgentService] Started: model=${config.model} voice=${config.voice}');
+      debugPrint(
+          '[AgentService] Started: model=${config.model} voice=${config.voice}');
     } catch (e) {
       _statusText = 'Error';
       _active = false;
@@ -342,7 +347,8 @@ class AgentService extends ChangeNotifier {
 
     _initTts();
 
-    debugPrint('[AgentService] Split pipeline active: ${tc.provider.name} text agent');
+    debugPrint(
+        '[AgentService] Split pipeline active: ${tc.provider.name} text agent');
   }
 
   void _initTts() {
@@ -480,7 +486,8 @@ class AgentService extends ChangeNotifier {
 
       if (speakers.isNotEmpty) {
         await _whisper.loadKnownSpeakers(speakers);
-        debugPrint('[AgentService] Loaded ${speakers.length} known speaker voiceprints');
+        debugPrint(
+            '[AgentService] Loaded ${speakers.length} known speaker voiceprints');
       }
     } catch (e) {
       debugPrint('[AgentService] Failed to load speaker embeddings: $e');
@@ -502,11 +509,10 @@ class AgentService extends ChangeNotifier {
       final remoteName = call['remote_display_name'] as String? ??
           call['remote_identity'] as String? ??
           'Unknown';
-      final startedAt = DateTime.tryParse(
-              call['started_at'] as String? ?? '') ??
-          DateTime.now();
-      final dateLabel =
-          '${startedAt.month}/${startedAt.day}/${startedAt.year} '
+      final startedAt =
+          DateTime.tryParse(call['started_at'] as String? ?? '') ??
+              DateTime.now();
+      final dateLabel = '${startedAt.month}/${startedAt.day}/${startedAt.year} '
           '${startedAt.hour}:${startedAt.minute.toString().padLeft(2, '0')}';
 
       _messages.add(ChatMessage.system(
@@ -560,8 +566,10 @@ class AgentService extends ChangeNotifier {
       // Check if the transcript is contained within a recent agent response
       if (agentLower.contains(lower)) return true;
       // Check if a significant portion of the transcript words overlap
-      final tWords = lower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
-      final aWords = agentLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      final tWords =
+          lower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      final aWords =
+          agentLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
       if (tWords.isNotEmpty && aWords.isNotEmpty) {
         final overlap = tWords.intersection(aWords).length;
         if (overlap / tWords.length >= 0.6) return true;
@@ -588,7 +596,8 @@ class AgentService extends ChangeNotifier {
       if (IvrDetector.isIvr(text)) {
         _ivrHitsInSettle++;
         _extendSettleTimer();
-        debugPrint('[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
+        debugPrint(
+            '[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
       }
       return;
     }
@@ -597,7 +606,8 @@ class AgentService extends ChangeNotifier {
     // its TTS audio loops back through the whisper buffer and gets
     // transcribed as input. Wait for the echo to drain.
     if (_speaking) return;
-    final msSinceSpoke = DateTime.now().difference(_speakingEndTime).inMilliseconds;
+    final msSinceSpoke =
+        DateTime.now().difference(_speakingEndTime).inMilliseconds;
     if (msSinceSpoke < _echoGuardMs) return;
 
     final text = event.text.trim();
@@ -725,7 +735,8 @@ class AgentService extends ChangeNotifier {
 
   Future<void> _onFunctionCall(FunctionCallEvent event) async {
     if (_splitPipeline) return;
-    debugPrint('[AgentService] Function call: ${event.name} args=${event.arguments}');
+    debugPrint(
+        '[AgentService] Function call: ${event.name} args=${event.arguments}');
 
     String result;
     try {
@@ -755,6 +766,15 @@ class AgentService extends ChangeNotifier {
         case 'create_tear_sheet':
           result = await _handleCreateTearSheet(args);
           break;
+        case 'send_sms':
+          result = await _handleSendSms(args);
+          break;
+        case 'reply_sms':
+          result = await _handleReplySms(args);
+          break;
+        case 'search_messages':
+          result = await _handleSearchMessages(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -773,7 +793,8 @@ class AgentService extends ChangeNotifier {
 
   /// Handle tool calls from the Claude text agent (split pipeline).
   Future<void> _onTextAgentToolCall(ToolCallRequest req) async {
-    debugPrint('[AgentService] Text-agent tool: ${req.name} args=${req.arguments}');
+    debugPrint(
+        '[AgentService] Text-agent tool: ${req.name} args=${req.arguments}');
 
     String result;
     try {
@@ -787,6 +808,15 @@ class AgentService extends ChangeNotifier {
         case 'search_contacts':
           result = await _handleSearchContacts(req.arguments);
           break;
+        case 'send_sms':
+          result = await _handleSendSms(req.arguments);
+          break;
+        case 'reply_sms':
+          result = await _handleReplySms(req.arguments);
+          break;
+        case 'search_messages':
+          result = await _handleSearchMessages(req.arguments);
+          break;
         default:
           result = 'Unknown tool: ${req.name}';
       }
@@ -797,6 +827,80 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] Text-agent tool result: $result');
     _textAgent?.addToolResult(req.id, result);
+  }
+
+  // ---------------------------------------------------------------------------
+  // SMS / Messaging tool handlers
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleSendSms(Map<String, dynamic> args) async {
+    if (messagingService == null || !messagingService!.isConfigured) {
+      return 'Messaging is not configured. Set up Telnyx Messaging in Settings.';
+    }
+    final to = args['to'] as String?;
+    final text = args['text'] as String?;
+    if (to == null || to.isEmpty || text == null || text.isEmpty) {
+      return 'Both "to" and "text" are required.';
+    }
+    final mediaUrl = args['media_url'] as String?;
+    final mediaUrls =
+        mediaUrl != null && mediaUrl.isNotEmpty ? [mediaUrl] : null;
+    final msg = await messagingService!
+        .sendMessage(to: to, text: text, mediaUrls: mediaUrls);
+    if (msg != null) {
+      _messages.add(ChatMessage.system(
+        'SMS sent to $to: "$text"',
+        metadata: {'type': 'sms_sent', 'to': to},
+      ));
+      notifyListeners();
+      return 'Message sent successfully to $to.';
+    }
+    return 'Failed to send message.';
+  }
+
+  Future<String> _handleReplySms(Map<String, dynamic> args) async {
+    if (messagingService == null || !messagingService!.isConfigured) {
+      return 'Messaging is not configured.';
+    }
+    final text = args['text'] as String?;
+    if (text == null || text.isEmpty) return '"text" is required.';
+
+    final selected = messagingService!.selectedRemotePhone;
+    if (selected == null) {
+      return 'No conversation selected. Use send_sms with a phone number instead.';
+    }
+    final msg = await messagingService!.reply(text);
+    if (msg != null) {
+      _messages.add(ChatMessage.system(
+        'SMS reply to $selected: "$text"',
+        metadata: {'type': 'sms_reply', 'to': selected},
+      ));
+      notifyListeners();
+      return 'Reply sent to $selected.';
+    }
+    return 'Failed to send reply.';
+  }
+
+  Future<String> _handleSearchMessages(Map<String, dynamic> args) async {
+    if (messagingService == null) return 'Messaging is not configured.';
+    final query = args['query'] as String? ?? '';
+    final contactName = args['contact_name'] as String? ?? '';
+
+    final searchTerm = query.isNotEmpty ? query : contactName;
+    if (searchTerm.isEmpty) return 'Provide a query or contact_name to search.';
+
+    final results = await messagingService!.searchMessages(searchTerm);
+    if (results.isEmpty) return 'No messages found matching "$searchTerm".';
+
+    final buf = StringBuffer('Found ${results.length} message(s):\n');
+    for (final m in results.take(10)) {
+      final dir = m.direction.name;
+      final phone = m.remotePhone;
+      final preview =
+          m.text.length > 80 ? '${m.text.substring(0, 80)}...' : m.text;
+      buf.writeln('- [$dir] $phone: "$preview"');
+    }
+    return buf.toString();
   }
 
   Future<String> _handleSearchCalls(Map<String, dynamic> args) async {
@@ -830,7 +934,8 @@ class AgentService extends ChangeNotifier {
     if (number == null || number.isEmpty) return 'No number provided.';
 
     // Resolve "last" / "redial" / placeholder to the actual last dialed number
-    final normalized = number.toLowerCase().replaceAll(RegExp(r'[<>_]'), '').trim();
+    final normalized =
+        number.toLowerCase().replaceAll(RegExp(r'[<>_]'), '').trim();
     if (normalized == 'last' ||
         normalized == 'redial' ||
         normalized == 'lastdialed' ||
@@ -922,7 +1027,8 @@ class AgentService extends ChangeNotifier {
       final phone = c['phone_number'] as String? ?? '';
       buf.writeln('- $name${phone.isNotEmpty ? " ($phone)" : ""}');
     }
-    if (filtered.length > 50) buf.writeln('... and ${filtered.length - 50} more.');
+    if (filtered.length > 50)
+      buf.writeln('... and ${filtered.length - 50} more.');
     return buf.toString();
   }
 
@@ -1164,7 +1270,8 @@ class AgentService extends ChangeNotifier {
     }
     _textAgent?.addSystemContext(contextText);
 
-    debugPrint('[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
+    debugPrint(
+        '[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
   }
 
   /// Start the settling timer. When it fires without being extended by
@@ -1213,8 +1320,7 @@ class AgentService extends ChangeNotifier {
   /// Host manually confirms a real person is on the line, skipping the
   /// settle window immediately.
   void confirmPartyConnected() {
-    if (_callPhase == CallPhase.settling ||
-        _callPhase == CallPhase.answered) {
+    if (_callPhase == CallPhase.settling || _callPhase == CallPhase.answered) {
       _promoteToConnected();
     }
   }

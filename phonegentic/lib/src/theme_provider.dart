@@ -32,8 +32,9 @@ class AppColors {
   // Legacy aliases used throughout the codebase
   static const Color accent = phosphor;
   static const Color accentLight = hotSignal;
+  static const Color onAccent = Color(0xFF3D2200);
   static const Color green = Color(0xFF4ADE80);
-  static const Color red = Color(0xFFEF4444);
+  static const Color red = Color(0xFFE06A1D);
   static const Color orange = Color(0xFFE8960F);
 }
 
@@ -77,10 +78,10 @@ class ThemeProvider extends ChangeNotifier {
         secondary: AppColors.hotSignal,
         surface: const Color(0xFF1A1610),
         error: AppColors.red,
-        onPrimary: AppColors.crtBlack,
-        onSecondary: AppColors.crtBlack,
+        onPrimary: AppColors.onAccent,
+        onSecondary: AppColors.onAccent,
         onSurface: const Color(0xFFFFD27A),
-        onError: Colors.white,
+        onError: AppColors.onAccent,
         outline: const Color(0xFF3A3228),
       ),
       appBarTheme: const AppBarTheme(
@@ -157,8 +158,8 @@ class ThemeProvider extends ChangeNotifier {
         secondary: AppColors.phosphor,
         surface: const Color(0xFFF5EDE2),
         error: AppColors.red,
-        onPrimary: Colors.white,
-        onSecondary: Colors.white,
+        onPrimary: AppColors.onAccent,
+        onSecondary: AppColors.onAccent,
         onSurface: const Color(0xFF18120A),
         outline: const Color(0xFFE0CDBA),
       ),
@@ -205,7 +206,7 @@ class ThemeProvider extends ChangeNotifier {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.burntAmber,
-          foregroundColor: Colors.white,
+          foregroundColor: AppColors.onAccent,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           shape:

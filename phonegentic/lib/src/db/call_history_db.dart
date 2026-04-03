@@ -31,7 +31,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 7,
+        version: 8,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -122,6 +122,7 @@ class CallHistoryDb {
     await _seedDefaultJobFunction(db);
     await _createSpeakerEmbeddingsTable(db);
     await _createCalendarEventsTable(db);
+    await _createSmsMessagesTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -182,6 +183,10 @@ class CallHistoryDb {
 
     if (oldVersion < 7) {
       await _createCalendarEventsTable(db);
+    }
+
+    if (oldVersion < 8) {
+      await _createSmsMessagesTable(db);
     }
   }
 
@@ -869,5 +874,145 @@ class CallHistoryDb {
     final db = await database;
     final rows = await db.query('calendar_events', orderBy: 'start_time ASC');
     return rows.map((r) => CalendarEvent.fromMap(r)).toList();
+  }
+
+  // ---------------------------------------------------------------------------
+  // SMS Messages
+  // ---------------------------------------------------------------------------
+
+  static Future<void> _createSmsMessagesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sms_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider_id TEXT,
+        provider_type TEXT NOT NULL DEFAULT 'telnyx',
+        remote_phone TEXT NOT NULL,
+        local_phone TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        body TEXT,
+        media_urls TEXT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        is_read INTEGER NOT NULL DEFAULT 0,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sms_remote ON sms_messages(remote_phone)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sms_created ON sms_messages(created_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sms_read ON sms_messages(is_read)');
+    await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_provider ON sms_messages(provider_id, provider_type)');
+  }
+
+  static Future<int> insertSmsMessage(Map<String, dynamic> map) async {
+    final db = await database;
+    return db.insert('sms_messages', map,
+        conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  static Future<void> updateSmsMessage(int id, Map<String, dynamic> fields) async {
+    final db = await database;
+    await db.update('sms_messages', fields, where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<Map<String, dynamic>?> getSmsMessageByProviderId(
+      String providerId, String providerType) async {
+    final db = await database;
+    final rows = await db.query('sms_messages',
+        where: 'provider_id = ? AND provider_type = ?',
+        whereArgs: [providerId, providerType],
+        limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<List<Map<String, dynamic>>> getSmsMessagesForConversation(
+      String remotePhone,
+      {int limit = 100,
+      int offset = 0}) async {
+    final db = await database;
+    return db.query(
+      'sms_messages',
+      where: 'remote_phone = ? AND is_deleted = 0',
+      whereArgs: [remotePhone],
+      orderBy: 'created_at DESC',
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  /// Returns one row per unique remote_phone with aggregated fields.
+  static Future<List<Map<String, dynamic>>> getSmsConversations() async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT
+        remote_phone,
+        local_phone,
+        MAX(created_at) AS last_message_at,
+        SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) AS unread_count,
+        COUNT(*) AS total_messages
+      FROM sms_messages
+      WHERE is_deleted = 0
+      GROUP BY remote_phone
+      ORDER BY last_message_at DESC
+    ''');
+  }
+
+  static Future<Map<String, dynamic>?> getLastSmsForConversation(
+      String remotePhone) async {
+    final db = await database;
+    final rows = await db.query(
+      'sms_messages',
+      where: 'remote_phone = ? AND is_deleted = 0',
+      whereArgs: [remotePhone],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<void> markSmsRead(String remotePhone) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {'is_read': 1},
+      where: 'remote_phone = ? AND is_read = 0',
+      whereArgs: [remotePhone],
+    );
+  }
+
+  static Future<void> softDeleteSmsMessage(int id) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<int> getUnreadSmsCount() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      "SELECT COUNT(*) AS cnt FROM sms_messages WHERE is_read = 0 AND direction = 'inbound' AND is_deleted = 0",
+    );
+    return (result.first['cnt'] as int?) ?? 0;
+  }
+
+  static Future<List<Map<String, dynamic>>> searchSmsMessages(
+      String query,
+      {int limit = 50}) async {
+    final db = await database;
+    final pattern = '%$query%';
+    return db.query(
+      'sms_messages',
+      where: '(body LIKE ? OR remote_phone LIKE ?) AND is_deleted = 0',
+      whereArgs: [pattern, pattern],
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
   }
 }

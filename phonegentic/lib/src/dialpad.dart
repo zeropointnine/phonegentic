@@ -15,6 +15,7 @@ import 'calendar_sync_service.dart';
 import 'callscreen.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
+import 'messaging/messaging_service.dart';
 import 'phone_formatter.dart';
 import 'job_function_service.dart';
 import 'tear_sheet_service.dart';
@@ -24,6 +25,7 @@ import 'widgets/audio_device_sheet.dart';
 import 'widgets/calendar_panel.dart';
 import 'widgets/call_history_panel.dart';
 import 'widgets/contact_list_panel.dart';
+import 'widgets/messaging_panel.dart';
 import 'widgets/job_function_editor.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/quick_add_overlay.dart';
@@ -235,6 +237,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
     final tearSheetService = context.watch<TearSheetService>();
     final jobFunctionService = context.watch<JobFunctionService>();
     final calendarService = context.watch<CalendarSyncService>();
+    final messagingService = context.watch<MessagingService>();
     final width = MediaQuery.of(context).size.width;
     final showPanel = width >= 600;
     final panelWidth = showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0.0;
@@ -318,6 +321,21 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               right: panelWidth,
               child: const CalendarPanel(),
             ),
+          if (messagingService.isOpen)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: messagingService.close,
+                child: Container(color: Colors.black54),
+              ),
+            ),
+          if (messagingService.isOpen)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: panelWidth,
+              child: const MessagingPanel(),
+            ),
           if (contactService.isQuickAddOpen)
             Positioned.fill(
               child: GestureDetector(
@@ -382,7 +400,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         final wide = constraints.maxWidth >= _collapseThreshold;
         return Padding(
           padding: const EdgeInsets.only(
-              left: 78, right: 16, top: 15, bottom: 15),
+              left: 90, right: 16, top: 18, bottom: 15),
           child: Row(
             children: [
               const PhonegenticLogo(size: 30),
@@ -445,6 +463,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               ),
               const SizedBox(width: 8),
               if (wide) ...[
+                _buildMessagesButton(context),
+                const SizedBox(width: 4),
                 _buildTearSheetButton(context),
                 const SizedBox(width: 4),
                 _buildContactsButton(context),
@@ -459,6 +479,64 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           ),
         );
       },
+    );
+  }
+
+  Widget _buildMessagesButton(BuildContext context) {
+    final messaging = context.read<MessagingService>();
+    final unread = messaging.unreadCount;
+    return GestureDetector(
+      onTap: () => messaging.toggleOpen(),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: messaging.isOpen
+                  ? AppColors.accent.withOpacity(0.12)
+                  : AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: messaging.isOpen
+                    ? AppColors.accent.withOpacity(0.4)
+                    : AppColors.border.withOpacity(0.5),
+                width: 0.5,
+              ),
+            ),
+            child: Icon(
+              Icons.chat_bubble_outline_rounded,
+              size: 16,
+              color: messaging.isOpen
+                  ? AppColors.accent
+                  : AppColors.textSecondary,
+            ),
+          ),
+          if (unread > 0)
+            Positioned(
+              top: -4,
+              right: -4,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: AppColors.red,
+                  shape: BoxShape.circle,
+                ),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                child: Text(
+                  unread > 99 ? '99+' : '$unread',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onAccent,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -570,6 +648,9 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           case 'audio':
             showAudioDeviceSheet(context);
             break;
+          case 'messages':
+            context.read<MessagingService>().toggleOpen();
+            break;
           case 'calendar':
             context.read<CalendarSyncService>().toggleOpen();
             break;
@@ -634,6 +715,20 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             ),
           ),
         ],
+        PopupMenuItem(
+          value: 'messages',
+          child: Row(
+            children: [
+              Icon(Icons.chat_bubble_outline_rounded,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 10),
+              Text(
+                'Messages${context.read<MessagingService>().unreadCount > 0 ? ' (${context.read<MessagingService>().unreadCount})' : ''}',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+        ),
         PopupMenuItem(
           value: 'calendar',
           child: Row(

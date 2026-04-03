@@ -136,7 +136,7 @@ class _ActionButtonState extends State<ActionButton> {
             ? AppColors.accent.withOpacity(0.15)
             : AppColors.card);
     final iconColor = hasFill
-        ? Colors.white
+        ? AppColors.onAccent
         : (widget.checked ? AppColors.accent : AppColors.textSecondary);
     final scale = _pressed ? 0.88 : (_hovered ? 1.06 : 1.0);
 

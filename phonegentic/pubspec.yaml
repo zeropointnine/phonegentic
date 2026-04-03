@@ -37,6 +37,8 @@ dependencies:
   record: ^6.0.0
   http: ^1.2.0
   intl: ^0.20.2
+  file_picker: ^10.3.10
+  desktop_drop: ^0.7.0
 
 dev_dependencies:
   flutter_test:

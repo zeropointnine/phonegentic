@@ -380,7 +380,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
                 onTap: _isRecording ? _stopRecording : _startRecording,
                 child: Icon(
                   _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
-                  color: Colors.white,
+                  color: AppColors.onAccent,
                   size: 24,
                 ),
               ),

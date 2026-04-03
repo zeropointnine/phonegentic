@@ -5,6 +5,7 @@ import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
 import 'package:phonegentic/src/demo_mode_service.dart';
 import 'package:phonegentic/src/job_function_service.dart';
+import 'package:phonegentic/src/messaging/messaging_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
@@ -71,6 +72,13 @@ class MyApp extends StatelessWidget {
             ..contactService = contacts
             ..jobFunctionService = jobFunctions,
         ),
+        ChangeNotifierProxyProvider<ContactService, MessagingService>(
+          create: (_) => MessagingService()..start(),
+          update: (_, contacts, messaging) {
+            messaging!..contactService = contacts;
+            return messaging;
+          },
+        ),
         ChangeNotifierProxyProvider2<AgentService, CallHistoryService,
             TearSheetService>(
           create: (_) => TearSheetService()..sipHelper = _helper,
@@ -85,9 +93,10 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProxyProvider2<JobFunctionService, AgentService,
             CalendarSyncService>(
           create: (_) => CalendarSyncService()..start(),
-          update: (_, jf, agent, sync) {
+          update: (context, jf, agent, sync) {
             sync!..jobFunctionService = jf;
             agent.calendarSyncService = sync;
+            agent.messagingService = context.read<MessagingService>();
             return sync;
           },
         ),

@@ -209,7 +209,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
         ),
         indicatorSize: TabBarIndicatorSize.tab,
         dividerHeight: 0,
-        labelColor: Colors.white,
+        labelColor: AppColors.onAccent,
         unselectedLabelColor: AppColors.textSecondary,
         labelStyle: const TextStyle(
             fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: -0.2),
@@ -475,8 +475,8 @@ class _DeviceTileState extends State<_DeviceTile> {
                   ),
                 ),
                 child: widget.isSelected
-                    ? const Icon(Icons.check_rounded,
-                        size: 14, color: Colors.white)
+                    ? Icon(Icons.check_rounded,
+                        size: 14, color: AppColors.onAccent)
                     : null,
               ),
             ],

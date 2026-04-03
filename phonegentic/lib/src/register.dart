@@ -237,7 +237,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
             ),
             indicatorSize: TabBarIndicatorSize.tab,
             dividerHeight: 0,
-            labelColor: Colors.white,
+            labelColor: AppColors.onAccent,
             unselectedLabelColor: AppColors.textSecondary,
             labelStyle: const TextStyle(
                 fontSize: 12,
@@ -470,7 +470,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
                 color:
-                    selected ? Colors.white : AppColors.textTertiary,
+                    selected ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),
@@ -492,7 +492,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
         child: const Text(
           'Register',
           style: TextStyle(
-              fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white),
+              fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.onAccent),
         ),
       ),
     );

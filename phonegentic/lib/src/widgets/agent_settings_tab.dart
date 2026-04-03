@@ -459,7 +459,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: selected ? Colors.white : AppColors.textTertiary,
+                color: selected ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),

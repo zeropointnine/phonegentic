@@ -216,7 +216,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: selected ? Colors.white : AppColors.textSecondary,
+            color: selected ? AppColors.onAccent : AppColors.textSecondary,
           ),
         ),
       ),
@@ -496,7 +496,7 @@ class _DayColumnState extends State<_DayColumn> {
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 color: widget.isToday
-                                    ? Colors.white
+                                    ? AppColors.onAccent
                                     : AppColors.textSecondary,
                               ),
                             ),
@@ -526,10 +526,10 @@ class _DayColumnState extends State<_DayColumn> {
                               ),
                             ],
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.add_rounded,
                             size: 12,
-                            color: Colors.white,
+                            color: AppColors.onAccent,
                           ),
                         ),
                       ),
@@ -840,10 +840,10 @@ class _MonthDayCellState extends State<_MonthDayCell> {
                           ),
                         ],
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.add_rounded,
                         size: 11,
-                        color: Colors.white,
+                        color: AppColors.onAccent,
                       ),
                     ),
                   ),
@@ -1645,7 +1645,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                                   height: 16,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: AppColors.onAccent,
                                   ),
                                 )
                               : Text(
@@ -1653,7 +1653,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
-                                    color: Colors.white,
+                                    color: AppColors.onAccent,
                                   ),
                                 ),
                         ),
@@ -2249,7 +2249,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                               height: 16,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: AppColors.onAccent,
                               ),
                             )
                           : Text(
@@ -2257,7 +2257,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.white,
+                                color: AppColors.onAccent,
                               ),
                             ),
                     ),
