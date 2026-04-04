@@ -81,9 +81,22 @@ class AgentService extends ChangeNotifier {
         _setWhisperMode(selected.whisperByDefault);
       }
     }
+    _applyInitialMuteState();
     _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
     _pushInstructionsIfLive();
     notifyListeners();
+  }
+
+  /// Enforce stayMuted policy by muting when required.
+  void _applyInitialMuteState() {
+    final shouldMute = _effectiveMutePolicy == AgentMutePolicy.stayMuted;
+    if (shouldMute && !_muted) {
+      _muted = true;
+      _whisper.muted = true;
+      if (!_speaking) {
+        _statusText = 'Not Listening...';
+      }
+    }
   }
 
   StreamSubscription<double>? _levelSub;
@@ -277,6 +290,7 @@ class AgentService extends ChangeNotifier {
         // The job function may have loaded while we were connecting.
         // Re-sync and push the correct instructions now that the session is live.
         _syncBootContextFromJobFunction();
+        _applyInitialMuteState();
         _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
         _pushInstructionsIfLive();
       }
