@@ -299,6 +299,16 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         guard !inCallMode else { return }
         inCallMode = true
 
+        // Wire up beep detection callbacks so the Flutter side is notified
+        // the instant a voicemail beep tone is detected or ends.
+        let channel = self.methodChannel
+        WebRTCAudioProcessor.shared.beepDetectedCallback = {
+            channel.invokeMethod("onBeepDetected", arguments: nil)
+        }
+        WebRTCAudioProcessor.shared.beepEndedCallback = {
+            channel.invokeMethod("onBeepEnded", arguments: nil)
+        }
+
         // Clear stale suppression and speaker history from pre-call state.
         isPlayingResponse = false
         outputSuppressedUntil = 0
@@ -320,6 +330,10 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         inCallMode = false
 
         stopCallRecording()
+
+        // Tear down beep detection callbacks
+        WebRTCAudioProcessor.shared.beepDetectedCallback = nil
+        WebRTCAudioProcessor.shared.beepEndedCallback = nil
 
         // Clear soft mute so it doesn't persist to the next call
         WebRTCAudioProcessor.shared.micMuted = false

@@ -150,6 +150,9 @@ class AgentService extends ChangeNotifier {
   bool _agentSampling = false;
   String? _agentSamplePath;
 
+  // Beep tone detection (native Goertzel filter in RenderPreProcessor)
+  bool _beepDetected = false;
+
   // Deduplication: skip identical transcripts arriving within a short window
   String _lastTranscriptText = '';
   DateTime _lastTranscriptTime = DateTime(2000);
@@ -268,6 +271,7 @@ class AgentService extends ChangeNotifier {
 
   AgentService() {
     _messages.add(ChatMessage.system('Agent starting...'));
+    _tapChannel.setMethodCallHandler(_handleNativeTapCall);
     _init();
   }
 
@@ -1620,6 +1624,7 @@ class AgentService extends ChangeNotifier {
       _remoteDisplayName = null;
       _localIdentity = null;
       _connectedAt = null;
+      _beepDetected = false;
       _clearRemotePartyName();
       _cancelSettleTimer();
       _cancelConnectedGreeting();
@@ -1790,8 +1795,8 @@ class AgentService extends ChangeNotifier {
   }
 
   /// Immediately prompt the agent to leave a voicemail — no timer delay.
-  /// Called when a voicemail/IVR transcript is detected post-settle, meaning
-  /// the beep has already sounded and recording is underway.
+  /// Called when a voicemail/IVR transcript is detected post-settle, or when
+  /// the native Goertzel filter detects a beep tone ending.
   void _triggerVoicemailPrompt() {
     if (_callPhase != CallPhase.connected) return;
     const prompt =
@@ -1803,6 +1808,33 @@ class AgentService extends ChangeNotifier {
       _whisper.sendSystemDirective(prompt);
     }
     debugPrint('[AgentService] Voicemail prompt triggered immediately');
+  }
+
+  // MARK: - Native beep tone detection (Goertzel)
+
+  /// Handle method calls from native AudioTapChannel (beep detection events).
+  Future<dynamic> _handleNativeTapCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onBeepDetected':
+        _beepDetected = true;
+        debugPrint('[AgentService] Native beep tone DETECTED');
+        // If we're still settling, promote immediately — the beep means
+        // the voicemail greeting is over and recording is starting.
+        if (_callPhase == CallPhase.settling) {
+          _promoteToConnected();
+        }
+        break;
+      case 'onBeepEnded':
+        debugPrint('[AgentService] Native beep tone ENDED');
+        if (_beepDetected && _callPhase == CallPhase.connected) {
+          // Beep just ended — recording is underway. Fire the voicemail
+          // prompt immediately, bypassing the greeting timer entirely.
+          _cancelConnectedGreeting();
+          _triggerVoicemailPrompt();
+        }
+        _beepDetected = false;
+        break;
+    }
   }
 
   /// Host manually confirms a real person is on the line, skipping the
@@ -1859,6 +1891,7 @@ class AgentService extends ChangeNotifier {
   void dispose() {
     _cancelSettleTimer();
     _cancelConnectedGreeting();
+    _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
     _textAgent?.dispose();
