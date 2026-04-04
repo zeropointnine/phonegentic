@@ -26,7 +26,8 @@ class SpeakerDef {
 
 class JobFunction {
   final int? id;
-  final String name;
+  final String title;
+  final String? agentName;
   final String role;
   final String jobDescription;
   final List<SpeakerDef> speakers;
@@ -34,14 +35,15 @@ class JobFunction {
   final bool whisperByDefault;
   final String? elevenLabsVoiceId;
   /// Per-job mute policy override. null = use global setting.
-  /// 0 = autoToggle, 1 = stayMuted (matches AgentMutePolicy.index).
+  /// 0 = autoToggle, 1 = stayMuted, 2 = stayUnmuted (matches AgentMutePolicy.index).
   final int? mutePolicyOverride;
   final DateTime createdAt;
   final DateTime updatedAt;
 
   JobFunction({
     this.id,
-    required this.name,
+    required this.title,
+    this.agentName,
     this.role = 'You are a voice AI agent participating in a 3-party phone call.',
     required this.jobDescription,
     List<SpeakerDef>? speakers,
@@ -58,7 +60,9 @@ class JobFunction {
 
   JobFunction copyWith({
     int? id,
-    String? name,
+    String? title,
+    String? agentName,
+    bool clearAgentName = false,
     String? role,
     String? jobDescription,
     List<SpeakerDef>? speakers,
@@ -71,7 +75,8 @@ class JobFunction {
   }) =>
       JobFunction(
         id: id ?? this.id,
-        name: name ?? this.name,
+        title: title ?? this.title,
+        agentName: clearAgentName ? null : (agentName ?? this.agentName),
         role: role ?? this.role,
         jobDescription: jobDescription ?? this.jobDescription,
         speakers: speakers ?? this.speakers,
@@ -85,7 +90,8 @@ class JobFunction {
 
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
-        'name': name,
+        'name': title,
+        'agent_name': agentName,
         'role': role,
         'job_description': jobDescription,
         'speakers_json': jsonEncode(speakers.map((s) => s.toMap()).toList()),
@@ -103,7 +109,8 @@ class JobFunction {
 
     return JobFunction(
       id: map['id'] as int?,
-      name: map['name'] as String? ?? '',
+      title: map['name'] as String? ?? '',
+      agentName: map['agent_name'] as String?,
       role: map['role'] as String? ??
           'You are a voice AI agent participating in a 3-party phone call.',
       jobDescription: map['job_description'] as String? ?? '',
@@ -122,7 +129,7 @@ class JobFunction {
   }
 
   static JobFunction triviaDefault() => JobFunction(
-        name: 'Trivia Host',
+        title: 'Trivia Host',
         role: 'You are a voice AI agent participating in a 3-party phone call.',
         jobDescription:
             'Host a 3-party trivia game with 3 easy questions. Keep score. Award the winner.',

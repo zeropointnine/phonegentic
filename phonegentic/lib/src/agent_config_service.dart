@@ -8,6 +8,9 @@ enum AgentMutePolicy {
 
   /// Stay muted unless the user manually unmutes.
   stayMuted,
+
+  /// Always keep the agent unmuted (voice on) regardless of call state.
+  stayUnmuted,
 }
 
 enum TextAgentProvider { openai, claude }

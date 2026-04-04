@@ -67,10 +67,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProxyProvider3<CallHistoryService, ContactService,
             JobFunctionService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
-          update: (_, history, contacts, jobFunctions, agent) => agent!
+          update: (context, history, contacts, jobFunctions, agent) => agent!
             ..callHistory = history
             ..contactService = contacts
-            ..jobFunctionService = jobFunctions,
+            ..jobFunctionService = jobFunctions
+            ..demoModeService = context.read<DemoModeService>(),
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
           create: (_) => MessagingService()..start(),

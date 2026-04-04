@@ -307,6 +307,16 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 'Stay muted',
                 'Agent stays text-only unless you manually unmute',
               ),
+              Divider(
+                  height: 0.5,
+                  indent: 16,
+                  color: AppColors.border.withOpacity(0.5)),
+              _mutePolicyOption(
+                AgentMutePolicy.stayUnmuted,
+                Icons.volume_up_rounded,
+                'Stay unmuted',
+                'Agent always speaks, even when not on a call',
+              ),
             ],
           ),
         ),

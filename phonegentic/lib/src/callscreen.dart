@@ -277,11 +277,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void _handleStreams(CallState event) async {
     MediaStream? stream = event.stream;
     if (event.originator == Originator.local) {
-      if (_localRenderer != null) {
-        _localRenderer!.srcObject =
-            (stream != null && stream.getVideoTracks().isNotEmpty)
-                ? stream
-                : null;
+      try {
+        if (_localRenderer != null) {
+          _localRenderer!.srcObject =
+              (stream != null && stream.getVideoTracks().isNotEmpty)
+                  ? stream
+                  : null;
+        }
+      } catch (e) {
+        debugPrint('[CallScreen] localRenderer.srcObject failed: $e');
       }
       if (!kIsWeb &&
           !WebRTC.platformIsDesktop &&
@@ -291,15 +295,19 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _localStream = stream;
     }
     if (event.originator == Originator.remote) {
-      if (_remoteRenderer != null) {
-        _remoteRenderer!.srcObject =
-            (stream != null && stream.getVideoTracks().isNotEmpty)
-                ? stream
-                : null;
+      try {
+        if (_remoteRenderer != null) {
+          _remoteRenderer!.srcObject =
+              (stream != null && stream.getVideoTracks().isNotEmpty)
+                  ? stream
+                  : null;
+        }
+      } catch (e) {
+        debugPrint('[CallScreen] remoteRenderer.srcObject failed: $e');
       }
       _remoteStream = stream;
     }
-    setState(() => _resizeLocalVideo());
+    if (mounted) setState(() => _resizeLocalVideo());
   }
 
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');

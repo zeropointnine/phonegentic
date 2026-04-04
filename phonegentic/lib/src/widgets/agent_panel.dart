@@ -172,7 +172,7 @@ class _AgentHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final jfService = context.watch<JobFunctionService>();
     final tearSheet = context.watch<TearSheetService>();
-    final selectedName = jfService.selected?.name ?? 'Phonegentic AI';
+    final selectedName = jfService.selected?.title ?? 'Phonegentic AI';
 
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -465,7 +465,7 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
     String? jfChipLabel;
     if (event.jobFunctionId != null) {
       final match = jfService.items.where((j) => j.id == event.jobFunctionId);
-      if (match.isNotEmpty) jfChipLabel = match.first.name;
+      if (match.isNotEmpty) jfChipLabel = match.first.title;
     }
 
     return Container(
@@ -559,7 +559,7 @@ class _JobFunctionDropdown extends StatelessWidget {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text('Delete "${jf.name}"?',
+        title: Text('Delete "${jf.title}"?',
             style: TextStyle(fontSize: 15, color: AppColors.textPrimary)),
         content: Text('This cannot be undone.',
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
@@ -592,7 +592,7 @@ class _JobFunctionDropdown extends StatelessWidget {
     if (context.mounted) {
       agent.updateBootContext(
         service.buildBootContext(),
-        jobFunctionName: service.selected?.name,
+        jobFunctionName: service.selected?.title,
         whisperByDefault: service.selected?.whisperByDefault,
       );
     }
@@ -632,7 +632,7 @@ class _JobFunctionDropdown extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            jf.name,
+                            jf.title,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12,

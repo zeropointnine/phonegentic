@@ -167,7 +167,7 @@ class CalendarSyncService extends ChangeNotifier {
     _jobFunctionSwitched = true;
     final jfMatches = _jobFunctionService!.items
         .where((j) => j.id == event.jobFunctionId)
-        .map((j) => j.name);
+        .map((j) => j.title);
     final jfName = jfMatches.isNotEmpty ? jfMatches.first : null;
     _lastSwitchMessage =
         "Switched to '${jfName ?? 'job function'}' for: ${event.title}";

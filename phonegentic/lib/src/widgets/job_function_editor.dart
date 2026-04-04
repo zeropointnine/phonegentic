@@ -17,6 +17,7 @@ class JobFunctionEditor extends StatefulWidget {
 
 class _JobFunctionEditorState extends State<JobFunctionEditor> {
   final _nameController = TextEditingController();
+  final _agentNameController = TextEditingController();
   final _roleController = TextEditingController();
   final _descController = TextEditingController();
   final _nameFocus = FocusNode();
@@ -49,7 +50,8 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
     _loadVoiceConfig();
 
     if (_existing != null) {
-      _nameController.text = _existing!.name;
+      _nameController.text = _existing!.title;
+      _agentNameController.text = _existing!.agentName ?? '';
       _roleController.text = _existing!.role;
       _descController.text = _existing!.jobDescription;
       _whisperByDefault = _existing!.whisperByDefault;
@@ -114,6 +116,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   @override
   void dispose() {
     _nameController.dispose();
+    _agentNameController.dispose();
     _roleController.dispose();
     _descController.dispose();
     _nameFocus.dispose();
@@ -143,9 +146,12 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
         .where((t) => t.isNotEmpty)
         .toList();
 
+    final agentName = _agentNameController.text.trim();
+
     final jf = JobFunction(
       id: _existing?.id,
-      name: name,
+      title: name,
+      agentName: agentName.isEmpty ? null : agentName,
       role: _roleController.text.trim(),
       jobDescription: _descController.text.trim(),
       speakers: speakers.isEmpty ? null : speakers,
@@ -178,7 +184,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text('Delete "${_existing!.name}"?',
+        title: Text('Delete "${_existing!.title}"?',
             style: TextStyle(fontSize: 15, color: AppColors.textPrimary)),
         content: Text('This cannot be undone.',
             style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
@@ -212,7 +218,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       final agent = context.read<AgentService>();
       agent.updateBootContext(
         service.buildBootContext(),
-        jobFunctionName: service.selected?.name,
+        jobFunctionName: service.selected?.title,
         whisperByDefault: service.selected?.whisperByDefault,
       );
       service.closeEditor();
@@ -285,11 +291,18 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildSectionLabel('Name'),
+                        _buildSectionLabel('Title'),
                         _buildTextField(
                           controller: _nameController,
                           focusNode: _nameFocus,
                           hint: 'e.g. Sales Assistant, Support Agent...',
+                          maxLines: 1,
+                        ),
+                        const SizedBox(height: 14),
+                        _buildSectionLabel('Agent Name'),
+                        _buildTextField(
+                          controller: _agentNameController,
+                          hint: 'e.g. Sarah, Alex (persona name on calls)',
                           maxLines: 1,
                         ),
                         const SizedBox(height: 14),
@@ -530,6 +543,8 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
               _mutePolicyTile(0, 'Auto unmute on call'),
               _thinDivider(),
               _mutePolicyTile(1, 'Stay muted'),
+              _thinDivider(),
+              _mutePolicyTile(2, 'Stay unmuted'),
             ],
           ),
         ),

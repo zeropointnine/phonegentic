@@ -127,8 +127,10 @@ class TextAgentService {
       }
     } catch (e) {
       debugPrint('[TextAgentService] Error: $e');
-      _responseController
-          .add(ResponseTextEvent(text: 'Error: $e', isFinal: true));
+      if (_history.isNotEmpty) {
+        _responseController
+            .add(ResponseTextEvent(text: 'Error: $e', isFinal: true));
+      }
     } finally {
       _responding = false;
       if (_pendingContext.isNotEmpty) _scheduleFlush();
@@ -274,6 +276,8 @@ class TextAgentService {
   ];
 
   Future<void> _callClaude() async {
+    if (_history.isEmpty) return;
+
     final uri = Uri.parse('https://api.anthropic.com/v1/messages');
     final request = await _httpClient!.postUrl(uri);
 

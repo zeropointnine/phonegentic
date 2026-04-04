@@ -31,7 +31,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 9,
+        version: 10,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -192,6 +192,12 @@ class CallHistoryDb {
     if (oldVersion < 9) {
       await db.execute(
         'ALTER TABLE job_functions ADD COLUMN mute_policy_override INTEGER',
+      );
+    }
+
+    if (oldVersion < 10) {
+      await db.execute(
+        'ALTER TABLE job_functions ADD COLUMN agent_name TEXT',
       );
     }
   }

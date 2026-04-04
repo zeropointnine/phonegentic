@@ -829,7 +829,12 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
 
   Widget _buildNumberDisplay() {
     final raw = _textController?.text ?? '';
-    final display = raw.isEmpty ? '' : PhoneFormatter.format(raw);
+    final demoMode = context.watch<DemoModeService>();
+    final display = raw.isEmpty
+        ? ''
+        : demoMode.enabled
+            ? demoMode.maskPhone(raw)
+            : PhoneFormatter.format(raw);
     return Column(
       children: [
         SizedBox(
