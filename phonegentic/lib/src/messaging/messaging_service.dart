@@ -81,6 +81,13 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _loadProvider() async {
     final backend = await MessagingSettings.loadBackend();
+
+    if (backend == MessagingBackend.none) {
+      _provider = null;
+      notifyListeners();
+      return;
+    }
+
     final telnyxConfig = await TelnyxMessagingConfig.load();
     final twilioConfig = await TwilioMessagingConfig.load();
 

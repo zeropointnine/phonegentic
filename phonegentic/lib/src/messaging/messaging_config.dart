@@ -1,7 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Which SMS backend is active when multiple are configured.
-enum MessagingBackend { telnyx, twilio }
+enum MessagingBackend { none, telnyx, twilio }
 
 class MessagingSettings {
   static const _backendKey = 'user_messaging_backend';
@@ -9,9 +9,8 @@ class MessagingSettings {
   static Future<MessagingBackend> loadBackend() async {
     final prefs = await SharedPreferences.getInstance();
     final v = prefs.getString(_backendKey);
-    if (v == MessagingBackend.twilio.name) {
-      return MessagingBackend.twilio;
-    }
+    if (v == MessagingBackend.none.name) return MessagingBackend.none;
+    if (v == MessagingBackend.twilio.name) return MessagingBackend.twilio;
     return MessagingBackend.telnyx;
   }
 

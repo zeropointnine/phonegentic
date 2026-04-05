@@ -292,7 +292,19 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                     height: 0.5,
                     color: AppColors.border.withOpacity(0.5)),
                 _buildMessagingBackendRow(),
-                if (_messagingBackend == MessagingBackend.telnyx) ...[
+                if (_messagingBackend == MessagingBackend.none) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    child: Text(
+                      'Messaging is disabled. Existing credentials are preserved.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textTertiary,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                ] else if (_messagingBackend == MessagingBackend.telnyx) ...[
                   _divider(),
                   _buildKeyField('API Key', _telnyxMsgKeyCtrl, (val) {
                     _updateTelnyxMsg(_telnyxMsg.copyWith(apiKey: val));
@@ -630,6 +642,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   // ───── SMS / MMS (Telnyx or Twilio) ─────
 
   bool get _smsConfiguredForBackend {
+    if (_messagingBackend == MessagingBackend.none) return false;
     if (_messagingBackend == MessagingBackend.twilio) {
       return _twilioMsg.isConfigured;
     }
@@ -677,9 +690,11 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   Row(
                     children: [
                       Text(
-                        _messagingBackend == MessagingBackend.twilio
-                            ? 'Twilio'
-                            : 'Telnyx',
+                        _messagingBackend == MessagingBackend.none
+                            ? 'Disabled'
+                            : _messagingBackend == MessagingBackend.twilio
+                                ? 'Twilio'
+                                : 'Telnyx',
                         style: TextStyle(
                             fontSize: 11, color: AppColors.textTertiary),
                       ),
@@ -688,19 +703,27 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: _smsConfiguredForBackend
-                              ? AppColors.green.withOpacity(0.12)
-                              : AppColors.orange.withOpacity(0.12),
+                          color: _messagingBackend == MessagingBackend.none
+                              ? AppColors.textTertiary.withOpacity(0.12)
+                              : _smsConfiguredForBackend
+                                  ? AppColors.green.withOpacity(0.12)
+                                  : AppColors.orange.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
-                          _smsConfiguredForBackend ? 'Configured' : 'Not Set',
+                          _messagingBackend == MessagingBackend.none
+                              ? 'Disabled'
+                              : _smsConfiguredForBackend
+                                  ? 'Configured'
+                                  : 'Not Set',
                           style: TextStyle(
                             fontSize: 9,
                             fontWeight: FontWeight.w600,
-                            color: _smsConfiguredForBackend
-                                ? AppColors.green
-                                : AppColors.orange,
+                            color: _messagingBackend == MessagingBackend.none
+                                ? AppColors.textTertiary
+                                : _smsConfiguredForBackend
+                                    ? AppColors.green
+                                    : AppColors.orange,
                           ),
                         ),
                       ),
@@ -741,6 +764,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
                 dropdownColor: AppColors.surface,
                 items: const [
+                  DropdownMenuItem(
+                    value: MessagingBackend.none,
+                    child: Text('None'),
+                  ),
                   DropdownMenuItem(
                     value: MessagingBackend.telnyx,
                     child: Text('Telnyx'),
