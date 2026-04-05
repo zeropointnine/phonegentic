@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/test_credentials.dart';
 import 'package:phonegentic/src/theme_provider.dart';
@@ -13,9 +15,11 @@ import 'package:sip_ua/sip_ua.dart';
 
 import 'calendar_sync_service.dart';
 import 'callscreen.dart';
+import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'messaging/messaging_service.dart';
+import 'messaging/phone_numbers.dart';
 import 'phone_formatter.dart';
 import 'job_function_service.dart';
 import 'tear_sheet_service.dart';
@@ -55,6 +59,10 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   final Map<String?, Call> _calls = {};
   Call? _focusedCall;
   Call? get _activeCall => _focusedCall;
+
+  static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
+  Timer? _conferenceTimeout;
+  String? _conferenceTimeoutCallId;
 
   @override
   void initState() {
@@ -192,7 +200,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
       'video': false,
     };
     final mediaStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-    helper!.call(dest, voiceOnly: true, mediaStream: mediaStream);
+    final normalized = dest.contains('@') ? dest : ensureE164(dest);
+    helper!.call(normalized, voiceOnly: true, mediaStream: mediaStream);
     return null;
   }
 
@@ -280,7 +289,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             ],
           ),
           if (historyService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: historyService.closeHistory,
                 child: Container(color: Colors.black54),
@@ -295,7 +308,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const CallHistoryPanel(),
             ),
           if (contactService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: contactService.closeContacts,
                 child: Container(color: Colors.black54),
@@ -310,7 +327,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const ContactListPanel(),
             ),
           if (calendarService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: calendarService.close,
                 child: Container(color: Colors.black54),
@@ -325,7 +346,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const CalendarPanel(),
             ),
           if (messagingService.isOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: messagingService.close,
                 child: Container(color: Colors.black54),
@@ -340,37 +365,61 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               child: const MessagingPanel(),
             ),
           if (contactService.isQuickAddOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: contactService.closeQuickAdd,
                 child: Container(color: Colors.black38),
               ),
             ),
           if (contactService.isQuickAddOpen)
-            const Positioned.fill(
-              child: QuickAddOverlay(),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const QuickAddOverlay(),
             ),
           if (tearSheetService.isEditorOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: tearSheetService.closeEditor,
                 child: Container(color: Colors.black38),
               ),
             ),
           if (tearSheetService.isEditorOpen)
-            const Positioned.fill(
-              child: TearSheetEditor(),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const TearSheetEditor(),
             ),
           if (jobFunctionService.isEditorOpen)
-            Positioned.fill(
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
               child: GestureDetector(
                 onTap: jobFunctionService.closeEditor,
                 child: Container(color: Colors.black38),
               ),
             ),
           if (jobFunctionService.isEditorOpen)
-            const Positioned.fill(
-              child: JobFunctionEditor(),
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const JobFunctionEditor(),
             ),
         ],
       ),
@@ -391,6 +440,58 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildConferenceBadge() {
+    final conf = Provider.of<ConferenceService>(context);
+    if (!conf.hasConference && conf.legCount < 2) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: conf.hasConference
+              ? AppColors.green.withOpacity(0.12)
+              : AppColors.burntAmber.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: conf.hasConference
+                ? AppColors.green.withOpacity(0.3)
+                : AppColors.burntAmber.withOpacity(0.3),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              conf.hasConference
+                  ? Icons.groups_rounded
+                  : Icons.call_split_rounded,
+              size: 12,
+              color: conf.hasConference
+                  ? AppColors.green
+                  : AppColors.burntAmber,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              conf.hasConference
+                  ? 'Conference (${conf.legCount})'
+                  : '${conf.legCount} calls',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: conf.hasConference
+                    ? AppColors.green
+                    : AppColors.burntAmber,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -433,6 +534,7 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
                   ],
                 ),
               ),
+              _buildConferenceBadge(),
               const Spacer(),
               Container(
                 padding:
@@ -792,7 +894,12 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
 
   Widget _buildNumberDisplay() {
     final raw = _textController?.text ?? '';
-    final display = raw.isEmpty ? '' : PhoneFormatter.format(raw);
+    final demoMode = context.watch<DemoModeService>();
+    final display = raw.isEmpty
+        ? ''
+        : demoMode.enabled
+            ? demoMode.maskPhone(raw)
+            : PhoneFormatter.format(raw);
     return Column(
       children: [
         SizedBox(
@@ -929,31 +1036,74 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   @override
   void transportStateChanged(TransportState state) {}
 
+  ConferenceService get _confService =>
+      Provider.of<ConferenceService>(context, listen: false);
+
   @override
   void callStateChanged(Call call, CallState callState) {
+    final conf = _confService;
+
     switch (callState.state) {
       case CallStateEnum.CALL_INITIATION:
+        final isConferenceLeg = _calls.isNotEmpty;
         setState(() {
           _calls[call.id] = call;
           _focusedCall = call;
         });
+        conf.addLeg(call, isOutbound: true);
+        if (isConferenceLeg) {
+          _tapChannel.invokeMethod('setConferenceMode', {'active': true});
+          _startConferenceTimeout(call.id!);
+        }
+        break;
+      case CallStateEnum.CONFIRMED:
+        conf.updateLegState(call.id!, LegState.active);
+        _cancelConferenceTimeout(call.id!);
+        break;
+      case CallStateEnum.HOLD:
+        conf.updateLegState(call.id!, LegState.held);
+        break;
+      case CallStateEnum.UNHOLD:
+        conf.updateLegState(call.id!, LegState.active);
         break;
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
+        _cancelConferenceTimeout(call.id!);
+        final wasConferenceLeg = _calls.length > 1;
+        conf.removeLeg(call.id!);
         setState(() {
           _calls.remove(call.id);
           if (_focusedCall?.id == call.id && _calls.isNotEmpty) {
             _focusedCall = _calls.values.first;
           }
-          // When no calls remain, keep _focusedCall set so the CallScreen
-          // shows "Call Ended" for 2 seconds before onDismiss clears it.
           if (_calls.isEmpty) {
             _audioMuted = false;
             _speakerOn = false;
           }
         });
-        if (callState.state == CallStateEnum.FAILED) {
+        if (_calls.length <= 1) {
+          _tapChannel.invokeMethod('setConferenceMode', {'active': false});
+        }
+        if (wasConferenceLeg && _calls.length == 1) {
+          final remaining = _calls.values.first;
+          if (remaining.state == CallStateEnum.HOLD) {
+            remaining.unhold();
+            debugPrint('[Dialpad] Auto-unhold remaining call after conference leg failed');
+          }
+          if (callState.state == CallStateEnum.FAILED && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Conference call failed — returned to active call'),
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+        if (callState.state == CallStateEnum.FAILED && _calls.isEmpty) {
           reRegisterWithCurrentUser();
+        }
+        if (_calls.isEmpty) {
+          conf.reset();
         }
         break;
       case CallStateEnum.MUTED:
@@ -971,6 +1121,39 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         }
         break;
       default:
+    }
+
+    // Sync focused call from conference service selection
+    if (conf.focusedLegId != null && conf.focusedLegId != _focusedCall?.id) {
+      final target = _calls[conf.focusedLegId];
+      if (target != null) {
+        setState(() => _focusedCall = target);
+      }
+    }
+  }
+
+  void _startConferenceTimeout(String callId) {
+    _conferenceTimeout?.cancel();
+    _conferenceTimeoutCallId = callId;
+    _conferenceTimeout = Timer(const Duration(seconds: 30), () {
+      debugPrint('[Dialpad] Conference leg $callId timed out — hanging up');
+      final stuckCall = _calls[callId];
+      if (stuckCall != null) {
+        try {
+          stuckCall.hangup({'status_code': 408});
+        } catch (e) {
+          debugPrint('[Dialpad] Failed to hang up stuck call: $e');
+        }
+      }
+      _conferenceTimeoutCallId = null;
+    });
+  }
+
+  void _cancelConferenceTimeout(String callId) {
+    if (_conferenceTimeoutCallId == callId) {
+      _conferenceTimeout?.cancel();
+      _conferenceTimeout = null;
+      _conferenceTimeoutCallId = null;
     }
   }
 

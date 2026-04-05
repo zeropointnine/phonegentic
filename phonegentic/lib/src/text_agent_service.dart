@@ -127,8 +127,10 @@ class TextAgentService {
       }
     } catch (e) {
       debugPrint('[TextAgentService] Error: $e');
-      _responseController
-          .add(ResponseTextEvent(text: 'Error: $e', isFinal: true));
+      if (_history.isNotEmpty) {
+        _responseController
+            .add(ResponseTextEvent(text: 'Error: $e', isFinal: true));
+      }
     } finally {
       _responding = false;
       if (_pendingContext.isNotEmpty) _scheduleFlush();
@@ -277,9 +279,66 @@ class TextAgentService {
         },
       },
     },
+    {
+      'name': 'start_voice_sample',
+      'description':
+          'Start capturing a voice sample from the specified call party for '
+          'voice cloning. Use this to record audio that will be sent to '
+          'ElevenLabs to create a cloned voice. Let them speak for at '
+          'least 10-15 seconds before stopping.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'party': {
+            'type': 'string',
+            'enum': ['remote', 'host'],
+            'description':
+                'Which call party to sample: "remote" for the other caller, '
+                '"host" for the app user.',
+          },
+        },
+        'required': ['party'],
+      },
+    },
+    {
+      'name': 'stop_and_clone_voice',
+      'description':
+          'Stop the active voice sample and upload it to ElevenLabs to '
+          'create a cloned voice. Returns the new voice_id on success. '
+          'Must call start_voice_sample first.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'voice_name': {
+            'type': 'string',
+            'description':
+                'A friendly name for the cloned voice (e.g. "Sarah\'s Voice").',
+          },
+        },
+      },
+    },
+    {
+      'name': 'set_agent_voice',
+      'description':
+          'Change the agent\'s speaking voice mid-call. Use a voice_id '
+          'returned by stop_and_clone_voice or any ElevenLabs voice ID. '
+          'All subsequent agent speech will use this voice.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'voice_id': {
+            'type': 'string',
+            'description': 'The ElevenLabs voice ID to switch to.',
+          },
+        },
+        'required': ['voice_id'],
+      },
+    },
   ];
 
   Future<void> _callClaude() async {
+    if (_history.isEmpty) return;
+
     final uri = Uri.parse('https://api.anthropic.com/v1/messages');
     final request = await _httpClient!.postUrl(uri);
 

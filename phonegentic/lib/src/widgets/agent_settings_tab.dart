@@ -18,6 +18,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   TextAgentConfig _text = const TextAgentConfig();
   CallRecordingConfig _recording = const CallRecordingConfig();
   TtsConfig _tts = const TtsConfig();
+  AgentMutePolicy _mutePolicy = AgentMutePolicy.autoToggle;
   bool _loaded = false;
   bool _dirty = false;
   AgentService? _agent;
@@ -29,6 +30,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _systemPromptCtrl = TextEditingController();
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
+
 
   List<ElevenLabsVoice>? _voiceList;
   bool _voiceListLoading = false;
@@ -66,12 +68,14 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final t = await AgentConfigService.loadTextConfig();
     final r = await AgentConfigService.loadCallRecordingConfig();
     final tts = await AgentConfigService.loadTtsConfig();
+    final mp = await AgentConfigService.loadMutePolicy();
     if (!mounted) return;
     setState(() {
       _voice = v;
       _text = t;
       _recording = r;
       _tts = tts;
+      _mutePolicy = mp;
       _voiceKeyCtrl.text = v.apiKey;
       _voiceInstructionsCtrl.text = v.instructions;
       _textOpenaiKeyCtrl.text = t.openaiApiKey;
@@ -155,6 +159,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             _buildVoiceAgentCard(),
             const SizedBox(height: 16),
             _buildCallRecordingCard(),
+            const SizedBox(height: 16),
+            _buildMutePolicyCard(),
             const SizedBox(height: 16),
             _buildTextAgentCard(),
             if (_text.enabled &&
@@ -253,6 +259,158 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           ),
         ),
       ],
+    );
+  }
+
+  // ───── Agent Mute Policy ─────
+
+  void _updateMutePolicy(AgentMutePolicy p) {
+    setState(() => _mutePolicy = p);
+    _agent?.setGlobalMutePolicy(p);
+  }
+
+  Widget _buildMutePolicyCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'AGENT VOICE BEHAVIOR',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Column(
+            children: [
+              _mutePolicyOption(
+                AgentMutePolicy.autoToggle,
+                Icons.swap_horiz_rounded,
+                'Auto unmute on call',
+                'Agent speaks when a call starts, goes silent when it ends',
+              ),
+              Divider(
+                  height: 0.5,
+                  indent: 16,
+                  color: AppColors.border.withOpacity(0.5)),
+              _mutePolicyOption(
+                AgentMutePolicy.stayMuted,
+                Icons.volume_off_rounded,
+                'Stay muted',
+                'Agent stays text-only unless you manually unmute',
+              ),
+              Divider(
+                  height: 0.5,
+                  indent: 16,
+                  color: AppColors.border.withOpacity(0.5)),
+              _mutePolicyOption(
+                AgentMutePolicy.stayUnmuted,
+                Icons.volume_up_rounded,
+                'Stay unmuted',
+                'Agent always speaks, even when not on a call',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 2),
+          child: Text(
+            'Can be overridden per job function.',
+            style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _mutePolicyOption(
+    AgentMutePolicy value,
+    IconData icon,
+    String title,
+    String subtitle,
+  ) {
+    final selected = _mutePolicy == value;
+    return GestureDetector(
+      onTap: () => _updateMutePolicy(value),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: selected
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(icon,
+                  size: 17,
+                  color: selected ? AppColors.accent : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    style:
+                        TextStyle(fontSize: 10, color: AppColors.textTertiary),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 18,
+              height: 18,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.border,
+                  width: selected ? 5 : 1.5,
+                ),
+                color: selected ? AppColors.accent : Colors.transparent,
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.onAccent,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+          ],
+        ),
+      ),
     );
   }
 

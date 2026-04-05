@@ -1,6 +1,18 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'conference/conference_config.dart';
 import 'models/agent_context.dart';
+
+enum AgentMutePolicy {
+  /// Unmute (voice on) when a call starts, mute (text-only) when it ends.
+  autoToggle,
+
+  /// Stay muted unless the user manually unmutes.
+  stayMuted,
+
+  /// Always keep the agent unmuted (voice on) regardless of call state.
+  stayUnmuted,
+}
 
 enum TextAgentProvider { openai, claude }
 
@@ -271,5 +283,50 @@ class AgentConfigService {
       CallRecordingConfig config) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('${_prefix}call_auto_record', config.autoRecord);
+  }
+
+  static Future<AgentMutePolicy> loadMutePolicy() async {
+    final prefs = await SharedPreferences.getInstance();
+    final idx = prefs.getInt('${_prefix}mute_policy') ?? 0;
+    return AgentMutePolicy.values[idx.clamp(0, AgentMutePolicy.values.length - 1)];
+  }
+
+  static Future<void> saveMutePolicy(AgentMutePolicy policy) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('${_prefix}mute_policy', policy.index);
+  }
+
+  // -- Conference config ------------------------------------------------------
+
+  static Future<ConferenceConfig> loadConferenceConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final idx = prefs.getInt('${_prefix}conf_provider') ?? 0;
+    return ConferenceConfig(
+      provider: ConferenceProviderType
+          .values[idx.clamp(0, ConferenceProviderType.values.length - 1)],
+      telnyxApiKey: prefs.getString('${_prefix}conf_telnyx_key') ?? '',
+      telnyxConnectionId:
+          prefs.getString('${_prefix}conf_telnyx_conn_id') ?? '',
+      telnyxWebhookUrl:
+          prefs.getString('${_prefix}conf_telnyx_webhook_url') ?? '',
+      basicSupportsUpdate:
+          prefs.getBool('${_prefix}conf_basic_supports_update') ?? false,
+      basicRenegotiateMedia:
+          prefs.getBool('${_prefix}conf_basic_renegotiate_media') ?? false,
+    );
+  }
+
+  static Future<void> saveConferenceConfig(ConferenceConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('${_prefix}conf_provider', config.provider.index);
+    await prefs.setString('${_prefix}conf_telnyx_key', config.telnyxApiKey);
+    await prefs.setString(
+        '${_prefix}conf_telnyx_conn_id', config.telnyxConnectionId);
+    await prefs.setString(
+        '${_prefix}conf_telnyx_webhook_url', config.telnyxWebhookUrl);
+    await prefs.setBool(
+        '${_prefix}conf_basic_supports_update', config.basicSupportsUpdate);
+    await prefs.setBool('${_prefix}conf_basic_renegotiate_media',
+        config.basicRenegotiateMedia);
   }
 }

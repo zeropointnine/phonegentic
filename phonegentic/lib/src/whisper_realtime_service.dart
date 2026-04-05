@@ -57,6 +57,7 @@ class WhisperRealtimeService {
   StreamSubscription<dynamic>? _audioSub;
   bool _connected = false;
   bool _muted = false;
+  bool _vadActive = false;
 
   final _transcriptionController =
       StreamController<TranscriptionEvent>.broadcast();
@@ -83,6 +84,7 @@ class WhisperRealtimeService {
   Stream<double> get audioLevels => _audioLevelController.stream;
   Stream<bool> get speakingState => _speakingController.stream;
   bool get isConnected => _connected;
+  bool get vadActive => _vadActive;
 
   bool get muted => _muted;
   set muted(bool value) => _muted = value;
@@ -157,6 +159,8 @@ class WhisperRealtimeService {
   }) async {
     if (_connected) await disconnect();
 
+    _audioSendCount = 0;
+
     final uri =
         Uri.parse('wss://api.openai.com/v1/realtime?model=$model');
 
@@ -205,7 +209,7 @@ class WhisperRealtimeService {
         'type': 'server_vad',
         'threshold': 0.5,
         'prefix_padding_ms': 300,
-        'silence_duration_ms': 1000,
+        'silence_duration_ms': 1800,
       },
     };
 
@@ -460,6 +464,64 @@ class WhisperRealtimeService {
           },
         },
       },
+      {
+        'type': 'function',
+        'name': 'start_voice_sample',
+        'description':
+            'Start capturing a voice sample from the specified call party for '
+                'voice cloning. Use this to record audio that will be sent to '
+                'ElevenLabs to create a cloned voice. Let them speak for at '
+                'least 10-15 seconds before stopping.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'party': {
+              'type': 'string',
+              'enum': ['remote', 'host'],
+              'description':
+                  'Which call party to sample: "remote" for the other caller, '
+                      '"host" for the app user.',
+            },
+          },
+          'required': ['party'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'stop_and_clone_voice',
+        'description':
+            'Stop the active voice sample and upload it to ElevenLabs to '
+                'create a cloned voice. Returns the new voice_id on success. '
+                'Must call start_voice_sample first.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'voice_name': {
+              'type': 'string',
+              'description':
+                  'A friendly name for the cloned voice (e.g. "Sarah\'s Voice").',
+            },
+          },
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'set_agent_voice',
+        'description':
+            'Change the agent\'s speaking voice mid-call. Use a voice_id '
+                'returned by stop_and_clone_voice or any ElevenLabs voice ID. '
+                'All subsequent agent speech will use this voice.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'voice_id': {
+              'type': 'string',
+              'description': 'The ElevenLabs voice ID to switch to.',
+            },
+          },
+          'required': ['voice_id'],
+        },
+      },
     ];
 
     _send({'type': 'session.update', 'session': session});
@@ -637,7 +699,9 @@ class WhisperRealtimeService {
             pcm16Data: Uint8List(0),
             isDone: true,
           ));
-          _send({'type': 'input_audio_buffer.clear'});
+          // Don't manually clear the input buffer — server-side VAD manages
+          // the buffer automatically and manual clears can reset VAD state,
+          // preventing subsequent speech detection.
           if (!_speakingController.isClosed) {
             _speakingController.add(false);
           }
@@ -706,10 +770,12 @@ class WhisperRealtimeService {
           break;
 
         case 'input_audio_buffer.speech_started':
+          _vadActive = true;
           debugPrint('[Whisper] VAD: speech started');
           break;
 
         case 'input_audio_buffer.speech_stopped':
+          _vadActive = false;
           debugPrint('[Whisper] VAD: speech stopped');
           break;
 
@@ -731,6 +797,14 @@ class WhisperRealtimeService {
 
         case 'response.done':
           debugPrint('[Whisper] Response complete');
+          break;
+
+        case 'conversation.item.created':
+        case 'response.content_part.added':
+        case 'response.content_part.done':
+        case 'response.output_item.done':
+        case 'input_audio_buffer.cleared':
+        case 'rate_limits.updated':
           break;
 
         case 'error':
@@ -784,6 +858,7 @@ class WhisperRealtimeService {
     await stopAudioTap();
     await stopResponseAudio();
     _connected = false;
+    _muted = false;
     await _ws?.sink.close();
     _ws = null;
   }

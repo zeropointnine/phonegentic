@@ -94,6 +94,7 @@ class JobFunctionService extends ChangeNotifier {
     if (jf == null) return AgentBootContext.trivia();
 
     return AgentBootContext(
+      name: jf.agentName,
       role: jf.role,
       jobFunction: jf.jobDescription,
       speakers: jf.speakers

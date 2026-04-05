@@ -118,12 +118,10 @@ extension CallPhaseX on CallPhase {
 /// transcribed audio so they can be filtered before reaching the agent.
 class IvrDetector {
   static final _patterns = [
+    // IVR / phone menu
     RegExp(r'press\s+(\d|one|two|three|four|five|six|seven|eight|nine|zero|pound|star|hash)', caseSensitive: false),
     RegExp(r'(para\s+espa[nñ]ol|for\s+spanish)', caseSensitive: false),
     RegExp(r'(please\s+hold|your\s+call\s+(is|will\s+be))', caseSensitive: false),
-    RegExp(r'(leave\s+a\s+message|after\s+the\s+(beep|tone))', caseSensitive: false),
-    RegExp(r'(voicemail|mail\s*box)', caseSensitive: false),
-    RegExp(r'(is\s+not\s+available|cannot\s+(take|answer))', caseSensitive: false),
     RegExp(r'(menu|extension|operator|directory)', caseSensitive: false),
     RegExp(r'(call\s+(may|is)\s+(being\s+)?recorded)', caseSensitive: false),
     RegExp(r'(quality\s+(assurance|purposes))', caseSensitive: false),
@@ -136,6 +134,25 @@ class IvrDetector {
     RegExp(r'(all\s+(of\s+our\s+)?(representatives|agents)\s+(are|is))', caseSensitive: false),
     RegExp(r'(pound\s+sign|star\s+key)', caseSensitive: false),
     RegExp(r'(main\s+menu|previous\s+menu|return\s+to)', caseSensitive: false),
+    // Voicemail
+    RegExp(r'(leave\s+(a\s+|your\s+)?message)', caseSensitive: false),
+    RegExp(r'(after\s+the\s+(beep|tone|signal))', caseSensitive: false),
+    RegExp(r'(at\s+the\s+(beep|tone|signal))', caseSensitive: false),
+    RegExp(r'(voicemail|voice\s+mail|mail\s*box)', caseSensitive: false),
+    RegExp(r'(is\s+not\s+available|cannot\s+(take|answer)|unable\s+to\s+(take|answer))', caseSensitive: false),
+    RegExp(r'(not\s+(here|in|around)\s+right\s+now)', caseSensitive: false),
+    RegExp(r"(can'?t\s+(come|get)\s+to\s+the\s+phone)", caseSensitive: false),
+    RegExp(r'(reached\s+(the\s+)?(voicemail|phone|number|cell))', caseSensitive: false),
+    RegExp(r"(you'?ve\s+reached)", caseSensitive: false),
+    RegExp(r'(record\s+(your|a)\s+message)', caseSensitive: false),
+    RegExp(r'(call\s+(me|us|you)\s+back)', caseSensitive: false),
+    RegExp(r'(get\s+back\s+to\s+you)', caseSensitive: false),
+    RegExp(r'(please\s+(try|call)\s+(again|back|later))', caseSensitive: false),
+    RegExp(r'(unavailable|currently\s+unavailable)', caseSensitive: false),
+    RegExp(r'(inbox\s+is\s+full)', caseSensitive: false),
+    RegExp(r'(press\s+\d.*to\s+leave)', caseSensitive: false),
+    RegExp(r'(the\s+person.*is\s+not\s+available)', caseSensitive: false),
+    RegExp(r'(google\s+voice|google\s+subscriber)', caseSensitive: false),
   ];
 
   static bool isIvr(String text) {
@@ -159,6 +176,7 @@ class Speaker {
 }
 
 class AgentBootContext {
+  final String? name;
   final String role;
   final String jobFunction;
   final List<Speaker> speakers;
@@ -167,6 +185,7 @@ class AgentBootContext {
   final String? elevenLabsVoiceId;
 
   const AgentBootContext({
+    this.name,
     this.role = _defaultRole,
     this.jobFunction = _defaultJob,
     this.speakers = const [],
@@ -177,6 +196,7 @@ class AgentBootContext {
 
   factory AgentBootContext.trivia() {
     return AgentBootContext(
+      name: 'Trivia Host',
       role: _defaultRole,
       jobFunction: _defaultJob,
       speakers: [
@@ -191,6 +211,9 @@ class AgentBootContext {
     final buf = StringBuffer();
 
     buf.writeln('## Identity');
+    if (name != null && name!.isNotEmpty) {
+      buf.writeln('Your name is "$name". Use this as your identity when speaking on calls — introduce yourself by this name when appropriate (e.g. "Hi, this is $name").');
+    }
     buf.writeln(role);
     buf.writeln();
 
@@ -198,7 +221,7 @@ class AgentBootContext {
     for (final s in speakers) {
       buf.writeln('- [${s.label}]: Source: ${s.source} audio.');
     }
-    buf.writeln('- [Agent]: You. Your voice is mixed into both sides of the call.');
+    buf.writeln('- [Agent]: You${name != null && name!.isNotEmpty ? ' ($name)' : ''}. Your voice is mixed into both sides of the call.');
     buf.writeln();
 
     buf.writeln('## Rules');
@@ -211,19 +234,46 @@ class AgentBootContext {
     buf.writeln('7. NEVER respond to or repeat your own prior statements. If you hear something that sounds like what you just said, ignore it completely — it is audio echo, not a new speaker.');
     buf.writeln('8. Keep responses concise and substantive. Avoid filler, pleasantries, and rhetorical questions.');
     buf.writeln('9. After a call ends, produce NO output whatsoever. Do not summarize, do not offer help, do not say goodbye. Complete silence.');
+    buf.writeln('10. NEVER narrate, plan, or think aloud. This means:');
+    buf.writeln('    - NEVER describe what you are about to do ("I\'m going to call Zach and then...", "When connected, I\'ll say...").');
+    buf.writeln('    - NEVER restate or paraphrase your instructions back ("I\'ll deliver the spring message...", "I\'ll wait for them to say hello first...").');
+    buf.writeln('    - NEVER announce that you are waiting, listening, or remaining silent.');
+    buf.writeln('    - NEVER produce bracketed stage directions like "[Remaining silent...]", "[Waiting for...]".');
+    buf.writeln('    - If you have nothing to say, produce ZERO output. Absolute silence. No narration, no planning, no status updates.');
+    buf.writeln('    - When the host gives you instructions, execute them — do NOT repeat them back. Just do it when the time comes.');
+    buf.writeln('11. NEVER repeat phone numbers aloud. If you need to confirm a call action, say the person\'s name only (e.g. "Calling Zach" not "Calling Zach at 213-555-1234").');
+    buf.writeln('12. The word "Phonegentic" is pronounced "Phone-JENT-ick" (rhymes with "genetic" with "Phone" in front). Never say "fon-AH-jen-tick" or similar.');
+    buf.writeln('13. Be patient with turn-taking. People often pause mid-sentence to think — a brief silence does NOT mean they are done speaking. Wait for a clear end of thought (a complete sentence, a question, or a trailing-off) before responding. When in doubt, wait a beat longer. Never cut someone off or rush to fill a pause.');
+    buf.writeln('14. IGNORE background and ambient audio. The microphone picks up everything in the room — TV, TikTok, YouTube, music, podcasts, other people\'s conversations nearby, notifications, etc. Only respond to speech that is clearly directed at you. Signs of background audio to IGNORE:');
+    buf.writeln('    - Content that makes no sense as a request or conversation with you (viral clips, song lyrics, news anchors, commentary).');
+    buf.writeln('    - Rapid topic shifts or multiple different voices in quick succession.');
+    buf.writeln('    - Audio that sounds like entertainment, social media, or broadcast media.');
+    buf.writeln('    - Fragments or half-sentences that don\'t address you or relate to your job function.');
+    buf.writeln('    - Transcripts tagged as (low confidence) — these are likely not the host speaking.');
+    buf.writeln('    When in doubt, stay silent. Only respond when you are confident the host or call party is speaking TO you.');
     buf.writeln();
 
     buf.writeln('## Call State Awareness');
     buf.writeln('You will receive [CALL_STATE: ...] system messages as the call progresses.');
     buf.writeln('- NEVER read these aloud, repeat them, or verbally acknowledge them.');
-    buf.writeln('- Do NOT speak until you see [CALL_STATE: Connected].');
-    buf.writeln('- While the state is Initiating, Ringing, Connecting, Answered, or Settling, remain COMPLETELY SILENT.');
+    buf.writeln('- When there is NO active call (Idle), you may respond conversationally to the host. Answer questions, take instructions, execute tool calls, and confirm briefly.');
+    buf.writeln('- The INSTANT a call begins (Initiating, Ringing, Connecting, Answered, Settling): produce ZERO output. No confirmation, no plan, no narration. Execute any pending tool calls silently and wait.');
+    buf.writeln('- When the host asks you to make a call, just call make_call and say nothing. Do NOT say "Calling Zach" or "I\'ll call them now" or anything. Silent execution.');
+    buf.writeln('- Only [CALL_STATE: Connected] means a real human is on the line. NOW you may speak — go straight into your job function. No preamble like "Hi, I\'ve been waiting" — just begin naturally.');
     buf.writeln('- "Settling" means the call audio connected but an automated attendant, IVR menu, voicemail greeting, or hold music may be playing. This is NOT a real person. Do NOT respond to anything you hear during settling.');
-    buf.writeln('- Only [CALL_STATE: Connected] means a real human is on the line and conversation can begin.');
+    buf.writeln('- EXCEPTION — Call screening: Some people use call screening where an automated voice asks "Who is calling?" or "Please state your name." If you hear this specific prompt during Settling, respond with ONLY your name${name != null && name!.isNotEmpty ? ' ("$name")' : ''} and nothing else. Then go silent again and wait for [CALL_STATE: Connected].');
     buf.writeln('- The party count tells you how many people are on the call. Adjust accordingly.');
     buf.writeln('- If the call goes On Hold, stop speaking until it resumes.');
+    buf.writeln('- NEVER call end_call on your own. Only hang up when the HOST explicitly tells you to. The host controls when calls end — you do not.');
     buf.writeln('- When the call ends, stop ALL interaction IMMEDIATELY. Produce absolutely no text or audio after [CALL_STATE: Ended]. No summary, no farewell, no offer to help. NOTHING.');
     buf.writeln('- If you hear phrases like "press 1", "leave a message", "your call is important", "please hold", "for Spanish press 2", "dial by name", or similar automated prompts at ANY point, ignore them completely — they are from a phone system, not a person.');
+    buf.writeln();
+    buf.writeln('### Voicemail Handling');
+    buf.writeln('- When you reach voicemail, you will hear a greeting followed by a BEEP tone. Do NOT speak during the greeting — wait until AFTER the beep.');
+    buf.writeln('- Signs of voicemail: "You\'ve reached...", "leave a message", "after the beep/tone", "not available", "can\'t come to the phone", "mailbox", "voicemail".');
+    buf.writeln('- After the beep, leave a brief, professional voicemail per your job function. State your name${name != null && name!.isNotEmpty ? ' ($name)' : ''}, purpose, and any callback information the host has provided.');
+    buf.writeln('- Keep voicemail messages under 20 seconds. Be direct — no filler or pleasantries.');
+    buf.writeln('- After leaving the message, STOP speaking and wait. Do NOT call end_call — the host will decide when to hang up.');
     buf.writeln();
 
     if (textOnly) {

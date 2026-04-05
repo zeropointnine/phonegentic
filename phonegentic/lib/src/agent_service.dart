@@ -1,18 +1,25 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
 import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
 import 'contact_service.dart';
+import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
+import 'elevenlabs_api_service.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
+import 'messaging/phone_numbers.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
@@ -28,6 +35,8 @@ class AgentService extends ChangeNotifier {
   bool _speaking = false;
   bool _whisperMode = false;
   String _statusText = 'Initializing...';
+  AgentMutePolicy _globalMutePolicy = AgentMutePolicy.autoToggle;
+  bool _userMuteOverride = false;
 
   final Queue<double> _levels = Queue<double>();
   static const int waveformBars = 14;
@@ -36,6 +45,7 @@ class AgentService extends ChangeNotifier {
   AgentBootContext _bootContext = AgentBootContext.trivia();
 
   CallPhase _callPhase = CallPhase.idle;
+  DateTime? _connectedAt;
   int _partyCount = 1;
   String? _remoteIdentity;
   String? _remoteDisplayName;
@@ -55,6 +65,7 @@ class AgentService extends ChangeNotifier {
   ContactService? contactService;
   TearSheetService? tearSheetService;
   MessagingService? messagingService;
+  DemoModeService? demoModeService;
   JobFunctionService? _jobFunctionService;
   SIPUAHelper? sipHelper;
 
@@ -75,9 +86,47 @@ class AgentService extends ChangeNotifier {
         _setWhisperMode(selected.whisperByDefault);
       }
     }
+    _applyInitialMuteState();
     _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
     _pushInstructionsIfLive();
     notifyListeners();
+  }
+
+  /// Enforce stayMuted / stayUnmuted policy on startup or job function switch.
+  /// Skipped when a call is active — [_applyMutePolicy] handles call phases.
+  void _applyInitialMuteState() {
+    if (_callPhase.isActive || _callPhase.isSettling ||
+        _callPhase == CallPhase.onHold) {
+      return;
+    }
+    final policy = effectiveMutePolicy;
+    if (policy == AgentMutePolicy.stayMuted && !_muted) {
+      _muted = true;
+      _whisper.muted = true;
+      if (!_speaking) {
+        _statusText = 'Not Listening...';
+      }
+    } else if (policy == AgentMutePolicy.stayUnmuted) {
+      if (_muted) {
+        _muted = false;
+        _whisper.muted = false;
+        if (!_speaking) {
+          _statusText = 'Listening';
+        }
+      }
+      if (_splitPipeline) {
+        if (_ttsMuted) {
+          _ttsMuted = false;
+        }
+      } else {
+        if (_whisperMode) {
+          _whisperMode = false;
+          if (_active) {
+            _whisper.setModalities(['text', 'audio']);
+          }
+        }
+      }
+    }
   }
 
   StreamSubscription<double>? _levelSub;
@@ -95,10 +144,25 @@ class AgentService extends ChangeNotifier {
 
   ElevenLabsTtsService? _tts;
   TtsConfig? _ttsConfig;
+  bool _ttsMuted = false;
   StreamSubscription<Uint8List>? _ttsAudioSub;
   StreamSubscription<bool>? _ttsSpeakingSub;
 
   String? _streamingMessageId;
+  int _ttsBracketDepth = 0;
+
+  // Agent-initiated voice sampling state
+  static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
+  bool _agentSampling = false;
+  String? _agentSamplePath;
+
+  // Beep tone detection (native Goertzel filter in RenderPreProcessor).
+  // Beep only triggers voicemail if an IVR/voicemail transcript was already
+  // detected — prevents false positives from hold music, DTMF, etc.
+  bool _beepDetected = false;
+  bool _voicemailPromptSent = false;
+  bool _ivrHeard = false;
+  bool _hasConnectedBefore = false;
 
   // Deduplication: skip identical transcripts arriving within a short window
   String _lastTranscriptText = '';
@@ -116,20 +180,48 @@ class AgentService extends ChangeNotifier {
 
   // Settling: buffer window after SIP CONFIRMED to filter auto-attendant/IVR
   Timer? _settleTimer;
+  Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
-  static const _settleWindowMs = 8000;
-  static const _settleExtendMs = 5000;
+  static const _settleWindowMs = 2500;
+  static const _settleExtendMs = 6000;
+  static const _preGreetDelayMs = 1500;
+
+  // Deferred greeting: nudge the agent to begin if the line stays quiet
+  // after transitioning to connected.
+  Timer? _connectedGreetTimer;
+  static const _connectedGreetDelayMs = 500;
 
   bool get active => _active;
   bool get muted => _muted;
   bool get speaking => _speaking;
-  bool get whisperMode => _whisperMode;
-  bool get canToggleWhisper => !_splitPipeline;
+  bool get whisperMode => _splitPipeline ? _ttsMuted : _whisperMode;
+  bool get canToggleWhisper => true;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
+
+  AgentMutePolicy get globalMutePolicy => _globalMutePolicy;
+
+  /// Resolve the effective mute policy: job function override wins over global.
+  AgentMutePolicy get effectiveMutePolicy {
+    final override = _jobFunctionService?.selected?.mutePolicyOverride;
+    if (override != null &&
+        override >= 0 &&
+        override < AgentMutePolicy.values.length) {
+      return AgentMutePolicy.values[override];
+    }
+    return _globalMutePolicy;
+  }
+
+  void setGlobalMutePolicy(AgentMutePolicy policy) {
+    if (_globalMutePolicy == policy) return;
+    _globalMutePolicy = policy;
+    AgentConfigService.saveMutePolicy(policy);
+    _applyInitialMuteState();
+    notifyListeners();
+  }
 
   void _syncBootContextFromJobFunction() {
     final selected = _jobFunctionService?.selected;
@@ -202,12 +294,14 @@ class AgentService extends ChangeNotifier {
 
   AgentService() {
     _messages.add(ChatMessage.system('Agent starting...'));
+    _tapChannel.setMethodCallHandler(_handleNativeTapCall);
     _init();
   }
 
   Future<void> _init() async {
     try {
       _syncBootContextFromJobFunction();
+      _globalMutePolicy = await AgentConfigService.loadMutePolicy();
 
       final config = await AgentConfigService.loadVoiceConfig();
       _echoGuardMs = config.echoGuardMs;
@@ -248,6 +342,7 @@ class AgentService extends ChangeNotifier {
         // The job function may have loaded while we were connecting.
         // Re-sync and push the correct instructions now that the session is live.
         _syncBootContextFromJobFunction();
+        _applyInitialMuteState();
         _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
         _pushInstructionsIfLive();
       }
@@ -255,8 +350,8 @@ class AgentService extends ChangeNotifier {
       _messages.clear();
       if (_active) {
         await _loadPreviousConversation();
-        final jfName = _jobFunctionService?.selected?.name;
-        final label = jfName != null ? 'Ready as "$jfName".' : 'Ready.';
+        final jfTitle = _jobFunctionService?.selected?.title;
+        final label = jfTitle != null ? 'Ready as "$jfTitle".' : 'Ready.';
         _messages.add(ChatMessage.agent(
           '$label I\'m listening to the call and can assist anytime. Type a message or just talk.',
         ));
@@ -313,6 +408,11 @@ class AgentService extends ChangeNotifier {
 
       _initTextAgent();
 
+      // Apply the job function's ElevenLabs voice now that TTS is initialised.
+      // The earlier updateVoiceId call (before _initTextAgent) was a no-op
+      // because _tts hadn't been created yet.
+      _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
+
       debugPrint(
           '[AgentService] Started: model=${config.model} voice=${config.voice}');
     } catch (e) {
@@ -356,12 +456,19 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] TTS config: '
         'provider=${tc?.provider.name} '
         'configured=${tc?.isConfigured}');
-    if (tc == null || !tc.isConfigured) return;
+
+    // Allow TTS init with just an API key — the voice can come from the
+    // job function via updateVoiceId() even if no default voice is set.
+    final hasApiKey = tc != null &&
+        tc.provider == TtsProvider.elevenlabs &&
+        tc.elevenLabsApiKey.isNotEmpty;
+    if (!hasApiKey) return;
 
     _tts = ElevenLabsTtsService(config: tc);
 
     int elChunkCount = 0;
     _ttsAudioSub = _tts!.audioChunks.listen((pcm) {
+      if (_ttsMuted) return;
       elChunkCount++;
       if (elChunkCount <= 3 || elChunkCount % 25 == 0) {
         debugPrint('[AgentService] ElevenLabs audio #$elChunkCount: '
@@ -425,6 +532,7 @@ class AgentService extends ChangeNotifier {
   String _buildTextAgentInstructions() {
     final hasTts = _tts != null;
     final ctx = AgentBootContext(
+      name: _bootContext.name,
       role: _bootContext.role,
       jobFunction: _bootContext.jobFunction,
       speakers: _bootContext.speakers,
@@ -592,15 +700,21 @@ class AgentService extends ChangeNotifier {
     }
 
     // During settling, check for IVR patterns. If detected, extend the
-    // settle window. If clean speech arrives, that helps the timer expire
-    // and promote to connected. Either way, don't forward to the agent.
+    // settle window. If clean human speech arrives instead, promote to
+    // connected immediately so the agent can respond without waiting for
+    // the full settle timer.
     if (_callPhase.isSettling) {
       final text = event.text.trim();
       if (IvrDetector.isIvr(text)) {
         _ivrHitsInSettle++;
+        _ivrHeard = true;
         _extendSettleTimer();
         debugPrint(
             '[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
+      } else if (text.length >= 3 && _ivrHitsInSettle == 0) {
+        debugPrint(
+            '[AgentService] Human speech during settle: "$text" — promoting now');
+        _promoteToConnected();
       }
       return;
     }
@@ -615,12 +729,21 @@ class AgentService extends ChangeNotifier {
 
     final text = event.text.trim();
 
-    // Even after settling, filter any stray IVR fragments (e.g. the tail
-    // end of "your call may be recorded for quality purposes").
+    // Filter stray IVR/voicemail fragments that arrive after settling
+    // (e.g. a voicemail greeting transcribed as one big chunk).
     if (IvrDetector.isIvr(text)) {
+      _ivrHeard = true;
       debugPrint('[AgentService] IVR filtered post-settle: "$text"');
+      if (_callPhase == CallPhase.connected) {
+        _cancelConnectedGreeting();
+        _triggerVoicemailPrompt();
+      }
       return;
     }
+
+    // Real human speech — cancel any pending connected greeting so the
+    // agent doesn't talk over whoever is already speaking.
+    _cancelConnectedGreeting();
 
     // Text-based echo suppression: if the transcript is a substantial
     // substring of a recent agent response, it's the agent hearing itself.
@@ -642,9 +765,21 @@ class AgentService extends ChangeNotifier {
     final info = await _whisper.getSpeakerInfo();
     final source = info['source'] as String? ?? 'unknown';
     final voiceprintName = info['identity'] as String? ?? '';
+    final confidence = (info['confidence'] as num?)?.toDouble() ?? 0.0;
     final isRemote = source == 'remote';
     final role = isRemote ? ChatRole.remoteParty : ChatRole.host;
     final speaker = isRemote ? remoteSpeaker : hostSpeaker;
+
+    // When idle (no active call), filter likely background/ambient audio.
+    // Low-confidence transcripts from the mic are probably TV, TikTok, etc.
+    if (_callPhase == CallPhase.idle) {
+      if (confidence > 0.0 && confidence < 0.25) {
+        debugPrint('[AgentService] Ambient audio dropped (confidence=$confidence): "$text"');
+        return;
+      }
+    }
+
+    final lowConfidence = confidence > 0.0 && confidence < 0.5;
 
     // If voiceprint identified a name and the speaker doesn't have one yet,
     // update the speaker label and push refreshed instructions.
@@ -666,7 +801,11 @@ class AgentService extends ChangeNotifier {
       text: text,
     );
 
-    _textAgent?.addTranscript(speaker.label, text);
+    // Tag low-confidence transcripts so the agent can judge whether to respond
+    final label = lowConfidence
+        ? '${speaker.label} (low confidence)'
+        : speaker.label;
+    _textAgent?.addTranscript(label, text);
   }
 
   void _onResponseText(ResponseTextEvent event) {
@@ -709,12 +848,22 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    // Pipe text delta to ElevenLabs TTS for voice output
-    if (_tts != null && event.text.isNotEmpty) {
+    // Suppress TTS during pre-connect phases — but allow during settling
+    // so the pre-greeting can play immediately.
+    final suppressTts = (_callPhase.isPreConnect ||
+            _callPhase == CallPhase.answered) &&
+        _callPhase != CallPhase.idle;
+
+    // Pipe text delta to ElevenLabs TTS, stripping bracketed stage directions
+    if (_tts != null && event.text.isNotEmpty && !suppressTts) {
       if (_streamingMessageId == null) {
+        _ttsBracketDepth = 0;
         _tts!.startGeneration();
       }
-      _tts!.sendText(event.text);
+      final ttsText = _stripBracketsForTts(event.text);
+      if (ttsText.isNotEmpty) {
+        _tts!.sendText(ttsText);
+      }
     }
 
     if (_streamingMessageId != null) {
@@ -730,6 +879,23 @@ class AgentService extends ChangeNotifier {
     _streamingMessageId = msg.id;
     _messages.add(msg);
     notifyListeners();
+  }
+
+  /// Strip bracketed text from a streaming delta before sending to TTS.
+  /// Tracks `_ttsBracketDepth` across deltas so nested/split brackets work.
+  String _stripBracketsForTts(String text) {
+    final buf = StringBuffer();
+    for (int i = 0; i < text.length; i++) {
+      final ch = text[i];
+      if (ch == '[') {
+        _ttsBracketDepth++;
+      } else if (ch == ']') {
+        if (_ttsBracketDepth > 0) _ttsBracketDepth--;
+      } else if (_ttsBracketDepth == 0) {
+        buf.write(ch);
+      }
+    }
+    return buf.toString();
   }
 
   // ---------------------------------------------------------------------------
@@ -758,7 +924,7 @@ class AgentService extends ChangeNotifier {
           result = await _handleMakeCall(args);
           break;
         case 'end_call':
-          result = _handleEndCall();
+          result = await _handleEndCall();
           break;
         case 'send_dtmf':
           result = _handleSendDtmf(args);
@@ -777,6 +943,15 @@ class AgentService extends ChangeNotifier {
           break;
         case 'search_messages':
           result = await _handleSearchMessages(args);
+          break;
+        case 'start_voice_sample':
+          result = await _handleStartVoiceSample(args);
+          break;
+        case 'stop_and_clone_voice':
+          result = await _handleStopAndCloneVoice(args);
+          break;
+        case 'set_agent_voice':
+          result = await _handleSetAgentVoice(args);
           break;
         default:
           result = 'Unknown function: ${event.name}';
@@ -806,7 +981,7 @@ class AgentService extends ChangeNotifier {
           result = await _handleMakeCall(req.arguments);
           break;
         case 'end_call':
-          result = _handleEndCall();
+          result = await _handleEndCall();
           break;
         case 'search_contacts':
           result = await _handleSearchContacts(req.arguments);
@@ -822,6 +997,15 @@ class AgentService extends ChangeNotifier {
           break;
         case 'search_messages':
           result = await _handleSearchMessages(req.arguments);
+          break;
+        case 'start_voice_sample':
+          result = await _handleStartVoiceSample(req.arguments);
+          break;
+        case 'stop_and_clone_voice':
+          result = await _handleStopAndCloneVoice(req.arguments);
+          break;
+        case 'set_agent_voice':
+          result = await _handleSetAgentVoice(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -854,12 +1038,15 @@ class AgentService extends ChangeNotifier {
     final msg = await messagingService!
         .sendMessage(to: to, text: text, mediaUrls: mediaUrls);
     if (msg != null) {
+      final displayTo = (demoModeService?.enabled ?? false)
+          ? demoModeService!.maskPhone(to)
+          : to;
       _messages.add(ChatMessage.system(
-        'SMS sent to $to: "$text"',
+        'SMS sent to $displayTo: "$text"',
         metadata: {'type': 'sms_sent', 'to': to},
       ));
       notifyListeners();
-      return 'Message sent successfully to $to.';
+      return 'Message sent successfully to $displayTo.';
     }
     return 'Failed to send message.';
   }
@@ -877,12 +1064,15 @@ class AgentService extends ChangeNotifier {
     }
     final msg = await messagingService!.reply(text);
     if (msg != null) {
+      final displayTo = (demoModeService?.enabled ?? false)
+          ? demoModeService!.maskPhone(selected)
+          : selected;
       _messages.add(ChatMessage.system(
-        'SMS reply to $selected: "$text"',
+        'SMS reply to $displayTo: "$text"',
         metadata: {'type': 'sms_reply', 'to': selected},
       ));
       notifyListeners();
-      return 'Reply sent to $selected.';
+      return 'Reply sent to $displayTo.';
     }
     return 'Failed to send reply.';
   }
@@ -954,8 +1144,7 @@ class AgentService extends ChangeNotifier {
       }
     }
 
-    // Strip formatting so the SIP URI doesn't get mangled (e.g. "+1 415-533-1352" → "+14155331352")
-    number = number.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+    number = ensureE164(number);
 
     try {
       final mediaConstraints = <String, dynamic>{
@@ -969,17 +1158,51 @@ class AgentService extends ChangeNotifier {
       if (!success) {
         return 'Failed to make call: SIP not connected. User needs to register first.';
       }
-      return 'Call initiated to $number';
+      final displayNum = (demoModeService?.enabled ?? false)
+          ? demoModeService!.maskPhone(number)
+          : number;
+      return 'Call initiated to $displayNum';
     } catch (e) {
       return 'Failed to make call: $e';
     }
   }
 
-  String _handleEndCall() {
+  Future<String> _handleEndCall() async {
     if (sipHelper == null) return 'SIP helper not available.';
     final active = sipHelper!.activeCall;
     if (active == null) return 'No active call to end.';
-    active.hangup();
+
+    if (_connectedAt != null) {
+      final elapsed = DateTime.now().difference(_connectedAt!).inSeconds;
+      if (elapsed < 20) {
+        return 'Call just connected ${elapsed}s ago. '
+            'Do NOT hang up autonomously — only the host can decide when to end the call.';
+      }
+    }
+
+    // Wait for TTS to finish so the agent's message is fully delivered
+    // before the line drops (e.g. voicemail, goodbyes).
+    if (_speaking) {
+      debugPrint('[AgentService] end_call deferred — waiting for TTS to finish');
+      final completer = Completer<void>();
+      late StreamSubscription<bool> sub;
+      sub = _tts!.speakingState.listen((speaking) {
+        if (!speaking && !completer.isCompleted) {
+          completer.complete();
+          sub.cancel();
+        }
+      });
+      // Safety timeout so we don't wait forever
+      await completer.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          sub.cancel();
+          debugPrint('[AgentService] end_call TTS wait timed out');
+        },
+      );
+    }
+
+    sipHelper!.activeCall?.hangup();
     return 'Call ended.';
   }
 
@@ -1093,6 +1316,112 @@ class AgentService extends ChangeNotifier {
         'Press Play to begin calling, or ask the host to say "start the tear sheet."';
   }
 
+  // ---------------------------------------------------------------------------
+  // Voice sampling / cloning / swap tools (alter ego flow)
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleStartVoiceSample(Map<String, dynamic> args) async {
+    if (_agentSampling) return 'Already sampling. Stop the current sample first.';
+    if (!_callPhase.isActive && _callPhase != CallPhase.settling) {
+      return 'No active call to sample from.';
+    }
+
+    final party = (args['party'] as String?)?.toLowerCase() ?? 'remote';
+    if (party != 'remote' && party != 'host') {
+      return 'Invalid party "$party". Use "remote" or "host".';
+    }
+
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final recDir =
+          Directory(p.join(dir.path, 'phonegentic', 'voice_samples'));
+      await recDir.create(recursive: true);
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      _agentSamplePath =
+          p.join(recDir.path, 'agent_sample_${party}_$timestamp.wav');
+
+      await _tapChannel.invokeMethod(
+          'startVoiceSample', {'path': _agentSamplePath, 'party': party});
+
+      _agentSampling = true;
+      _messages.add(ChatMessage.system('Voice sampling started ($party)'));
+      notifyListeners();
+      debugPrint('[AgentService] Agent-initiated voice sample → $_agentSamplePath ($party)');
+      return 'Voice sampling started for $party party. '
+          'Let them speak for at least 10-15 seconds, then call stop_and_clone_voice.';
+    } catch (e) {
+      debugPrint('[AgentService] startVoiceSample failed: $e');
+      _agentSamplePath = null;
+      return 'Failed to start voice sample: $e';
+    }
+  }
+
+  Future<String> _handleStopAndCloneVoice(Map<String, dynamic> args) async {
+    if (!_agentSampling || _agentSamplePath == null) {
+      return 'No voice sample in progress. Call start_voice_sample first.';
+    }
+
+    final apiKey = _ttsConfig?.elevenLabsApiKey ?? '';
+    if (apiKey.isEmpty) {
+      return 'ElevenLabs API key is not configured. Cannot clone voice.';
+    }
+
+    try {
+      await _tapChannel.invokeMethod('stopVoiceSample');
+      _agentSampling = false;
+      debugPrint('[AgentService] Voice sample stopped → $_agentSamplePath');
+    } catch (e) {
+      _agentSampling = false;
+      debugPrint('[AgentService] stopVoiceSample failed: $e');
+      return 'Failed to stop voice sample: $e';
+    }
+
+    final name = (args['voice_name'] as String?)?.trim().isNotEmpty == true
+        ? args['voice_name'] as String
+        : 'Alter Ego ${DateTime.now().millisecondsSinceEpoch}';
+
+    try {
+      _messages.add(ChatMessage.system('Cloning voice...'));
+      notifyListeners();
+
+      final voiceId = await ElevenLabsApiService.addVoice(
+        apiKey,
+        name: name,
+        filePaths: [_agentSamplePath!],
+      );
+
+      _agentSamplePath = null;
+      _messages.add(ChatMessage.system('Voice "$name" cloned successfully'));
+      notifyListeners();
+      debugPrint('[AgentService] Voice cloned: $voiceId ($name)');
+      return 'Voice cloned successfully. voice_id=$voiceId name="$name". '
+          'Call set_agent_voice with this voice_id to start speaking in their voice.';
+    } catch (e) {
+      _agentSamplePath = null;
+      debugPrint('[AgentService] Voice clone failed: $e');
+      return 'Voice cloning failed: $e';
+    }
+  }
+
+  Future<String> _handleSetAgentVoice(Map<String, dynamic> args) async {
+    final voiceId = args['voice_id'] as String?;
+    if (voiceId == null || voiceId.isEmpty) {
+      return 'No voice_id provided.';
+    }
+
+    if (_tts == null) {
+      return 'ElevenLabs TTS is not active. Cannot change voice.';
+    }
+
+    _tts!.updateVoiceId(voiceId);
+    _messages.add(ChatMessage.system('Agent voice changed to $voiceId'));
+    notifyListeners();
+    debugPrint('[AgentService] Agent voice swapped to: $voiceId');
+    return 'Voice updated. You are now speaking with voice_id=$voiceId. '
+        'All subsequent speech will use this voice.';
+  }
+
   void announceRecording() {
     if (!_active) return;
     _whisper.sendSystemDirective(
@@ -1123,7 +1452,12 @@ class AgentService extends ChangeNotifier {
   }
 
   void toggleWhisperMode() {
-    if (_splitPipeline) return;
+    _userMuteOverride = true;
+    if (_splitPipeline) {
+      _ttsMuted = !_ttsMuted;
+      notifyListeners();
+      return;
+    }
     _whisperMode = !_whisperMode;
     if (_active) {
       if (_whisperMode) {
@@ -1134,6 +1468,100 @@ class AgentService extends ChangeNotifier {
       );
     }
     notifyListeners();
+  }
+
+  /// Apply the mute policy on call phase transitions.
+  ///
+  /// A new call starting (initiating / ringing) resets the user override so
+  /// the configured policy takes effect fresh. Once the user manually toggles
+  /// mute during a call, the policy stops interfering until the next call.
+  void _applyMutePolicy(CallPhase phase) {
+    // New call → reset override so the policy applies from scratch.
+    if (phase == CallPhase.initiating || phase == CallPhase.ringing) {
+      _userMuteOverride = false;
+    }
+
+    // User manually toggled — their choice wins for this call.
+    if (_userMuteOverride) return;
+
+    final policy = effectiveMutePolicy;
+
+    if (policy == AgentMutePolicy.stayUnmuted) {
+      bool changed = false;
+      if (_muted) {
+        _muted = false;
+        _whisper.muted = false;
+        if (!_speaking) _statusText = 'Listening';
+        changed = true;
+      }
+      if (_splitPipeline) {
+        if (_ttsMuted) {
+          _ttsMuted = false;
+          changed = true;
+        }
+      } else {
+        if (_whisperMode) {
+          _whisperMode = false;
+          if (_active) {
+            _whisper.setModalities(['text', 'audio']);
+          }
+          changed = true;
+        }
+      }
+      if (changed) notifyListeners();
+      return;
+    }
+
+    if (policy != AgentMutePolicy.autoToggle) return;
+
+    if (phase == CallPhase.settling || phase == CallPhase.connected) {
+      bool changed = false;
+      if (_muted) {
+        _muted = false;
+        _whisper.muted = false;
+        if (!_speaking) _statusText = 'Listening';
+        changed = true;
+      }
+      if (_splitPipeline) {
+        if (_ttsMuted) {
+          _ttsMuted = false;
+          changed = true;
+        }
+      } else {
+        if (_whisperMode) {
+          _whisperMode = false;
+          if (_active) {
+            _whisper.setModalities(['text', 'audio']);
+          }
+          changed = true;
+        }
+      }
+      if (changed) notifyListeners();
+    } else if (phase == CallPhase.ended || phase == CallPhase.failed) {
+      bool changed = false;
+      if (!_muted) {
+        _muted = true;
+        _whisper.muted = true;
+        if (!_speaking) _statusText = 'Not Listening...';
+        changed = true;
+      }
+      if (_splitPipeline) {
+        if (!_ttsMuted) {
+          _ttsMuted = true;
+          changed = true;
+        }
+      } else {
+        if (!_whisperMode) {
+          _whisperMode = true;
+          if (_active) {
+            _whisper.stopResponseAudio();
+            _whisper.setModalities(['text']);
+          }
+          changed = true;
+        }
+      }
+      if (changed) notifyListeners();
+    }
   }
 
   void addSystemMessage(String text) {
@@ -1213,6 +1641,9 @@ class AgentService extends ChangeNotifier {
     if (localIdentity != null) _localIdentity = localIdentity;
     if (outbound != null) _isOutbound = outbound;
 
+    // Auto-mute/unmute based on policy
+    _applyMutePolicy(phase);
+
     // Start/end call history records
     if (phase == CallPhase.initiating || phase == CallPhase.ringing) {
       callHistory?.startCallRecord(
@@ -1245,16 +1676,50 @@ class AgentService extends ChangeNotifier {
       _remoteIdentity = null;
       _remoteDisplayName = null;
       _localIdentity = null;
+      _connectedAt = null;
+      _beepDetected = false;
+      _voicemailPromptSent = false;
+      _ivrHeard = false;
+      _hasConnectedBefore = false;
       _clearRemotePartyName();
       _cancelSettleTimer();
+      _cancelConnectedGreeting();
       _recentAgentTexts.clear();
       _whisper.resetSpeakerIdentifier();
-      _textAgent?.reset();
+      _whisper.stopResponseAudio();
       _tts?.endGeneration();
+      _textAgent?.reset();
+
+      // Clean up any agent-initiated voice sampling still in progress
+      if (_agentSampling) {
+        try {
+          _tapChannel.invokeMethod('stopVoiceSample');
+        } catch (_) {}
+        _agentSampling = false;
+        _agentSamplePath = null;
+      }
+
+      // Return to idle after a brief delay so the agent can listen again
+      // between calls. Without this, _callPhase stays at ended forever,
+      // which blocks agent responses and keeps TTS muted.
+      Future.delayed(const Duration(seconds: 2), () {
+        if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) {
+          _callPhase = CallPhase.idle;
+          _partyCount = 1;
+          _userMuteOverride = false;
+          // Restore listening state for split pipeline
+          if (_splitPipeline && _ttsMuted) {
+            _ttsMuted = false;
+          }
+          notifyListeners();
+          debugPrint('[AgentService] Returned to idle after call ended');
+        }
+      });
     }
 
     if (phase == CallPhase.settling) {
       _startSettleTimer();
+      _tts?.warmUp();
     } else if (_callPhase != CallPhase.settling) {
       _cancelSettleTimer();
     }
@@ -1264,11 +1729,22 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
+    final demo = demoModeService;
+    final maskedRemoteId = (demo != null && demo.enabled && _remoteIdentity != null)
+        ? demo.maskPhone(_remoteIdentity!)
+        : _remoteIdentity;
+    final maskedRemoteName = (demo != null && demo.enabled && _remoteDisplayName != null)
+        ? demo.maskDisplayName(_remoteDisplayName!)
+        : _remoteDisplayName;
+    final maskedLocalId = (demo != null && demo.enabled && _localIdentity != null)
+        ? demo.maskPhone(_localIdentity!)
+        : _localIdentity;
+
     final contextText = phase.contextMessage(
       partyCount: partyCount,
-      remoteIdentity: _remoteIdentity,
-      remoteDisplayName: _remoteDisplayName,
-      localIdentity: _localIdentity,
+      remoteIdentity: maskedRemoteId,
+      remoteDisplayName: maskedRemoteName,
+      localIdentity: maskedLocalId,
       outbound: _isOutbound,
     );
 
@@ -1281,7 +1757,21 @@ class AgentService extends ChangeNotifier {
     if (_active) {
       _whisper.sendSystemContext(contextText);
     }
-    _textAgent?.addSystemContext(contextText);
+    // Skip text agent context when promoting to connected after the
+    // pre-greeting already fired — that context would flush into a
+    // duplicate greeting response.
+    if (!(phase == CallPhase.connected && _hasConnectedBefore)) {
+      _textAgent?.addSystemContext(contextText);
+    }
+
+    if (phase == CallPhase.connected) {
+      if (!_hasConnectedBefore) {
+        _scheduleConnectedGreeting();
+        _hasConnectedBefore = true;
+      }
+    } else {
+      _cancelConnectedGreeting();
+    }
 
     debugPrint(
         '[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
@@ -1291,34 +1781,71 @@ class AgentService extends ChangeNotifier {
   /// IVR detections, auto-promote to connected.
   void _startSettleTimer() {
     _settleTimer?.cancel();
+    _preGreetTimer?.cancel();
     _ivrHitsInSettle = 0;
     _settleTimer = Timer(const Duration(milliseconds: _settleWindowMs), () {
-      if (_callPhase == CallPhase.settling) {
-        _promoteToConnected();
-      }
+      _tryPromoteFromSettle();
+    });
+    _preGreetTimer = Timer(const Duration(milliseconds: _preGreetDelayMs), () {
+      _firePreGreeting();
     });
   }
 
   /// Extend settling when IVR audio keeps arriving.
   void _extendSettleTimer() {
     _settleTimer?.cancel();
+    _preGreetTimer?.cancel();
     _settleTimer = Timer(const Duration(milliseconds: _settleExtendMs), () {
-      if (_callPhase == CallPhase.settling) {
-        _promoteToConnected();
-      }
+      _tryPromoteFromSettle();
     });
+  }
+
+  /// Only promote to connected if no one is currently speaking (VAD inactive).
+  /// If speech is ongoing (e.g. voicemail greeting still playing), reschedule.
+  void _tryPromoteFromSettle() {
+    if (_callPhase != CallPhase.settling) return;
+    if (_whisper.vadActive) {
+      debugPrint('[AgentService] Settle timer fired but VAD active — deferring');
+      _settleTimer = Timer(const Duration(milliseconds: 1000), () {
+        _tryPromoteFromSettle();
+      });
+      return;
+    }
+    _promoteToConnected();
   }
 
   void _cancelSettleTimer() {
     _settleTimer?.cancel();
     _settleTimer = null;
+    _preGreetTimer?.cancel();
+    _preGreetTimer = null;
     _ivrHitsInSettle = 0;
+  }
+
+  /// Fire the greeting prompt early (during settling) so Claude's response
+  /// is ready before the settle timer expires. Skipped if IVR was detected.
+  void _firePreGreeting() {
+    if (_callPhase != CallPhase.settling) return;
+    if (_ivrHitsInSettle > 0) return;
+    if (_hasConnectedBefore) return;
+    _hasConnectedBefore = true;
+    const prompt =
+        '[SYSTEM] The call is connected and the line is quiet. '
+        'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+        'Otherwise, begin the conversation per your job function instructions.';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(prompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(prompt);
+    }
+    debugPrint('[AgentService] Pre-greeting fired during settling');
   }
 
   void _promoteToConnected() {
     _cancelSettleTimer();
     if (_callPhase != CallPhase.settling) return;
 
+    _connectedAt = DateTime.now();
     debugPrint('[AgentService] Settle complete — promoting to connected');
     notifyCallPhase(
       CallPhase.connected,
@@ -1330,6 +1857,99 @@ class AgentService extends ChangeNotifier {
     );
   }
 
+  /// Schedule a deferred nudge so the agent begins the conversation if the
+  /// line stays quiet after connected. Cancelled when a transcript arrives
+  /// first (the transcript flow will prompt the agent naturally).
+  void _scheduleConnectedGreeting() {
+    _connectedGreetTimer?.cancel();
+    _connectedGreetTimer = Timer(
+      const Duration(milliseconds: _connectedGreetDelayMs),
+      () {
+        if (_callPhase != CallPhase.connected) return;
+        const prompt =
+            '[SYSTEM] The call is connected and the line is quiet. '
+            'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+            'Otherwise, begin the conversation per your job function instructions.';
+        if (_splitPipeline && _textAgent != null) {
+          _textAgent!.sendUserMessage(prompt);
+        } else if (_active) {
+          _whisper.sendSystemDirective(prompt);
+        }
+        debugPrint('[AgentService] Connected greeting triggered (line quiet)');
+      },
+    );
+  }
+
+  void _cancelConnectedGreeting() {
+    _connectedGreetTimer?.cancel();
+    _connectedGreetTimer = null;
+  }
+
+  /// Immediately prompt the agent to leave a voicemail — no timer delay.
+  /// Called when a voicemail/IVR transcript is detected post-settle, or when
+  /// the native Goertzel filter detects a beep tone ending.
+  /// One-shot per call to prevent false positives from triggering loops.
+  void _triggerVoicemailPrompt() {
+    if (_callPhase != CallPhase.connected) return;
+    if (_voicemailPromptSent) {
+      debugPrint('[AgentService] Voicemail prompt already sent — skipping');
+      return;
+    }
+    _voicemailPromptSent = true;
+    const prompt =
+        '[SYSTEM] You have reached voicemail and the beep has sounded. '
+        'Leave your voicemail message NOW — recording is in progress.';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(prompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(prompt);
+    }
+    debugPrint('[AgentService] Voicemail prompt triggered immediately');
+  }
+
+  // MARK: - Native beep tone detection (Goertzel)
+
+  /// Whether the beep arrived in a plausible voicemail window: during
+  /// settling, or within 30s of connected promotion (voicemail greetings
+  /// can recite the full phone number and run 15-20s).
+  bool get _inBeepWindow {
+    if (_callPhase == CallPhase.settling) return true;
+    if (_callPhase == CallPhase.connected && _connectedAt != null) {
+      final elapsed = DateTime.now().difference(_connectedAt!).inSeconds;
+      return elapsed <= 30;
+    }
+    return false;
+  }
+
+  /// Handle method calls from native AudioTapChannel (beep detection events).
+  /// Beep detection only acts if an IVR/voicemail transcript was already heard
+  /// — prevents false triggers from hold music, DTMF, conference tones, etc.
+  Future<dynamic> _handleNativeTapCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onBeepDetected':
+        if (!_ivrHeard || !_inBeepWindow || _voicemailPromptSent) {
+          debugPrint(
+              '[AgentService] Native beep IGNORED (ivr=$_ivrHeard window=${_inBeepWindow} sent=$_voicemailPromptSent)');
+          break;
+        }
+        _beepDetected = true;
+        debugPrint('[AgentService] Native beep tone DETECTED (IVR confirmed)');
+        if (_callPhase == CallPhase.settling) {
+          _promoteToConnected();
+        }
+        break;
+      case 'onBeepEnded':
+        if (!_beepDetected) break;
+        debugPrint('[AgentService] Native beep tone ENDED');
+        if (_callPhase == CallPhase.connected) {
+          _cancelConnectedGreeting();
+          _triggerVoicemailPrompt();
+        }
+        _beepDetected = false;
+        break;
+    }
+  }
+
   /// Host manually confirms a real person is on the line, skipping the
   /// settle window immediately.
   void confirmPartyConnected() {
@@ -1339,6 +1959,7 @@ class AgentService extends ChangeNotifier {
   }
 
   void toggleMute() {
+    _userMuteOverride = true;
     _muted = !_muted;
     _whisper.muted = _muted;
     if (!_speaking) {
@@ -1368,6 +1989,9 @@ class AgentService extends ChangeNotifier {
     _active = false;
     _speaking = false;
     _muted = false;
+    _ttsMuted = false;
+    _userMuteOverride = false;
+    _callPhase = CallPhase.idle;
     _levels.clear();
     _messages.clear();
     _streamingMessageId = null;
@@ -1379,6 +2003,8 @@ class AgentService extends ChangeNotifier {
   @override
   void dispose() {
     _cancelSettleTimer();
+    _cancelConnectedGreeting();
+    _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
     _textAgent?.dispose();

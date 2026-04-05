@@ -14,15 +14,21 @@ import 'package:provider/provider.dart';
 import 'agent_config_service.dart';
 import 'agent_service.dart';
 import 'audio_device_service.dart';
+import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
+import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
 import 'demo_mode_service.dart';
+import 'messaging/messaging_service.dart';
+import 'messaging/phone_numbers.dart';
 import 'tear_sheet_service.dart';
 import 'models/agent_context.dart';
 import 'theme_provider.dart';
 import 'widgets/action_button.dart';
+import 'widgets/add_call_modal.dart';
 import 'widgets/audio_device_sheet.dart';
+import 'widgets/phonegentic_logo.dart';
 import 'widgets/voice_clone_modal.dart';
 
 class CallScreenWidget extends StatefulWidget {
@@ -56,6 +62,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   bool _mirror = true;
   Originator? _holdOriginator;
   bool _callConfirmed = false;
+  bool _enteredCallMode = false;
+  bool _addCallReady = false;
+  Timer? _addCallGraceTimer;
   CallStateEnum _state = CallStateEnum.NONE;
 
   String? _recordingPath;
@@ -92,7 +101,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (phase == null) return;
 
     final partyCount = (phase.isActive || phase == CallPhase.ringing)
-        ? _bootContext.speakers.length + 1 // +1 for the agent
+        ? _bootContext.speakers.length
         : 1;
     _agent.notifyCallPhase(
       phase,
@@ -138,7 +147,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     helper!.addSipUaHelperListener(this);
     _startTimer();
     _loadTtsConfig();
-    _syncCallState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncCallState());
   }
 
   void _syncCallState() {
@@ -147,6 +156,16 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (s == CallStateEnum.CONFIRMED || s == CallStateEnum.ACCEPTED) {
       _state = s;
       _callConfirmed = true;
+      _enteredCallMode = true;
+      _addCallReady = true;
+      _pushCallPhase(s);
+    } else if (s == CallStateEnum.HOLD || s == CallStateEnum.UNHOLD) {
+      _state = s;
+      _callConfirmed = true;
+      _hold = s == CallStateEnum.HOLD;
+      _enteredCallMode = true;
+      _addCallReady = true;
+      _pushCallPhase(s);
     } else if (s != CallStateEnum.NONE) {
       _state = s;
     }
@@ -160,6 +179,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   @override
   void deactivate() {
     super.deactivate();
+    _addCallGraceTimer?.cancel();
     helper!.removeSipUaHelperListener(this);
     _disposeRenderers();
   }
@@ -251,6 +271,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         setState(() => _callConfirmed = true);
         _enterCallMode();
         _maybeAutoRecord();
+        _startAddCallGrace();
         break;
       default:
         setState(() {});
@@ -272,6 +293,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   void _backToDialPad() {
     _timer.cancel();
+    _addCallGraceTimer?.cancel();
     _recTimer?.cancel();
     _recTimer = null;
     _sampleTimer?.cancel();
@@ -280,7 +302,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _tapChannel.invokeMethod('stopVoiceSample');
       _isSampling = false;
     }
-    _exitCallMode();
+    // Delay exitCallMode so the WebRTC signaling thread finishes pending
+    // peer connection teardown before we unregister audio processors.
+    Future.delayed(const Duration(milliseconds: 500), () => _exitCallMode());
     Timer(const Duration(seconds: 2), () {
       if (mounted) {
         widget.onDismiss?.call();
@@ -292,11 +316,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void _handleStreams(CallState event) async {
     MediaStream? stream = event.stream;
     if (event.originator == Originator.local) {
-      if (_localRenderer != null) {
-        _localRenderer!.srcObject =
-            (stream != null && stream.getVideoTracks().isNotEmpty)
-                ? stream
-                : null;
+      try {
+        if (_localRenderer != null) {
+          _localRenderer!.srcObject =
+              (stream != null && stream.getVideoTracks().isNotEmpty)
+                  ? stream
+                  : null;
+        }
+      } catch (e) {
+        debugPrint('[CallScreen] localRenderer.srcObject failed: $e');
       }
       if (!kIsWeb &&
           !WebRTC.platformIsDesktop &&
@@ -306,11 +334,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _localStream = stream;
     }
     if (event.originator == Originator.remote) {
-      if (_remoteRenderer != null) {
-        _remoteRenderer!.srcObject =
-            (stream != null && stream.getVideoTracks().isNotEmpty)
-                ? stream
-                : null;
+      try {
+        if (_remoteRenderer != null) {
+          _remoteRenderer!.srcObject =
+              (stream != null && stream.getVideoTracks().isNotEmpty)
+                  ? stream
+                  : null;
+        }
+      } catch (e) {
+        debugPrint('[CallScreen] remoteRenderer.srcObject failed: $e');
       }
       _remoteStream = stream;
     }
@@ -320,6 +352,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
 
   Future<void> _enterCallMode() async {
+    if (_enteredCallMode) return;
+    _enteredCallMode = true;
     try {
       await _tapChannel.invokeMethod('enterCallMode');
       debugPrint('[CallScreen] enterCallMode — AI audio routed through WebRTC pipeline');
@@ -329,6 +363,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   Future<void> _exitCallMode() async {
+    if (!_enteredCallMode) return;
+    _enteredCallMode = false;
     try {
       await _tapChannel.invokeMethod('exitCallMode');
       debugPrint('[CallScreen] exitCallMode — reverted to direct mic capture');
@@ -639,48 +675,45 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     );
   }
 
+  bool _showAddCallModal = false;
+  bool _placingConferenceLeg = false;
+
+  void _startAddCallGrace() {
+    _addCallGraceTimer?.cancel();
+    _addCallGraceTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _addCallReady = true);
+    });
+  }
+
   void _handleAddCall() {
-    String addCallTarget = '';
-    showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (BuildContext ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.card,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: const Text('Add Call'),
-          content: TextField(
-            autofocus: true,
-            onChanged: (text) => addCallTarget = text,
-            decoration:
-                const InputDecoration(hintText: 'Phone number'),
-            textAlign: TextAlign.center,
-            keyboardType: TextInputType.phone,
-          ),
-          actions: [
-            TextButton(
-                child: const Text('Cancel'),
-                onPressed: () => Navigator.of(ctx).pop()),
-            TextButton(
-                child: const Text('Call'),
-                onPressed: () async {
-                  Navigator.of(ctx).pop();
-                  final number = addCallTarget.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
-                  if (number.isEmpty) return;
-                  try {
-                    final stream = await navigator.mediaDevices.getUserMedia(
-                        <String, dynamic>{'audio': true, 'video': false});
-                    await helper!.call(number, voiceOnly: true, mediaStream: stream);
-                    debugPrint('[CallScreen] Conference leg initiated → $number');
-                  } catch (e) {
-                    debugPrint('[CallScreen] Add call failed: $e');
-                  }
-                }),
-          ],
-        );
-      },
-    );
+    if (!_addCallReady) return;
+    if (!_hold && call != null) {
+      _handleHold();
+    }
+    setState(() => _showAddCallModal = true);
+  }
+
+  void _closeAddCallModal() {
+    setState(() {
+      _showAddCallModal = false;
+      _placingConferenceLeg = false;
+    });
+  }
+
+  Future<void> _placeConferenceLeg(String number) async {
+    if (_placingConferenceLeg) return;
+    final cleaned = ensureE164(number);
+    if (cleaned.isEmpty) return;
+    _placingConferenceLeg = true;
+    try {
+      final stream = await navigator.mediaDevices
+          .getUserMedia(<String, dynamic>{'audio': true, 'video': false});
+      await helper!.call(cleaned, voiceOnly: true, mediaStream: stream);
+      debugPrint('[CallScreen] Conference leg initiated → $cleaned');
+    } catch (e) {
+      debugPrint('[CallScreen] Add call failed: $e');
+      _placingConferenceLeg = false;
+    }
   }
 
   void _handleDtmf(String tone) => call!.sendDTMF(tone);
@@ -766,86 +799,384 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
+    return Stack(
+      children: [
+        SafeArea(
+          child: Column(
+            children: [
+              _buildCallTopBar(),
+              Expanded(child: _buildContent()),
+              _buildActionButtons(),
+              const SizedBox(height: 32),
+            ],
+          ),
+        ),
+        if (_showAddCallModal)
+          Positioned.fill(
+            child: AddCallModal(
+              onCall: _placeConferenceLeg,
+              onClose: _closeAddCallModal,
+            ),
+          ),
+      ],
+    );
+  }
+
+  static const double _collapseThreshold = 480;
+
+  Widget _buildCallTopBar() {
+    final agent = context.watch<AgentService>();
+    final conf = context.watch<ConferenceService>();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= _collapseThreshold;
+        return Padding(
+          padding:
+              const EdgeInsets.only(left: 90, right: 16, top: 18, bottom: 15),
+          child: Row(
+            children: [
+              const PhonegenticLogo(size: 30),
+              const SizedBox(width: 10),
+              Text(
+                'Phonegentic',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'AI',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.accent,
+                  letterSpacing: -0.5,
+                  shadows: [
+                    Shadow(
+                      color: AppColors.phosphor.withOpacity(0.4),
+                      blurRadius: 6,
+                    ),
+                  ],
+                ),
+              ),
+              _buildCallConferenceBadge(conf),
+              if (agent.whisperMode)
+                _buildWhisperBadge(),
+              const Spacer(),
+              if (wide) ...[
+                _buildBarBtn(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  onTap: () =>
+                      context.read<MessagingService>().toggleOpen(),
+                  active: context.read<MessagingService>().isOpen,
+                  badge: context.read<MessagingService>().unreadCount,
+                ),
+                const SizedBox(width: 4),
+                _buildBarBtn(
+                  icon: Icons.receipt_long_rounded,
+                  onTap: () {
+                    final ts = context.read<TearSheetService>();
+                    ts.isActive ? ts.dismissSheet() : ts.openEditor();
+                  },
+                  active: context.read<TearSheetService>().isActive,
+                ),
+                const SizedBox(width: 4),
+                _buildBarBtn(
+                  icon: Icons.contacts_rounded,
+                  onTap: () =>
+                      context.read<ContactService>().toggleContacts(),
+                ),
+                const SizedBox(width: 4),
+                _buildBarBtn(
+                  icon: Icons.history_rounded,
+                  onTap: () =>
+                      context.read<CallHistoryService>().toggleHistory(),
+                ),
+                const SizedBox(width: 4),
+                _buildBarBtn(
+                  icon: Icons.headphones_rounded,
+                  onTap: _showAudioDevices,
+                ),
+                const SizedBox(width: 4),
+              ],
+              _buildCallMenuButton(context, collapsed: !wide),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildWhisperBadge() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: AppColors.burntAmber.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: AppColors.burntAmber.withOpacity(0.4), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.hearing_disabled,
+                size: 12, color: AppColors.burntAmber),
+            const SizedBox(width: 4),
+            Text(
+              'Whisper',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: AppColors.burntAmber,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCallConferenceBadge(ConferenceService conf) {
+    if (!conf.hasConference && conf.legCount < 2) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(left: 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: conf.hasConference
+              ? AppColors.green.withOpacity(0.12)
+              : AppColors.burntAmber.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: conf.hasConference
+                ? AppColors.green.withOpacity(0.3)
+                : AppColors.burntAmber.withOpacity(0.3),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              conf.hasConference
+                  ? Icons.groups_rounded
+                  : Icons.call_split_rounded,
+              size: 12,
+              color: conf.hasConference
+                  ? AppColors.green
+                  : AppColors.burntAmber,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              conf.hasConference
+                  ? 'Conference (${conf.legCount})'
+                  : '${conf.legCount} calls',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: conf.hasConference
+                    ? AppColors.green
+                    : AppColors.burntAmber,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBarBtn({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool active = false,
+    int badge = 0,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          _buildCallTopBar(),
-          Expanded(child: _buildContent()),
-          _buildActionButtons(),
-          const SizedBox(height: 32),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: active
+                  ? AppColors.accent.withOpacity(0.12)
+                  : AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: active
+                    ? AppColors.accent.withOpacity(0.4)
+                    : AppColors.border.withOpacity(0.5),
+                width: 0.5,
+              ),
+            ),
+            child: Icon(icon,
+                size: 16,
+                color:
+                    active ? AppColors.accent : AppColors.textSecondary),
+          ),
+          if (badge > 0)
+            Positioned(
+              top: -4,
+              right: -4,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: AppColors.red,
+                  shape: BoxShape.circle,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 16, minHeight: 16),
+                child: Text(
+                  badge > 99 ? '99+' : '$badge',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onAccent,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildCallTopBar() {
-    final agent = context.watch<AgentService>();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          if (agent.whisperMode)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                color: AppColors.burntAmber.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                    color: AppColors.burntAmber.withOpacity(0.4), width: 0.5),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.hearing_disabled,
-                      size: 12, color: AppColors.burntAmber),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Whisper',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.burntAmber,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          const Spacer(),
-          GestureDetector(
-            onTap: () =>
-                context.read<CallHistoryService>().toggleHistory(),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
-              ),
-              child: Icon(Icons.history_rounded,
-                  size: 18, color: AppColors.textSecondary),
+  Widget _buildCallMenuButton(BuildContext context, {bool collapsed = false}) {
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        switch (value) {
+          case 'tear_sheet':
+            final ts = context.read<TearSheetService>();
+            ts.isActive ? ts.dismissSheet() : ts.openEditor();
+            break;
+          case 'contacts':
+            context.read<ContactService>().toggleContacts();
+            break;
+          case 'history':
+            context.read<CallHistoryService>().toggleHistory();
+            break;
+          case 'audio':
+            _showAudioDevices();
+            break;
+          case 'messages':
+            context.read<MessagingService>().toggleOpen();
+            break;
+          case 'calendar':
+            context.read<CalendarSyncService>().toggleOpen();
+            break;
+          case 'settings':
+            Navigator.pushNamed(context, '/register');
+            break;
+        }
+      },
+      icon: Icon(Icons.more_horiz, color: AppColors.textSecondary, size: 20),
+      color: AppColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: AppColors.border, width: 0.5),
+      ),
+      itemBuilder: (_) => [
+        if (collapsed) ...[
+          PopupMenuItem(
+            value: 'history',
+            child: Row(
+              children: [
+                Icon(Icons.history_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Call History', style: TextStyle(fontSize: 13)),
+              ],
             ),
           ),
-          const SizedBox(width: 6),
-          GestureDetector(
-            onTap: _showAudioDevices,
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
-              ),
-              child: Icon(Icons.headphones_rounded,
-                  size: 18, color: AppColors.textSecondary),
+          PopupMenuItem(
+            value: 'contacts',
+            child: Row(
+              children: [
+                Icon(Icons.contacts_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Contacts', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'tear_sheet',
+            child: Row(
+              children: [
+                Icon(Icons.receipt_long_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                Text(
+                  context.read<TearSheetService>().isActive
+                      ? 'Dismiss Tear Sheet'
+                      : 'New Tear Sheet',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 'audio',
+            child: Row(
+              children: [
+                Icon(Icons.headphones_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Audio Devices', style: TextStyle(fontSize: 13)),
+              ],
             ),
           ),
         ],
-      ),
+        PopupMenuItem(
+          value: 'messages',
+          child: Row(
+            children: [
+              Icon(Icons.chat_bubble_outline_rounded,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 10),
+              Text(
+                'Messages${context.read<MessagingService>().unreadCount > 0 ? ' (${context.read<MessagingService>().unreadCount})' : ''}',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'calendar',
+          child: Row(
+            children: [
+              Icon(Icons.calendar_month_rounded,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 10),
+              const Text('Calendar', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'settings',
+          child: Row(
+            children: [
+              Icon(Icons.settings_outlined,
+                  size: 18, color: AppColors.textSecondary),
+              const SizedBox(width: 10),
+              const Text('Settings', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1086,7 +1417,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ActionButton(
             title: 'Add Call',
             icon: Icons.person_add,
-            onPressed: _handleAddCall,
+            onPressed: _addCallReady ? _handleAddCall : null,
           ),
           _circleBtn(Icons.call_end, AppColors.red, '', _handleHangup),
           ActionButton(
@@ -1213,7 +1544,17 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   @override
   void onNewReinvite(ReInvite event) {
     if (event.accept == null || event.reject == null) return;
-    if (voiceOnly && (event.hasVideo ?? false)) {
+
+    // Auto-accept audio-only re-INVITEs (session timer refresh, conference
+    // media redirect, hold/unhold from remote). Without this the 200 OK is
+    // never sent and Telnyx tears down the call after the INVITE timeout.
+    if (!(event.hasVideo ?? false)) {
+      debugPrint('[CallScreen] Auto-accepting audio re-INVITE');
+      event.accept!({});
+      return;
+    }
+
+    if (voiceOnly) {
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -1245,6 +1586,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ],
         ),
       );
+    } else {
+      debugPrint('[CallScreen] Auto-accepting video re-INVITE (already in video mode)');
+      event.accept!({});
     }
   }
 

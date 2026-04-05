@@ -7,6 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sip_ua/sip_ua.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
+import 'agent_config_service.dart';
+import 'conference/conference_config.dart';
+import 'conference/conference_service.dart';
 import 'theme_provider.dart';
 import 'widgets/agent_settings_tab.dart';
 import 'widgets/user_settings_tab.dart';
@@ -30,6 +33,11 @@ class _MyRegisterWidget extends State<RegisterWidget>
   final TextEditingController _authorizationUserController =
       TextEditingController();
   final Map<String, String> _wsExtraHeaders = {};
+  final _confTelnyxKeyCtrl = TextEditingController();
+  final _confTelnyxConnIdCtrl = TextEditingController();
+  final _confTelnyxWebhookCtrl = TextEditingController();
+
+  ConferenceConfig _conf = const ConferenceConfig();
 
   late SharedPreferences _preferences;
   late RegistrationState _registerState;
@@ -57,6 +65,9 @@ class _MyRegisterWidget extends State<RegisterWidget>
     _sipUriController.dispose();
     _displayNameController.dispose();
     _authorizationUserController.dispose();
+    _confTelnyxKeyCtrl.dispose();
+    _confTelnyxConnIdCtrl.dispose();
+    _confTelnyxWebhookCtrl.dispose();
     super.dispose();
   }
 
@@ -95,6 +106,24 @@ class _MyRegisterWidget extends State<RegisterWidget>
         _selectedTransport = TransportType.WS;
       }
     });
+    _loadConferenceConfig();
+  }
+
+  Future<void> _loadConferenceConfig() async {
+    final conf = await AgentConfigService.loadConferenceConfig();
+    if (!mounted) return;
+    setState(() {
+      _conf = conf;
+      _confTelnyxKeyCtrl.text = conf.telnyxApiKey;
+      _confTelnyxConnIdCtrl.text = conf.telnyxConnectionId;
+      _confTelnyxWebhookCtrl.text = conf.telnyxWebhookUrl;
+    });
+  }
+
+  void _updateConference(ConferenceConfig c) {
+    setState(() => _conf = c);
+    AgentConfigService.saveConferenceConfig(c);
+    context.read<ConferenceService>().applyConfig(c);
   }
 
   void _saveSettings() {
@@ -316,6 +345,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
               _buildField('Display Name', _displayNameController,
                   placeholder: '+1234567890'),
             ]),
+            const SizedBox(height: 16),
+            _buildConferenceCard(),
             if (!kIsWeb) ...[
               const SizedBox(height: 16),
               _buildTransportSelector(),
@@ -325,6 +356,258 @@ class _MyRegisterWidget extends State<RegisterWidget>
             const SizedBox(height: 40),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildConferenceCard() {
+    final isTelnyx = _conf.provider == ConferenceProviderType.telnyx;
+    final isBasic = _conf.provider == ConferenceProviderType.basic;
+    final isActive = isTelnyx || isBasic;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'CONFERENCE CALLING',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: isActive
+                            ? AppColors.accent.withOpacity(0.12)
+                            : AppColors.card,
+                      ),
+                      child: Icon(Icons.groups_rounded,
+                          size: 17,
+                          color: isActive
+                              ? AppColors.accent
+                              : AppColors.textTertiary),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'SIP Conference Provider',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            isBasic
+                                ? 'Merge calls via SIP REFER'
+                                : 'Merge calls into a server-side conference bridge',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textTertiary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    DropdownButton<ConferenceProviderType>(
+                      value: _conf.provider,
+                      dropdownColor: AppColors.card,
+                      underline: const SizedBox.shrink(),
+                      style: TextStyle(
+                          fontSize: 13, color: AppColors.textPrimary),
+                      items: const [
+                        DropdownMenuItem(
+                          value: ConferenceProviderType.none,
+                          child: Text('Off'),
+                        ),
+                        DropdownMenuItem(
+                          value: ConferenceProviderType.basic,
+                          child: Text('Basic'),
+                        ),
+                        DropdownMenuItem(
+                          value: ConferenceProviderType.telnyx,
+                          child: Text('Telnyx'),
+                        ),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        _updateConference(_conf.copyWith(provider: v));
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              if (isBasic) ...[
+                Divider(
+                    height: 1,
+                    color: AppColors.border.withOpacity(0.4)),
+                _buildBasicConfToggle(
+                  label: 'Platform supports sending Updates',
+                  subtitle: 'Use SIP UPDATE for hold; otherwise re-INVITE',
+                  value: _conf.basicSupportsUpdate,
+                  onChanged: (v) => _updateConference(
+                      _conf.copyWith(basicSupportsUpdate: v)),
+                ),
+                _buildBasicConfToggle(
+                  label: 'Renegotiate media after merge',
+                  subtitle: 'Send a full SDP re-INVITE after REFER completes',
+                  value: _conf.basicRenegotiateMedia,
+                  onChanged: (v) => _updateConference(
+                      _conf.copyWith(basicRenegotiateMedia: v)),
+                ),
+              ],
+              if (isTelnyx) ...[
+                Divider(
+                    height: 1,
+                    color: AppColors.border.withOpacity(0.4)),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                  child: TextField(
+                    controller: _confTelnyxKeyCtrl,
+                    obscureText: true,
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textPrimary),
+                    decoration: InputDecoration(
+                      labelText: 'Telnyx API Key (v2)',
+                      labelStyle:
+                          TextStyle(color: AppColors.textTertiary),
+                      isDense: true,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(
+                            color: AppColors.border, width: 0.5),
+                      ),
+                    ),
+                    onChanged: (v) => _updateConference(
+                        _conf.copyWith(telnyxApiKey: v)),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+                  child: TextField(
+                    controller: _confTelnyxConnIdCtrl,
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textPrimary),
+                    decoration: InputDecoration(
+                      labelText: 'Telnyx Connection ID',
+                      labelStyle:
+                          TextStyle(color: AppColors.textTertiary),
+                      isDense: true,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(
+                            color: AppColors.border, width: 0.5),
+                      ),
+                      helperText:
+                          'SIP credential or Call Control App ID',
+                      helperStyle: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textTertiary),
+                    ),
+                    onChanged: (v) => _updateConference(
+                        _conf.copyWith(telnyxConnectionId: v)),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+                  child: TextField(
+                    controller: _confTelnyxWebhookCtrl,
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textPrimary),
+                    decoration: InputDecoration(
+                      labelText: 'Webhook URL (optional)',
+                      labelStyle:
+                          TextStyle(color: AppColors.textTertiary),
+                      isDense: true,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(
+                            color: AppColors.border, width: 0.5),
+                      ),
+                      helperText:
+                          'Auto-enables Call Control on credential connections',
+                      helperStyle: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textTertiary),
+                    ),
+                    onChanged: (v) => _updateConference(
+                        _conf.copyWith(telnyxWebhookUrl: v)),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBasicConfToggle({
+    required String label,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                      fontSize: 10, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          Switch.adaptive(
+            value: value,
+            activeColor: AppColors.accent,
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

@@ -112,6 +112,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "exitCallMode":
             exitCallMode()
             result(nil)
+        case "setConferenceMode":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let active = args["active"] as? Bool ?? false
+            setAPMConferenceMode(active)
+            result(nil)
         case "playAudioResponse":
             if let data = call.arguments as? FlutterStandardTypedData {
                 handlePlayAudio(data.data)
@@ -300,8 +305,21 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func enterCallMode() {
         callModeRefCount += 1
         NSLog("[AudioTap] enterCallMode refCount=%d", callModeRefCount)
+        if callModeRefCount > 1 {
+            setAPMConferenceMode(true)
+        }
         guard !inCallMode else { return }
         inCallMode = true
+
+        // Wire up beep detection callbacks so the Flutter side is notified
+        // the instant a voicemail beep tone is detected or ends.
+        let channel = self.methodChannel
+        WebRTCAudioProcessor.shared.beepDetectedCallback = {
+            channel.invokeMethod("onBeepDetected", arguments: nil)
+        }
+        WebRTCAudioProcessor.shared.beepEndedCallback = {
+            channel.invokeMethod("onBeepEnded", arguments: nil)
+        }
 
         // Clear stale suppression and speaker history from pre-call state.
         isPlayingResponse = false
@@ -322,11 +340,18 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func exitCallMode() {
         callModeRefCount = max(0, callModeRefCount - 1)
         NSLog("[AudioTap] exitCallMode refCount=%d", callModeRefCount)
+        if callModeRefCount <= 1 {
+            setAPMConferenceMode(false)
+        }
         guard callModeRefCount == 0 else { return }
         guard inCallMode else { return }
         inCallMode = false
 
         stopCallRecording()
+
+        // Tear down beep detection callbacks
+        WebRTCAudioProcessor.shared.beepDetectedCallback = nil
+        WebRTCAudioProcessor.shared.beepEndedCallback = nil
 
         // Clear soft mute so it doesn't persist to the next call
         WebRTCAudioProcessor.shared.micMuted = false
@@ -342,6 +367,35 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         dominantSpeaker = "unknown"
 
         NSLog("[AudioTap] Exited call mode — direct mic capture continues")
+    }
+
+    /// Toggle WebRTC APM features that degrade audio with multiple peer connections.
+    /// AEC and NS operate on a single-stream assumption; with two connections the
+    /// reference signal is wrong and NS over-suppresses, producing a "wind tunnel."
+    private func setAPMConferenceMode(_ conference: Bool) {
+        WebRTCAudioProcessor.shared.conferenceMode = conference
+
+        let apm = AudioManager.sharedInstance().audioProcessingModule
+        let cfg = RTCAudioProcessingConfig()
+        if conference {
+            cfg.isEchoCancellationEnabled = false
+            cfg.isNoiseSuppressionEnabled = false
+            cfg.isAutoGainControl1Enabled = false
+            cfg.isAutoGainControl2Enabled = false
+            cfg.isHighpassFilterEnabled = false
+        } else {
+            cfg.isEchoCancellationEnabled = true
+            cfg.isNoiseSuppressionEnabled = true
+            cfg.isAutoGainControl1Enabled = true
+            cfg.isAutoGainControl2Enabled = true
+            cfg.isHighpassFilterEnabled = true
+        }
+        apm.config = cfg
+        NSLog("[AudioTap] APM conference mode %@: AEC=%@ NS=%@ AGC=%@",
+              conference ? "ON" : "OFF",
+              conference ? "off" : "on",
+              conference ? "off" : "on",
+              conference ? "off" : "on")
     }
 
     // MARK: - Audio Playback

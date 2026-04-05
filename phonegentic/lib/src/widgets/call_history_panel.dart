@@ -11,6 +11,7 @@ import 'package:sip_ua/sip_ua.dart';
 import '../agent_service.dart';
 import '../call_history_service.dart';
 import '../demo_mode_service.dart';
+import '../messaging/phone_numbers.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
@@ -430,7 +431,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
       };
       final stream =
           await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      helper.call(number, voiceOnly: true, mediaStream: stream);
+      helper.call(ensureE164(number), voiceOnly: true, mediaStream: stream);
     } catch (e) {
       debugPrint('[CallHistory] Redial failed: $e');
     }

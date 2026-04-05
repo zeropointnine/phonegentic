@@ -1,6 +1,8 @@
+import 'package:phonegentic/src/agent_config_service.dart';
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/calendar_sync_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
+import 'package:phonegentic/src/conference/conference_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
 import 'package:phonegentic/src/demo_mode_service.dart';
@@ -21,12 +23,24 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Logger.level = Level.warning;
   await CallHistoryDb.initialize();
+  final confConfig = await AgentConfigService.loadConferenceConfig();
   runApp(
     MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => ThemeProvider())],
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        Provider<ConferenceConfigSeed>.value(
+            value: ConferenceConfigSeed(confConfig)),
+      ],
       child: const MyApp(),
     ),
   );
+}
+
+/// Tiny carrier so we can pass the loaded config into the widget tree
+/// without making ConferenceService before we have the SIPUAHelper ref.
+class ConferenceConfigSeed {
+  final dynamic config;
+  const ConferenceConfigSeed(this.config);
 }
 
 typedef PageContentBuilder = Widget Function([SIPUAHelper? helper, Object? arguments]);
@@ -67,10 +81,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProxyProvider3<CallHistoryService, ContactService,
             JobFunctionService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
-          update: (_, history, contacts, jobFunctions, agent) => agent!
+          update: (context, history, contacts, jobFunctions, agent) => agent!
             ..callHistory = history
             ..contactService = contacts
-            ..jobFunctionService = jobFunctions,
+            ..jobFunctionService = jobFunctions
+            ..demoModeService = context.read<DemoModeService>(),
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
           create: (_) => MessagingService()..start(),
@@ -98,6 +113,14 @@ class MyApp extends StatelessWidget {
             agent.calendarSyncService = sync;
             agent.messagingService = context.read<MessagingService>();
             return sync;
+          },
+        ),
+        ChangeNotifierProvider<ConferenceService>(
+          create: (ctx) {
+            final seed = ctx.read<ConferenceConfigSeed>();
+            return ConferenceService()
+              ..sipHelper = _helper
+              ..applyConfig(seed.config);
           },
         ),
       ],
