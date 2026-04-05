@@ -138,7 +138,7 @@ class _QuickAddOverlayState extends State<QuickAddOverlay> {
                     child: Center(
                       child: Text(
                         _saving ? 'Saving...' : 'Add Contact',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: AppColors.crtBlack,

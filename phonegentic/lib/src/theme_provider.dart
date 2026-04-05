@@ -1,75 +1,147 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum AppTheme { amberVt100, miamiVice, light }
 
 class AppColors {
-  static bool _isDark = true;
+  static AppTheme _theme = AppTheme.amberVt100;
 
-  static void _update(bool isDark) => _isDark = isDark;
+  static void _update(AppTheme theme) => _theme = theme;
+
+  static bool get _isMiami => _theme == AppTheme.miamiVice;
+  static bool get _isLight => _theme == AppTheme.light;
 
   // ── Backgrounds ──
-  static Color get bg =>
-      _isDark ? const Color(0xFF100D08) : const Color(0xFFF0E6D8);
-  static Color get surface =>
-      _isDark ? const Color(0xFF1A1610) : const Color(0xFFF5EDE2);
-  static Color get card =>
-      _isDark ? const Color(0xFF252018) : const Color(0xFFF8F0E5);
-  static Color get border =>
-      _isDark ? const Color(0xFF3A3228) : const Color(0xFFE0CDBA);
+  static Color get bg => _isLight
+      ? const Color(0xFFF0E6D8)
+      : _isMiami
+          ? const Color(0xFF080A14)
+          : const Color(0xFF100D08);
+
+  static Color get surface => _isLight
+      ? const Color(0xFFF5EDE2)
+      : _isMiami
+          ? const Color(0xFF101626)
+          : const Color(0xFF1A1610);
+
+  static Color get card => _isLight
+      ? const Color(0xFFF8F0E5)
+      : _isMiami
+          ? const Color(0xFF1C2240)
+          : const Color(0xFF252018);
+
+  static Color get border => _isLight
+      ? const Color(0xFFE0CDBA)
+      : _isMiami
+          ? const Color(0xFF303860)
+          : const Color(0xFF3A3228);
 
   // ── Text ──
-  static Color get textPrimary =>
-      _isDark ? const Color(0xFFFFD27A) : const Color(0xFF18120A);
-  static Color get textSecondary =>
-      _isDark ? const Color(0xFFC9943A) : const Color(0xFF5C4D38);
-  static Color get textTertiary =>
-      _isDark ? const Color(0xFF7A5C28) : const Color(0xFF9B8B72);
+  static Color get textPrimary => _isLight
+      ? const Color(0xFF18120A)
+      : _isMiami
+          ? const Color(0xFF00E5FF)
+          : const Color(0xFFFFD27A);
 
-  // ── CRT Amber Phosphor palette (constant across themes) ──
-  static const Color phosphor = Color(0xFFFFB347);
-  static const Color hotSignal = Color(0xFFFFD27A);
-  static const Color burntAmber = Color(0xFFC97A1A);
-  static const Color crtBlack = Color(0xFF0B0805);
+  static Color get textSecondary => _isLight
+      ? const Color(0xFF5C4D38)
+      : _isMiami
+          ? const Color(0xFF72D5D0)
+          : const Color(0xFFC9943A);
 
-  // Legacy aliases used throughout the codebase
-  static const Color accent = phosphor;
-  static const Color accentLight = hotSignal;
-  static const Color onAccent = Color(0xFF3D2200);
-  static const Color green = Color(0xFF4ADE80);
-  static const Color red = Color(0xFFE06A1D);
-  static const Color orange = Color(0xFFE8960F);
+  static Color get textTertiary => _isLight
+      ? const Color(0xFF9B8B72)
+      : _isMiami
+          ? const Color(0xFF507888)
+          : const Color(0xFF7A5C28);
+
+  // ── Accent palette (theme-aware) ──
+  //
+  // Amber VT-100: warm CRT phosphor golds
+  // Miami Vice:   cyan primary, hot pink signal, electric purple mid-tone
+  //               (purple bridges cyan ↔ magenta on the color wheel)
+  static Color get phosphor =>
+      _isMiami ? const Color(0xFF00E5FF) : const Color(0xFFFFB347);
+  static Color get hotSignal =>
+      _isMiami ? const Color(0xFFFF3CA0) : const Color(0xFFFFD27A);
+  static Color get burntAmber =>
+      _isMiami ? const Color(0xFF8B5CF6) : const Color(0xFFC97A1A);
+  static Color get crtBlack =>
+      _isMiami ? const Color(0xFF050710) : const Color(0xFF0B0805);
+
+  static Color get accent => phosphor;
+  static Color get accentLight => hotSignal;
+  static Color get onAccent =>
+      _isMiami ? const Color(0xFF001A22) : const Color(0xFF3D2200);
+  static Color get green =>
+      _isMiami ? const Color(0xFF00FFAB) : const Color(0xFF4ADE80);
+  static Color get red =>
+      _isMiami ? const Color(0xFFFF4081) : const Color(0xFFE06A1D);
+  static Color get orange =>
+      _isMiami ? const Color(0xFFFFAB91) : const Color(0xFFE8960F);
 }
 
 class ThemeProvider extends ChangeNotifier {
-  ThemeData? currentTheme;
-  bool _isDark = true;
+  static const _prefKey = 'app_theme';
 
-  bool get isDark => _isDark;
+  ThemeData? currentTheme;
+  AppTheme _appTheme = AppTheme.amberVt100;
+
+  AppTheme get appTheme => _appTheme;
+  bool get isDark => _appTheme != AppTheme.light;
 
   ThemeProvider() {
-    currentTheme = _buildDarkTheme();
+    currentTheme = _buildAmberDarkTheme();
+    _loadSaved();
+  }
+
+  Future<void> _loadSaved() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString(_prefKey);
+    if (name == null) return;
+    final saved = AppTheme.values.cast<AppTheme?>().firstWhere(
+          (t) => t!.name == name,
+          orElse: () => null,
+        );
+    if (saved != null && saved != _appTheme) {
+      setTheme(saved);
+    }
+  }
+
+  void setTheme(AppTheme theme) {
+    _appTheme = theme;
+    AppColors._update(theme);
+    switch (theme) {
+      case AppTheme.amberVt100:
+        currentTheme = _buildAmberDarkTheme();
+        break;
+      case AppTheme.miamiVice:
+        currentTheme = _buildMiamiViceTheme();
+        break;
+      case AppTheme.light:
+        currentTheme = _buildLightTheme();
+        break;
+    }
+    notifyListeners();
+    SharedPreferences.getInstance().then((p) => p.setString(_prefKey, theme.name));
   }
 
   void toggle() {
-    _isDark = !_isDark;
-    AppColors._update(_isDark);
-    currentTheme = _isDark ? _buildDarkTheme() : _buildLightTheme();
-    notifyListeners();
+    if (_appTheme == AppTheme.light) {
+      setTheme(AppTheme.amberVt100);
+    } else {
+      setTheme(AppTheme.light);
+    }
   }
 
-  void setLightMode() {
-    _isDark = false;
-    AppColors._update(false);
-    currentTheme = _buildLightTheme();
-    notifyListeners();
-  }
+  void setLightMode() => setTheme(AppTheme.light);
+  void setDarkmode() => setTheme(AppTheme.amberVt100);
 
-  void setDarkmode() {
-    _isDark = true;
-    AppColors._update(true);
-    currentTheme = _buildDarkTheme();
-    notifyListeners();
-  }
+  // ─────────────────────────────────────────────
+  // Amber VT-100 (dark)
+  // ─────────────────────────────────────────────
 
-  ThemeData _buildDarkTheme() {
+  ThemeData _buildAmberDarkTheme() {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: const Color(0xFF100D08),
@@ -120,8 +192,7 @@ class ThemeProvider extends ChangeNotifier {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide:
-              const BorderSide(color: AppColors.phosphor, width: 1.5),
+          borderSide: BorderSide(color: AppColors.phosphor, width: 1.5),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -148,6 +219,101 @@ class ThemeProvider extends ChangeNotifier {
       iconTheme: const IconThemeData(color: Color(0xFFC97A1A)),
     );
   }
+
+  // ─────────────────────────────────────────────
+  // Miami Vice (dark) — cyan / hot pink / purple
+  // ─────────────────────────────────────────────
+
+  ThemeData _buildMiamiViceTheme() {
+    const bg = Color(0xFF0B0D1A);
+    const surface = Color(0xFF111528);
+    const card = Color(0xFF181D35);
+    const borderColor = Color(0xFF272D4A);
+    const textPrimary = Color(0xFF00E5FF);
+    const textHint = Color(0xFF3A5968);
+    const iconColor = Color(0xFF7C4DFF);
+
+    return ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: bg,
+      colorScheme: ColorScheme.dark(
+        primary: const Color(0xFF00E5FF),
+        secondary: const Color(0xFFFF1493),
+        surface: surface,
+        error: const Color(0xFFFF4081),
+        onPrimary: const Color(0xFF001A22),
+        onSecondary: const Color(0xFF2A0020),
+        onSurface: textPrimary,
+        onError: const Color(0xFF001A22),
+        outline: borderColor,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: false,
+        titleTextStyle: TextStyle(
+          color: textPrimary,
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.3,
+        ),
+        iconTheme: IconThemeData(color: iconColor),
+      ),
+      cardTheme: CardThemeData(
+        color: card,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: borderColor, width: 0.5),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: surface,
+        hintStyle: const TextStyle(color: textHint, fontSize: 14),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: borderColor),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: borderColor),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: textPrimary, width: 1.5),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF00E5FF),
+          foregroundColor: const Color(0xFF06080F),
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          textStyle: const TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: -0.2),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: const Color(0xFF00E5FF),
+          textStyle:
+              const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+        ),
+      ),
+      dividerTheme:
+          const DividerThemeData(color: borderColor, thickness: 0.5),
+      iconTheme: const IconThemeData(color: iconColor),
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // Light (amber-based)
+  // ─────────────────────────────────────────────
 
   ThemeData _buildLightTheme() {
     return ThemeData(
@@ -199,8 +365,7 @@ class ThemeProvider extends ChangeNotifier {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide:
-              const BorderSide(color: AppColors.burntAmber, width: 1.5),
+          borderSide: BorderSide(color: AppColors.burntAmber, width: 1.5),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(

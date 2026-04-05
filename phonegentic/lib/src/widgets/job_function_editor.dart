@@ -9,7 +9,7 @@ import '../models/job_function.dart';
 import '../theme_provider.dart';
 
 class JobFunctionEditor extends StatefulWidget {
-  const JobFunctionEditor({Key? key}) : super(key: key);
+  const JobFunctionEditor({super.key});
 
   @override
   State<JobFunctionEditor> createState() => _JobFunctionEditorState();
@@ -577,7 +577,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                       child: Container(
                         width: 5,
                         height: 5,
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: AppColors.onAccent,
                         ),

@@ -113,7 +113,7 @@ class _ActionButtonState extends State<ActionButton> {
                 if (widget.subTitle.isNotEmpty)
                   Text(
                     widget.subTitle.toUpperCase(),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 9,
                       fontWeight: FontWeight.w600,
                       color: AppColors.burntAmber,

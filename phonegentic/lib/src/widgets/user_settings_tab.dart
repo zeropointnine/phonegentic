@@ -237,10 +237,136 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           children: [
             const SizedBox(height: 8),
+            _buildAppearanceCard(),
+            const SizedBox(height: 16),
             _buildIntegrationsCard(),
             const SizedBox(height: 16),
             _buildDemoModeCard(),
             const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───── Appearance ─────
+
+  Widget _buildAppearanceCard() {
+    final themeProvider = context.watch<ThemeProvider>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'APPEARANCE',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Column(
+            children: [
+              _buildThemeRow(
+                theme: AppTheme.amberVt100,
+                label: 'Amber VT-100',
+                subtitle: 'Warm CRT phosphor on dark',
+                icon: Icons.terminal_rounded,
+                selected: themeProvider.appTheme == AppTheme.amberVt100,
+                onTap: () => themeProvider.setTheme(AppTheme.amberVt100),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withOpacity(0.5)),
+              _buildThemeRow(
+                theme: AppTheme.miamiVice,
+                label: 'Miami Vice',
+                subtitle: 'Cyan & hot pink on midnight',
+                icon: Icons.nightlife_rounded,
+                selected: themeProvider.appTheme == AppTheme.miamiVice,
+                onTap: () => themeProvider.setTheme(AppTheme.miamiVice),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withOpacity(0.5)),
+              _buildThemeRow(
+                theme: AppTheme.light,
+                label: 'Pedestrian Neutral',
+                subtitle: 'Warm parchment light',
+                icon: Icons.light_mode_rounded,
+                selected: themeProvider.appTheme == AppTheme.light,
+                onTap: () => themeProvider.setTheme(AppTheme.light),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildThemeRow({
+    required AppTheme theme,
+    required String label,
+    required String subtitle,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: selected
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(icon,
+                  size: 17,
+                  color: selected
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                        fontSize: 11, color: AppColors.textTertiary),
+                  ),
+                ],
+              ),
+            ),
+            if (selected)
+              Icon(Icons.check_rounded,
+                  size: 18, color: AppColors.accent),
           ],
         ),
       ),

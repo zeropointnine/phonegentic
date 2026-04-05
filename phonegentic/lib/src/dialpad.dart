@@ -1266,7 +1266,7 @@ class _CallButtonState extends State<_CallButton>
                 height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
@@ -1274,6 +1274,7 @@ class _CallButtonState extends State<_CallButton>
                       AppColors.phosphor,
                       AppColors.burntAmber,
                     ],
+                    stops: const [0.0, 0.45, 1.0],
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -1290,7 +1291,7 @@ class _CallButtonState extends State<_CallButton>
                       ),
                   ],
                 ),
-                child: const Icon(
+                child: Icon(
                     Icons.phone, size: 30, color: AppColors.crtBlack),
               );
             },

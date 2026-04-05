@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import '../theme_provider.dart';
 
 class PhonegenticLogo extends StatelessWidget {
-  static const _defaultColors = [
-    AppColors.hotSignal,
-    AppColors.phosphor,
-    AppColors.burntAmber,
-  ];
+  static List<Color> get _defaultColors => [
+        AppColors.hotSignal,
+        AppColors.phosphor,
+        AppColors.burntAmber,
+      ];
 
   final double size;
   final List<Color>? colors;

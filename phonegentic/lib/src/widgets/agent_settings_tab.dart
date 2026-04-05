@@ -7,7 +7,7 @@ import '../theme_provider.dart';
 import 'voice_clone_modal.dart';
 
 class AgentSettingsTab extends StatefulWidget {
-  const AgentSettingsTab({Key? key}) : super(key: key);
+  const AgentSettingsTab({super.key});
 
   @override
   State<AgentSettingsTab> createState() => _AgentSettingsTabState();
@@ -400,7 +400,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       child: Container(
                         width: 6,
                         height: 6,
-                        decoration: const BoxDecoration(
+                        decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: AppColors.onAccent,
                         ),

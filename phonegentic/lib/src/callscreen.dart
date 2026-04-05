@@ -1247,7 +1247,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   child: Center(
                     child: Text(
                       initial,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 36,
                         fontWeight: FontWeight.w300,
                         color: AppColors.accentLight,

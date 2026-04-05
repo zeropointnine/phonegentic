@@ -20,10 +20,10 @@ class AddCallModal extends StatefulWidget {
   final VoidCallback onClose;
 
   const AddCallModal({
-    Key? key,
+    super.key,
     required this.onCall,
     required this.onClose,
-  }) : super(key: key);
+  });
 
   @override
   State<AddCallModal> createState() => _AddCallModalState();
@@ -473,7 +473,7 @@ class _AddCallModalState extends State<AddCallModal> {
           child: Center(
             child: Text(
               letter,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.w300,
                 color: AppColors.green,
@@ -669,7 +669,7 @@ class _ConferenceCallButtonState extends State<_ConferenceCallButton>
                 height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
@@ -677,6 +677,7 @@ class _ConferenceCallButtonState extends State<_ConferenceCallButton>
                       AppColors.phosphor,
                       AppColors.burntAmber,
                     ],
+                    stops: const [0.0, 0.45, 1.0],
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -693,7 +694,7 @@ class _ConferenceCallButtonState extends State<_ConferenceCallButton>
                       ),
                   ],
                 ),
-                child: const Icon(
+                child: Icon(
                     Icons.phone, size: 30, color: AppColors.crtBlack),
               );
             },

@@ -772,7 +772,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
-        child: const Text(
+        child: Text(
           'Register',
           style: TextStyle(
               fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.onAccent),

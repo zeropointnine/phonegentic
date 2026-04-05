@@ -238,7 +238,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                   borderRadius: BorderRadius.circular(10),
                   color: AppColors.accent,
                 ),
-                child: const Icon(Icons.search_rounded,
+                child: Icon(Icons.search_rounded,
                     size: 16, color: AppColors.crtBlack),
               ),
             ),
