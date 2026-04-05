@@ -219,6 +219,67 @@ class TextAgentService {
       },
     },
     {
+      'name': 'send_sms',
+      'description':
+          'Send an SMS or MMS to a phone number. Use when the job or host '
+          'asks you to text someone, send a message, or follow up via SMS.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'to': {
+            'type': 'string',
+            'description':
+                'Destination phone number (E.164, e.g. +18005551234)',
+          },
+          'text': {
+            'type': 'string',
+            'description': 'Message body to send',
+          },
+          'media_url': {
+            'type': 'string',
+            'description': 'Optional image URL for MMS',
+          },
+        },
+        'required': ['to', 'text'],
+      },
+    },
+    {
+      'name': 'reply_sms',
+      'description':
+          'Reply in the currently selected SMS conversation. Use when the host '
+          'asks to respond or reply to the open text thread.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'text': {
+            'type': 'string',
+            'description': 'Reply message body',
+          },
+        },
+        'required': ['text'],
+      },
+    },
+    {
+      'name': 'search_messages',
+      'description':
+          'Search SMS history by message text or number. Use when the job or '
+          'host asks about past texts or needs to find a message.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description':
+                'Text to match against message body or phone number',
+          },
+          'contact_name': {
+            'type': 'string',
+            'description': 'Optional contact name filter',
+          },
+        },
+      },
+    },
+    {
       'name': 'start_voice_sample',
       'description':
           'Start capturing a voice sample from the specified call party for '

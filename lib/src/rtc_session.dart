@@ -1713,6 +1713,19 @@ class RTCSession extends EventManager implements Owner {
   /// In dialog INVITE Reception
   void _receiveReinvite(IncomingRequest request) async {
     logger.d('receiveReinvite()');
+    print('[RTC] receiveReinvite() signalingState=${_connection?.signalingState}');
+
+    // Glare detection (RFC 5407 / RFC 3261 §14.2): if we already have a
+    // pending outgoing re-INVITE the peer connection is in have-local-offer
+    // and cannot accept another offer. Reply 491 so the remote retries.
+    if (_connection != null &&
+        _connection!.signalingState ==
+            RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+      logger.w('receiveReinvite() glare — 491 Request Pending');
+      request.reply(491);
+      return;
+    }
+
     String? contentType = request.getHeader('Content-Type');
 
     void sendAnswer(String? sdp) async {
@@ -1775,17 +1788,22 @@ class RTCSession extends EventManager implements Owner {
       return true;
     }
 
-    RTCSessionDescription? desc = await _processInDialogSdpOffer(request);
+    RTCSessionDescription? desc;
+    try {
+      desc = await _processInDialogSdpOffer(request);
+    } catch (error) {
+      logger.e('_receiveReinvite() SDP offer failed: $error — already replied 488');
+      return;
+    }
 
     Future<bool> acceptReInvite(dynamic options) async {
       try {
-        // Send answer.
         if (_state == RtcSessionState.terminated) {
           return false;
         }
-        sendAnswer(desc.sdp);
+        sendAnswer(desc?.sdp);
       } catch (error) {
-        logger.e('Got anerror on re-INVITE: ${error.toString()}');
+        logger.e('Got an error on re-INVITE: ${error.toString()}');
       }
 
       return true;
@@ -2424,7 +2442,7 @@ class RTCSession extends EventManager implements Owner {
     EventManager eventHandlers = options['eventHandlers'] ?? EventManager();
     Map<String, dynamic>? rtcOfferConstraints = options['rtcOfferConstraints'] ?? _rtcOfferConstraints;
 
-    bool succeeded = false;
+    bool? succeeded;
 
     extraHeaders.add('Contact: $_contact');
     extraHeaders.add('Content-Type: application/sdp');
@@ -2439,6 +2457,7 @@ class RTCSession extends EventManager implements Owner {
     }
 
     void onSucceeded(IncomingResponse? response) async {
+      print('[RTC] sendReinvite onSucceeded: succeeded=$succeeded state=$_state');
       if (_state == RtcSessionState.terminated) {
         return;
       }
@@ -2447,6 +2466,7 @@ class RTCSession extends EventManager implements Owner {
 
       // If it is a 2XX retransmission exit now.
       if (succeeded != null) {
+        print('[RTC] sendReinvite onSucceeded: 2XX retransmission, skipping SDP');
         return;
       }
 
@@ -2455,9 +2475,11 @@ class RTCSession extends EventManager implements Owner {
 
       // Must have SDP answer.
       if (response!.body == null || response.body!.isEmpty) {
+        print('[RTC] sendReinvite onSucceeded: no SDP body — onFailed');
         onFailed();
         return;
       } else if (response.getHeader('Content-Type') != 'application/sdp') {
+        print('[RTC] sendReinvite onSucceeded: wrong Content-Type — onFailed');
         onFailed();
         return;
       }
@@ -2473,10 +2495,13 @@ class RTCSession extends EventManager implements Owner {
       RTCSessionDescription answer = RTCSessionDescription(processedAnswer, SdpType.answer.name);
 
       try {
+        print('[RTC] sendReinvite: applying remote SDP answer (signalingState=${_connection!.signalingState})');
         await _connection!.setRemoteDescription(answer);
+        print('[RTC] sendReinvite: remote SDP answer applied OK');
         eventHandlers.emit(EventSucceeded(response: response));
       } catch (error) {
         onFailed();
+        print('[RTC] sendReinvite: setRemoteDescription FAILED: $error');
         logger.e('emit "peerconnection:setremotedescriptionfailed" [error:${error.toString()}]');
         emit(EventSetRemoteDescriptionFailed(exception: error));
       }
@@ -2660,7 +2685,7 @@ class RTCSession extends EventManager implements Owner {
     Map<String, dynamic> rtcOfferConstraints = options['rtcOfferConstraints'] ?? _rtcOfferConstraints ?? <String, dynamic>{};
     bool sdpOffer = options['sdpOffer'] ?? false;
 
-    bool succeeded = false;
+    bool? succeeded;
 
     extraHeaders.add('Contact: $_contact');
 
@@ -3039,6 +3064,7 @@ class RTCSession extends EventManager implements Owner {
         Duration(milliseconds: delayMs),
         (_) {
           if (_state == RtcSessionState.terminated) return;
+          print('[RTC] Session timer refresh firing (method=${_sessionTimers.refreshMethod} expires=$expires delayMs=$delayMs)');
           logger.d('runSessionTimer() | sending session refresh request with expires=$expires, delayMs=$delayMs');
           if (_sessionTimers.refreshMethod == SipMethod.UPDATE) {
             _sendUpdate();
@@ -3055,6 +3081,7 @@ class RTCSession extends EventManager implements Owner {
           return;
         }
 
+        print('[RTC] Session timer EXPIRED — terminating session!');
         logger.e('runSessionTimer() | timer expired, terminating the session');
 
         terminate(<String, dynamic>{'cause': DartSIP_C.CausesType.REQUEST_TIMEOUT, 'status_code': 408, 'reason_phrase': 'Session Timer Expired'});

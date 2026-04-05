@@ -4,8 +4,10 @@ import 'package:provider/provider.dart';
 
 import 'package:intl/intl.dart';
 
+import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../calendar_sync_service.dart';
+import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
 import '../job_function_service.dart';
 import '../models/agent_context.dart';
@@ -118,7 +120,7 @@ class _AgentPanelState extends State<AgentPanel> {
                   return _PanelTearSheetBar(service: tearSheet);
                 },
               ),
-              if (agent.hasActiveCall) _CallInfoBar(agent: agent),
+              if (agent.hasActiveCall) _ConferenceCallBar(agent: agent),
               Expanded(child: _MessageList(
                 messages: agent.messages,
                 scrollController: _scrollController,
@@ -237,13 +239,7 @@ class _AgentHeader extends StatelessWidget {
                 : 'Tear sheet',
           ),
           const SizedBox(width: 6),
-          _HeaderButton(
-            icon: agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            color: agent.muted ? AppColors.red : AppColors.textSecondary,
-            bgColor: agent.muted ? AppColors.red.withOpacity(0.12) : AppColors.card,
-            onTap: agent.active ? agent.toggleMute : null,
-            tooltip: agent.muted ? 'Unmute' : 'Mute',
-          ),
+          _MuteButtonWithPolicy(agent: agent),
           const SizedBox(width: 6),
           if (agent.hasActiveCall || agent.whisperMode) ...[
             _HeaderButton(
@@ -275,6 +271,137 @@ class _AgentHeader extends StatelessWidget {
             tooltip: 'Reconnect',
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mute button with long-press policy selector
+// ---------------------------------------------------------------------------
+
+class _MuteButtonWithPolicy extends StatelessWidget {
+  final AgentService agent;
+  const _MuteButtonWithPolicy({required this.agent});
+
+  void _showPolicyMenu(BuildContext context) {
+    final RenderBox box = context.findRenderObject() as RenderBox;
+    final offset = box.localToGlobal(Offset(0, box.size.height));
+
+    showMenu<AgentMutePolicy>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx - 140,
+        offset.dy + 4,
+        offset.dx + box.size.width,
+        0,
+      ),
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: AppColors.border.withOpacity(0.5), width: 0.5),
+      ),
+      elevation: 8,
+      items: [
+        _policyItem(AgentMutePolicy.autoToggle, Icons.swap_horiz_rounded,
+            'Auto unmute on call'),
+        _policyItem(
+            AgentMutePolicy.stayMuted, Icons.volume_off_rounded, 'Stay muted'),
+        _policyItem(AgentMutePolicy.stayUnmuted, Icons.volume_up_rounded,
+            'Stay unmuted'),
+      ],
+    ).then((selected) {
+      if (selected != null) {
+        agent.setGlobalMutePolicy(selected);
+      }
+    });
+  }
+
+  PopupMenuItem<AgentMutePolicy> _policyItem(
+      AgentMutePolicy value, IconData icon, String label) {
+    final current = agent.globalMutePolicy;
+    final selected = current == value;
+    return PopupMenuItem<AgentMutePolicy>(
+      value: value,
+      height: 36,
+      child: Row(
+        children: [
+          Icon(icon,
+              size: 14,
+              color: selected ? AppColors.accent : AppColors.textTertiary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+              ),
+            ),
+          ),
+          if (selected)
+            Icon(Icons.check_rounded, size: 14, color: AppColors.accent),
+        ],
+      ),
+    );
+  }
+
+  String get _policyHint {
+    switch (agent.globalMutePolicy) {
+      case AgentMutePolicy.autoToggle:
+        return 'Auto';
+      case AgentMutePolicy.stayMuted:
+        return 'Muted';
+      case AgentMutePolicy.stayUnmuted:
+        return 'On';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: agent.active ? agent.toggleMute : null,
+      onLongPress: () => _showPolicyMenu(context),
+      child: Tooltip(
+        message: agent.muted
+            ? 'Unmute (hold for policy)'
+            : 'Mute (hold for policy)',
+        child: Container(
+          height: 30,
+          constraints: const BoxConstraints(minWidth: 30),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            color: agent.muted
+                ? AppColors.red.withOpacity(0.12)
+                : AppColors.card,
+            border: Border.all(
+                color: AppColors.border.withOpacity(0.4), width: 0.5),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                size: 14,
+                color: agent.muted ? AppColors.red : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                _policyHint,
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  color: agent.muted
+                      ? AppColors.red.withOpacity(0.7)
+                      : AppColors.textTertiary,
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -893,6 +1020,342 @@ class _CallInfoBar extends StatelessWidget {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Conference-aware call bar — shows all legs with merge/hold controls
+// ---------------------------------------------------------------------------
+
+class _ConferenceCallBar extends StatelessWidget {
+  final AgentService agent;
+  const _ConferenceCallBar({required this.agent});
+
+  @override
+  Widget build(BuildContext context) {
+    final conf = context.watch<ConferenceService>();
+    final demo = context.watch<DemoModeService>();
+
+    // Fallback to original single-call bar when no conference service legs
+    if (conf.legCount <= 1 && !conf.hasConference) {
+      return _CallInfoBar(agent: agent);
+    }
+
+    final legs = conf.legs;
+    final hasConference = conf.hasConference;
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+            bottom: BorderSide(
+                color: AppColors.border.withOpacity(0.4), width: 0.5)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header: "(n) ongoing calls"
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+            child: Row(
+              children: [
+                Icon(
+                  hasConference
+                      ? Icons.groups_rounded
+                      : Icons.call_split_rounded,
+                  size: 14,
+                  color: AppColors.accent,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  hasConference
+                      ? 'Conference (${legs.length} parties)'
+                      : '${legs.length} ongoing calls',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.accent,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const Spacer(),
+                if (conf.isMerging)
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                if (conf.mergeError != null)
+                  Tooltip(
+                    message: conf.mergeError!,
+                    child: Icon(Icons.error_outline,
+                        size: 14, color: AppColors.red),
+                  ),
+              ],
+            ),
+          ),
+          // Leg rows with merge connector
+          for (int i = 0; i < legs.length; i++) ...[
+            _CallLegRow(
+              leg: legs[i],
+              isFocused: legs[i].sipCallId == conf.focusedLegId,
+              demo: demo,
+              onTap: () => conf.focusLeg(legs[i].sipCallId),
+              onHold: () {
+                if (legs[i].state == LegState.held) {
+                  conf.unholdLeg(legs[i].sipCallId);
+                } else {
+                  conf.holdLeg(legs[i].sipCallId);
+                }
+              },
+            ),
+            // Merge connector between legs (only when not yet merged)
+            if (i < legs.length - 1 && !hasConference)
+              _MergeConnector(
+                canMerge: conf.canMerge && !conf.isMerging,
+                onMerge: conf.merge,
+              ),
+          ],
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+}
+
+class _CallLegRow extends StatelessWidget {
+  final ConferenceCallLeg leg;
+  final bool isFocused;
+  final DemoModeService demo;
+  final VoidCallback onTap;
+  final VoidCallback onHold;
+
+  const _CallLegRow({
+    required this.leg,
+    required this.isFocused,
+    required this.demo,
+    required this.onTap,
+    required this.onHold,
+  });
+
+  Color get _stateColor {
+    switch (leg.state) {
+      case LegState.ringing:
+        return AppColors.burntAmber;
+      case LegState.active:
+      case LegState.merged:
+        return AppColors.green;
+      case LegState.held:
+        return AppColors.accent;
+    }
+  }
+
+  String get _stateLabel {
+    switch (leg.state) {
+      case LegState.ringing:
+        return 'Ringing';
+      case LegState.active:
+        return 'Connected';
+      case LegState.held:
+        return 'On Hold';
+      case LegState.merged:
+        return 'In Conference';
+    }
+  }
+
+  String get _displayName {
+    if (leg.displayName != null && leg.displayName!.isNotEmpty) {
+      return demo.maskDisplayName(leg.displayName!);
+    }
+    if (leg.remoteNumber.isNotEmpty) {
+      return demo.maskPhone(leg.remoteNumber);
+    }
+    return 'Unknown';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _stateColor;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 6, 10, 6),
+        decoration: BoxDecoration(
+          color: isFocused
+              ? AppColors.accent.withOpacity(0.06)
+              : Colors.transparent,
+          border: isFocused
+              ? Border(
+                  left: BorderSide(color: AppColors.accent, width: 2))
+              : null,
+        ),
+        child: Row(
+          children: [
+            // State icon
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                color: color.withOpacity(0.12),
+              ),
+              child: Icon(
+                leg.state == LegState.held
+                    ? Icons.pause_rounded
+                    : Icons.phone_in_talk_rounded,
+                size: 12,
+                color: color,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Name + state
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _displayName,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 4,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _stateLabel,
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: color,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Hold toggle
+            GestureDetector(
+              onTap: onHold,
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(7),
+                  color: leg.state == LegState.held
+                      ? AppColors.accent.withOpacity(0.15)
+                      : AppColors.surface,
+                  border: Border.all(
+                    color: AppColors.border.withOpacity(0.4),
+                    width: 0.5,
+                  ),
+                ),
+                child: Icon(
+                  leg.state == LegState.held
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
+                  size: 14,
+                  color: leg.state == LegState.held
+                      ? AppColors.accent
+                      : AppColors.textTertiary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MergeConnector extends StatelessWidget {
+  final bool canMerge;
+  final Future<void> Function() onMerge;
+
+  const _MergeConnector({required this.canMerge, required this.onMerge});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 32,
+      child: Row(
+        children: [
+          const SizedBox(width: 24),
+          // Vertical connecting line
+          Container(
+            width: 2,
+            height: 32,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  AppColors.accent.withOpacity(0.3),
+                  AppColors.accent.withOpacity(0.1),
+                  AppColors.accent.withOpacity(0.3),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          // Merge button
+          GestureDetector(
+            onTap: canMerge ? () => onMerge() : null,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: canMerge
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.surface,
+                border: Border.all(
+                  color: canMerge
+                      ? AppColors.accent.withOpacity(0.4)
+                      : AppColors.border.withOpacity(0.3),
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.merge_type_rounded,
+                      size: 12,
+                      color: canMerge
+                          ? AppColors.accent
+                          : AppColors.textTertiary),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Merge',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: canMerge
+                          ? AppColors.accent
+                          : AppColors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

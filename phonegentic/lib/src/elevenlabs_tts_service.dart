@@ -34,6 +34,18 @@ class ElevenLabsTtsService {
 
   bool get isConnected => _connected;
 
+  /// Pre-establish the WebSocket connection so the first generation starts
+  /// without the ~5-10s TLS/handshake delay. Safe to call multiple times.
+  Future<void> warmUp() async {
+    if (_connected) return;
+    try {
+      await _connect();
+      debugPrint('[ElevenLabsTTS] Warmed up — WebSocket ready');
+    } catch (e) {
+      debugPrint('[ElevenLabsTTS] warmUp failed: $e');
+    }
+  }
+
   /// Override the voice used for subsequent generations.
   /// Pass null to revert to the config default.
   void updateVoiceId(String? voiceId) {
@@ -170,7 +182,9 @@ class ElevenLabsTtsService {
 
   Future<void> _connectAndFlush() async {
     try {
-      await _connect();
+      if (!_connected) {
+        await _connect();
+      }
 
       if (_pendingText.isNotEmpty) {
         debugPrint('[ElevenLabsTTS] Flushing ${_pendingText.length} '

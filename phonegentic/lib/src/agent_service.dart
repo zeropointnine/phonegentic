@@ -19,6 +19,7 @@ import 'db/call_history_db.dart';
 import 'elevenlabs_api_service.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
+import 'messaging/phone_numbers.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
@@ -92,8 +93,13 @@ class AgentService extends ChangeNotifier {
   }
 
   /// Enforce stayMuted / stayUnmuted policy on startup or job function switch.
+  /// Skipped when a call is active — [_applyMutePolicy] handles call phases.
   void _applyInitialMuteState() {
-    final policy = _effectiveMutePolicy;
+    if (_callPhase.isActive || _callPhase.isSettling ||
+        _callPhase == CallPhase.onHold) {
+      return;
+    }
+    final policy = effectiveMutePolicy;
     if (policy == AgentMutePolicy.stayMuted && !_muted) {
       _muted = true;
       _whisper.muted = true;
@@ -150,8 +156,13 @@ class AgentService extends ChangeNotifier {
   bool _agentSampling = false;
   String? _agentSamplePath;
 
-  // Beep tone detection (native Goertzel filter in RenderPreProcessor)
+  // Beep tone detection (native Goertzel filter in RenderPreProcessor).
+  // Beep only triggers voicemail if an IVR/voicemail transcript was already
+  // detected — prevents false positives from hold music, DTMF, etc.
   bool _beepDetected = false;
+  bool _voicemailPromptSent = false;
+  bool _ivrHeard = false;
+  bool _hasConnectedBefore = false;
 
   // Deduplication: skip identical transcripts arriving within a short window
   String _lastTranscriptText = '';
@@ -169,14 +180,16 @@ class AgentService extends ChangeNotifier {
 
   // Settling: buffer window after SIP CONFIRMED to filter auto-attendant/IVR
   Timer? _settleTimer;
+  Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
-  static const _settleWindowMs = 8000;
+  static const _settleWindowMs = 2500;
   static const _settleExtendMs = 6000;
+  static const _preGreetDelayMs = 1500;
 
   // Deferred greeting: nudge the agent to begin if the line stays quiet
   // after transitioning to connected.
   Timer? _connectedGreetTimer;
-  static const _connectedGreetDelayMs = 1500;
+  static const _connectedGreetDelayMs = 500;
 
   bool get active => _active;
   bool get muted => _muted;
@@ -189,8 +202,10 @@ class AgentService extends ChangeNotifier {
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
 
+  AgentMutePolicy get globalMutePolicy => _globalMutePolicy;
+
   /// Resolve the effective mute policy: job function override wins over global.
-  AgentMutePolicy get _effectiveMutePolicy {
+  AgentMutePolicy get effectiveMutePolicy {
     final override = _jobFunctionService?.selected?.mutePolicyOverride;
     if (override != null &&
         override >= 0 &&
@@ -198,6 +213,14 @@ class AgentService extends ChangeNotifier {
       return AgentMutePolicy.values[override];
     }
     return _globalMutePolicy;
+  }
+
+  void setGlobalMutePolicy(AgentMutePolicy policy) {
+    if (_globalMutePolicy == policy) return;
+    _globalMutePolicy = policy;
+    AgentConfigService.saveMutePolicy(policy);
+    _applyInitialMuteState();
+    notifyListeners();
   }
 
   void _syncBootContextFromJobFunction() {
@@ -477,9 +500,12 @@ class AgentService extends ChangeNotifier {
 
     final buf = StringBuffer();
     buf.writeln('\n## Calendar Schedule');
-    buf.writeln('You have access to make_call and end_call tools.');
+    buf.writeln(
+        'You have make_call, end_call, and (when configured) SMS tools '
+        '(send_sms, reply_sms, search_messages).');
     buf.writeln('When a calendar event starts, follow the job function '
-        'instructions. If the event involves a call, use make_call to dial.');
+        'instructions. If the event involves a call, use make_call to dial; '
+        'if it involves texting, use the SMS tools as appropriate.');
     buf.writeln('');
 
     final now = DateTime.now();
@@ -674,15 +700,21 @@ class AgentService extends ChangeNotifier {
     }
 
     // During settling, check for IVR patterns. If detected, extend the
-    // settle window. If clean speech arrives, that helps the timer expire
-    // and promote to connected. Either way, don't forward to the agent.
+    // settle window. If clean human speech arrives instead, promote to
+    // connected immediately so the agent can respond without waiting for
+    // the full settle timer.
     if (_callPhase.isSettling) {
       final text = event.text.trim();
       if (IvrDetector.isIvr(text)) {
         _ivrHitsInSettle++;
+        _ivrHeard = true;
         _extendSettleTimer();
         debugPrint(
             '[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
+      } else if (text.length >= 3 && _ivrHitsInSettle == 0) {
+        debugPrint(
+            '[AgentService] Human speech during settle: "$text" — promoting now');
+        _promoteToConnected();
       }
       return;
     }
@@ -700,11 +732,9 @@ class AgentService extends ChangeNotifier {
     // Filter stray IVR/voicemail fragments that arrive after settling
     // (e.g. a voicemail greeting transcribed as one big chunk).
     if (IvrDetector.isIvr(text)) {
+      _ivrHeard = true;
       debugPrint('[AgentService] IVR filtered post-settle: "$text"');
       if (_callPhase == CallPhase.connected) {
-        // Send the voicemail prompt immediately instead of waiting for
-        // the greeting timer — saves ~1.5s since Claude API latency
-        // (~3s) is the real bottleneck.
         _cancelConnectedGreeting();
         _triggerVoicemailPrompt();
       }
@@ -818,9 +848,9 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    // Suppress TTS during pre-connect / settling phases — the agent should
-    // be silent until the call is connected or while idle (idle is fine).
-    final suppressTts = (_callPhase.isPreConnect || _callPhase.isSettling ||
+    // Suppress TTS during pre-connect phases — but allow during settling
+    // so the pre-greeting can play immediately.
+    final suppressTts = (_callPhase.isPreConnect ||
             _callPhase == CallPhase.answered) &&
         _callPhase != CallPhase.idle;
 
@@ -1114,8 +1144,7 @@ class AgentService extends ChangeNotifier {
       }
     }
 
-    // Strip formatting so the SIP URI doesn't get mangled (e.g. "+1 415-533-1352" → "+14155331352")
-    number = number.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+    number = ensureE164(number);
 
     try {
       final mediaConstraints = <String, dynamic>{
@@ -1455,13 +1484,20 @@ class AgentService extends ChangeNotifier {
     // User manually toggled — their choice wins for this call.
     if (_userMuteOverride) return;
 
-    final policy = _effectiveMutePolicy;
+    final policy = effectiveMutePolicy;
 
     if (policy == AgentMutePolicy.stayUnmuted) {
+      bool changed = false;
+      if (_muted) {
+        _muted = false;
+        _whisper.muted = false;
+        if (!_speaking) _statusText = 'Listening';
+        changed = true;
+      }
       if (_splitPipeline) {
         if (_ttsMuted) {
           _ttsMuted = false;
-          notifyListeners();
+          changed = true;
         }
       } else {
         if (_whisperMode) {
@@ -1469,19 +1505,27 @@ class AgentService extends ChangeNotifier {
           if (_active) {
             _whisper.setModalities(['text', 'audio']);
           }
-          notifyListeners();
+          changed = true;
         }
       }
+      if (changed) notifyListeners();
       return;
     }
 
     if (policy != AgentMutePolicy.autoToggle) return;
 
     if (phase == CallPhase.settling || phase == CallPhase.connected) {
+      bool changed = false;
+      if (_muted) {
+        _muted = false;
+        _whisper.muted = false;
+        if (!_speaking) _statusText = 'Listening';
+        changed = true;
+      }
       if (_splitPipeline) {
         if (_ttsMuted) {
           _ttsMuted = false;
-          notifyListeners();
+          changed = true;
         }
       } else {
         if (_whisperMode) {
@@ -1489,14 +1533,22 @@ class AgentService extends ChangeNotifier {
           if (_active) {
             _whisper.setModalities(['text', 'audio']);
           }
-          notifyListeners();
+          changed = true;
         }
       }
+      if (changed) notifyListeners();
     } else if (phase == CallPhase.ended || phase == CallPhase.failed) {
+      bool changed = false;
+      if (!_muted) {
+        _muted = true;
+        _whisper.muted = true;
+        if (!_speaking) _statusText = 'Not Listening...';
+        changed = true;
+      }
       if (_splitPipeline) {
         if (!_ttsMuted) {
           _ttsMuted = true;
-          notifyListeners();
+          changed = true;
         }
       } else {
         if (!_whisperMode) {
@@ -1505,9 +1557,10 @@ class AgentService extends ChangeNotifier {
             _whisper.stopResponseAudio();
             _whisper.setModalities(['text']);
           }
-          notifyListeners();
+          changed = true;
         }
       }
+      if (changed) notifyListeners();
     }
   }
 
@@ -1625,6 +1678,9 @@ class AgentService extends ChangeNotifier {
       _localIdentity = null;
       _connectedAt = null;
       _beepDetected = false;
+      _voicemailPromptSent = false;
+      _ivrHeard = false;
+      _hasConnectedBefore = false;
       _clearRemotePartyName();
       _cancelSettleTimer();
       _cancelConnectedGreeting();
@@ -1663,6 +1719,7 @@ class AgentService extends ChangeNotifier {
 
     if (phase == CallPhase.settling) {
       _startSettleTimer();
+      _tts?.warmUp();
     } else if (_callPhase != CallPhase.settling) {
       _cancelSettleTimer();
     }
@@ -1700,10 +1757,18 @@ class AgentService extends ChangeNotifier {
     if (_active) {
       _whisper.sendSystemContext(contextText);
     }
-    _textAgent?.addSystemContext(contextText);
+    // Skip text agent context when promoting to connected after the
+    // pre-greeting already fired — that context would flush into a
+    // duplicate greeting response.
+    if (!(phase == CallPhase.connected && _hasConnectedBefore)) {
+      _textAgent?.addSystemContext(contextText);
+    }
 
     if (phase == CallPhase.connected) {
-      _scheduleConnectedGreeting();
+      if (!_hasConnectedBefore) {
+        _scheduleConnectedGreeting();
+        _hasConnectedBefore = true;
+      }
     } else {
       _cancelConnectedGreeting();
     }
@@ -1716,15 +1781,20 @@ class AgentService extends ChangeNotifier {
   /// IVR detections, auto-promote to connected.
   void _startSettleTimer() {
     _settleTimer?.cancel();
+    _preGreetTimer?.cancel();
     _ivrHitsInSettle = 0;
     _settleTimer = Timer(const Duration(milliseconds: _settleWindowMs), () {
       _tryPromoteFromSettle();
+    });
+    _preGreetTimer = Timer(const Duration(milliseconds: _preGreetDelayMs), () {
+      _firePreGreeting();
     });
   }
 
   /// Extend settling when IVR audio keeps arriving.
   void _extendSettleTimer() {
     _settleTimer?.cancel();
+    _preGreetTimer?.cancel();
     _settleTimer = Timer(const Duration(milliseconds: _settleExtendMs), () {
       _tryPromoteFromSettle();
     });
@@ -1747,7 +1817,28 @@ class AgentService extends ChangeNotifier {
   void _cancelSettleTimer() {
     _settleTimer?.cancel();
     _settleTimer = null;
+    _preGreetTimer?.cancel();
+    _preGreetTimer = null;
     _ivrHitsInSettle = 0;
+  }
+
+  /// Fire the greeting prompt early (during settling) so Claude's response
+  /// is ready before the settle timer expires. Skipped if IVR was detected.
+  void _firePreGreeting() {
+    if (_callPhase != CallPhase.settling) return;
+    if (_ivrHitsInSettle > 0) return;
+    if (_hasConnectedBefore) return;
+    _hasConnectedBefore = true;
+    const prompt =
+        '[SYSTEM] The call is connected and the line is quiet. '
+        'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+        'Otherwise, begin the conversation per your job function instructions.';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(prompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(prompt);
+    }
+    debugPrint('[AgentService] Pre-greeting fired during settling');
   }
 
   void _promoteToConnected() {
@@ -1797,8 +1888,14 @@ class AgentService extends ChangeNotifier {
   /// Immediately prompt the agent to leave a voicemail — no timer delay.
   /// Called when a voicemail/IVR transcript is detected post-settle, or when
   /// the native Goertzel filter detects a beep tone ending.
+  /// One-shot per call to prevent false positives from triggering loops.
   void _triggerVoicemailPrompt() {
     if (_callPhase != CallPhase.connected) return;
+    if (_voicemailPromptSent) {
+      debugPrint('[AgentService] Voicemail prompt already sent — skipping');
+      return;
+    }
+    _voicemailPromptSent = true;
     const prompt =
         '[SYSTEM] You have reached voicemail and the beep has sounded. '
         'Leave your voicemail message NOW — recording is in progress.';
@@ -1812,23 +1909,39 @@ class AgentService extends ChangeNotifier {
 
   // MARK: - Native beep tone detection (Goertzel)
 
+  /// Whether the beep arrived in a plausible voicemail window: during
+  /// settling, or within 30s of connected promotion (voicemail greetings
+  /// can recite the full phone number and run 15-20s).
+  bool get _inBeepWindow {
+    if (_callPhase == CallPhase.settling) return true;
+    if (_callPhase == CallPhase.connected && _connectedAt != null) {
+      final elapsed = DateTime.now().difference(_connectedAt!).inSeconds;
+      return elapsed <= 30;
+    }
+    return false;
+  }
+
   /// Handle method calls from native AudioTapChannel (beep detection events).
+  /// Beep detection only acts if an IVR/voicemail transcript was already heard
+  /// — prevents false triggers from hold music, DTMF, conference tones, etc.
   Future<dynamic> _handleNativeTapCall(MethodCall call) async {
     switch (call.method) {
       case 'onBeepDetected':
+        if (!_ivrHeard || !_inBeepWindow || _voicemailPromptSent) {
+          debugPrint(
+              '[AgentService] Native beep IGNORED (ivr=$_ivrHeard window=${_inBeepWindow} sent=$_voicemailPromptSent)');
+          break;
+        }
         _beepDetected = true;
-        debugPrint('[AgentService] Native beep tone DETECTED');
-        // If we're still settling, promote immediately — the beep means
-        // the voicemail greeting is over and recording is starting.
+        debugPrint('[AgentService] Native beep tone DETECTED (IVR confirmed)');
         if (_callPhase == CallPhase.settling) {
           _promoteToConnected();
         }
         break;
       case 'onBeepEnded':
+        if (!_beepDetected) break;
         debugPrint('[AgentService] Native beep tone ENDED');
-        if (_beepDetected && _callPhase == CallPhase.connected) {
-          // Beep just ended — recording is underway. Fire the voicemail
-          // prompt immediately, bypassing the greeting timer entirely.
+        if (_callPhase == CallPhase.connected) {
           _cancelConnectedGreeting();
           _triggerVoicemailPrompt();
         }

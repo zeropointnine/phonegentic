@@ -7,6 +7,7 @@ import 'package:sip_ua/sip_ua.dart';
 import 'agent_service.dart';
 import 'call_history_service.dart';
 import 'db/call_history_db.dart';
+import 'messaging/phone_numbers.dart';
 
 class TearSheetService extends ChangeNotifier {
   AgentService? agentService;
@@ -224,7 +225,7 @@ class TearSheetService extends ChangeNotifier {
       };
       final stream =
           await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      helper.call(number, voiceOnly: true, mediaStream: stream);
+      helper.call(ensureE164(number), voiceOnly: true, mediaStream: stream);
     } catch (e) {
       debugPrint('[TearSheetService] Call failed: $e');
       _markCurrentItem('flagged');

@@ -132,6 +132,11 @@ final class WebRTCAudioProcessor: NSObject {
     /// agent's whisper feed (via CoreAudio IOProc) stays active.
     var micMuted = false
 
+    /// When true, TTS injection and mic fallback injection are disabled in the
+    /// capture/render processors to prevent ring buffer depletion across
+    /// multiple peer connections (each would consume a portion, causing choppy audio).
+    var conferenceMode = false
+
     /// Fired (on main thread) when a sustained beep tone is first confirmed.
     var beepDetectedCallback: (() -> Void)?
     /// Fired (on main thread) when a confirmed beep tone ends.
@@ -312,11 +317,11 @@ final class CapturePostProcessor: NSObject, ExternalAudioProcessingDelegate {
         let rate = effectiveRate(frames: frames)
         let buf = audioBuffer.rawBuffer(forChannel: 0)
 
+        let inConference = owner.conferenceMode
+
         if owner.micMuted {
-            // Zero mic audio so the remote party hears silence from the user,
-            // but keep the pipeline alive for TTS mixing below.
             for i in 0..<frames { buf[i] = 0 }
-        } else {
+        } else if !inConference {
             var micRms: Float = 0
             for i in 0..<frames { micRms += buf[i] * buf[i] }
             micRms = sqrtf(micRms / Float(frames))
@@ -333,12 +338,15 @@ final class CapturePostProcessor: NSObject, ExternalAudioProcessingDelegate {
             postRms = sqrtf(postRms / Float(frames))
             let ttsAvail = owner.ttsCaptureRing.availableToRead
             let injAvail = owner.micInjectionRing.availableToRead
-            NSLog("[CapturePostProc] #%llu frames=%d rate=%d postRMS=%.1f ttsAvail=%d injRingAvail=%d micMuted=%@",
+            NSLog("[CapturePostProc] #%llu frames=%d rate=%d postRMS=%.1f ttsAvail=%d injRingAvail=%d micMuted=%@ conf=%@",
                   diagCounter, frames, rate, postRms, ttsAvail, injAvail,
-                  owner.micMuted ? "YES" : "NO")
+                  owner.micMuted ? "YES" : "NO",
+                  inConference ? "YES" : "NO")
         }
 
-        mixTTSInto(buf: buf, frames: frames, ring: owner.ttsCaptureRing, rate: rate)
+        if !inConference {
+            mixTTSInto(buf: buf, frames: frames, ring: owner.ttsCaptureRing, rate: rate)
+        }
     }
 
     func audioProcessingRelease() {
@@ -469,8 +477,9 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
     /// Consecutive 10ms frames where a pure tone was detected.
     private var toneFrameCount: Int = 0
 
-    /// Minimum consecutive tone frames to confirm a beep (25 × 10ms = 250ms).
-    private static let toneConfirmFrames = 25
+    /// Minimum consecutive tone frames to confirm a beep (40 × 10ms = 400ms).
+    /// Voicemail beeps are typically 0.5–2s; short DTMF tones won't reach this.
+    private static let toneConfirmFrames = 40
 
     /// True while a confirmed tone is ongoing — prevents duplicate callbacks.
     private var toneActive = false
@@ -511,6 +520,7 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
 
         let rate = effectiveRate(frames: frames)
         let buf = audioBuffer.rawBuffer(forChannel: 0)
+        let inConference = owner.conferenceMode
 
         diagCounter += 1
         if diagCounter <= 10 || diagCounter % 500 == 0 {
@@ -518,18 +528,22 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
             var rms: Float = 0
             for i in 0..<frames { rms += buf[i] * buf[i] }
             rms = sqrtf(rms / Float(frames))
-            NSLog("[RenderPreProc] #%llu frames=%d rate=%d remoteRMS=%.1f ttsAvail=%d",
-                  diagCounter, frames, rate, rms, ttsAvail)
+            NSLog("[RenderPreProc] #%llu frames=%d rate=%d remoteRMS=%.1f ttsAvail=%d conf=%@",
+                  diagCounter, frames, rate, rms, ttsAvail,
+                  inConference ? "YES" : "NO")
         }
 
-        // Only run tone detection when TTS isn't playing (avoids false positives
-        // from the agent's own audio looping back through the render path).
-        if owner.ttsRenderRing.availableToRead == 0 {
-            runToneDetection(buf: buf, frames: frames, rate: Float(rate))
+        if !inConference {
+            if owner.ttsRenderRing.availableToRead == 0 {
+                runToneDetection(buf: buf, frames: frames, rate: Float(rate))
+            }
         }
 
         writeToWhisper(src: buf, srcFrames: frames, srcRate: rate, owner: owner)
-        mixTTSInto(buf: buf, frames: frames, ring: owner.ttsRenderRing, rate: rate)
+
+        if !inConference {
+            mixTTSInto(buf: buf, frames: frames, ring: owner.ttsRenderRing, rate: rate)
+        }
     }
 
     // MARK: - Goertzel Tone Detection
@@ -564,8 +578,9 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
         var isTone = false
         for freq in goertzelFreqs {
             let mag = goertzelMagnitude(buf: buf, frames: frames, freq: freq, rate: rate)
-            // If >50% of frame energy concentrates at one frequency, it's a tone.
-            if mag > totalEnergy * 0.50 {
+            // If >60% of frame energy concentrates at one frequency, it's a tone.
+            // Higher threshold reduces false positives from speech harmonics.
+            if mag > totalEnergy * 0.60 {
                 isTone = true
                 break
             }

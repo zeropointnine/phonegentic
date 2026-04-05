@@ -58,6 +58,8 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     /// When true, audio flows through WebRTC pipeline processors
     /// instead of direct CoreAudio capture + AVAudioEngine playback.
     private var inCallMode = false
+    /// Reference count for concurrent calls sharing call mode.
+    private var callModeRefCount = 0
 
     // MARK: - Call Recording (WAV file written from flushBuffers)
     private var recordingFileHandle: FileHandle?
@@ -109,6 +111,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             result(nil)
         case "exitCallMode":
             exitCallMode()
+            result(nil)
+        case "setConferenceMode":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let active = args["active"] as? Bool ?? false
+            setAPMConferenceMode(active)
             result(nil)
         case "playAudioResponse":
             if let data = call.arguments as? FlutterStandardTypedData {
@@ -296,6 +303,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     // MARK: - Call Mode (WebRTC pipeline injection)
 
     private func enterCallMode() {
+        callModeRefCount += 1
+        NSLog("[AudioTap] enterCallMode refCount=%d", callModeRefCount)
+        if callModeRefCount > 1 {
+            setAPMConferenceMode(true)
+        }
         guard !inCallMode else { return }
         inCallMode = true
 
@@ -326,6 +338,12 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     }
 
     private func exitCallMode() {
+        callModeRefCount = max(0, callModeRefCount - 1)
+        NSLog("[AudioTap] exitCallMode refCount=%d", callModeRefCount)
+        if callModeRefCount <= 1 {
+            setAPMConferenceMode(false)
+        }
+        guard callModeRefCount == 0 else { return }
         guard inCallMode else { return }
         inCallMode = false
 
@@ -349,6 +367,35 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         dominantSpeaker = "unknown"
 
         NSLog("[AudioTap] Exited call mode — direct mic capture continues")
+    }
+
+    /// Toggle WebRTC APM features that degrade audio with multiple peer connections.
+    /// AEC and NS operate on a single-stream assumption; with two connections the
+    /// reference signal is wrong and NS over-suppresses, producing a "wind tunnel."
+    private func setAPMConferenceMode(_ conference: Bool) {
+        WebRTCAudioProcessor.shared.conferenceMode = conference
+
+        let apm = AudioManager.sharedInstance().audioProcessingModule
+        let cfg = RTCAudioProcessingConfig()
+        if conference {
+            cfg.isEchoCancellationEnabled = false
+            cfg.isNoiseSuppressionEnabled = false
+            cfg.isAutoGainControl1Enabled = false
+            cfg.isAutoGainControl2Enabled = false
+            cfg.isHighpassFilterEnabled = false
+        } else {
+            cfg.isEchoCancellationEnabled = true
+            cfg.isNoiseSuppressionEnabled = true
+            cfg.isAutoGainControl1Enabled = true
+            cfg.isAutoGainControl2Enabled = true
+            cfg.isHighpassFilterEnabled = true
+        }
+        apm.config = cfg
+        NSLog("[AudioTap] APM conference mode %@: AEC=%@ NS=%@ AGC=%@",
+              conference ? "ON" : "OFF",
+              conference ? "off" : "on",
+              conference ? "off" : "on",
+              conference ? "off" : "on")
     }
 
     // MARK: - Audio Playback

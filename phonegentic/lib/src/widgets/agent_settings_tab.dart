@@ -31,6 +31,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
 
+
   List<ElevenLabsVoice>? _voiceList;
   bool _voiceListLoading = false;
   String? _voiceListError;
@@ -265,8 +266,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
 
   void _updateMutePolicy(AgentMutePolicy p) {
     setState(() => _mutePolicy = p);
-    AgentConfigService.saveMutePolicy(p);
-    _dirty = true;
+    _agent?.setGlobalMutePolicy(p);
   }
 
   Widget _buildMutePolicyCard() {
