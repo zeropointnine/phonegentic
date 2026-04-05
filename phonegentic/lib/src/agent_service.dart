@@ -182,14 +182,15 @@ class AgentService extends ChangeNotifier {
   Timer? _settleTimer;
   Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
-  static const _settleWindowMs = 2500;
-  static const _settleExtendMs = 6000;
-  static const _preGreetDelayMs = 1500;
+  static const _settleWindowMs = 4000;
+  static const _settleExtendMs = 8000;
+  static const _maxSettleMs = 20000;
+  DateTime? _settleStartTime;
 
   // Deferred greeting: nudge the agent to begin if the line stays quiet
   // after transitioning to connected.
   Timer? _connectedGreetTimer;
-  static const _connectedGreetDelayMs = 500;
+  static const _connectedGreetDelayMs = 1500;
 
   bool get active => _active;
   bool get muted => _muted;
@@ -729,15 +730,13 @@ class AgentService extends ChangeNotifier {
 
     final text = event.text.trim();
 
-    // Filter stray IVR/voicemail fragments that arrive after settling
-    // (e.g. a voicemail greeting transcribed as one big chunk).
+    // Filter stray IVR/auto-attendant fragments that arrive after settling.
+    // Mark _ivrHeard so the native beep detector can trigger voicemail if a
+    // beep actually arrives, but don't cancel the connected greeting or
+    // assume voicemail — many IVRs are just long menus with no beep.
     if (IvrDetector.isIvr(text)) {
       _ivrHeard = true;
       debugPrint('[AgentService] IVR filtered post-settle: "$text"');
-      if (_callPhase == CallPhase.connected) {
-        _cancelConnectedGreeting();
-        _triggerVoicemailPrompt();
-      }
       return;
     }
 
@@ -848,10 +847,11 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    // Suppress TTS during pre-connect phases — but allow during settling
-    // so the pre-greeting can play immediately.
+    // Suppress TTS during pre-connect and settling phases so the agent
+    // doesn't talk over auto-attendants / IVR greetings.
     final suppressTts = (_callPhase.isPreConnect ||
-            _callPhase == CallPhase.answered) &&
+            _callPhase == CallPhase.answered ||
+            _callPhase == CallPhase.settling) &&
         _callPhase != CallPhase.idle;
 
     // Pipe text delta to ElevenLabs TTS, stripping bracketed stage directions
@@ -1783,33 +1783,46 @@ class AgentService extends ChangeNotifier {
     _settleTimer?.cancel();
     _preGreetTimer?.cancel();
     _ivrHitsInSettle = 0;
+    _settleStartTime = DateTime.now();
     _settleTimer = Timer(const Duration(milliseconds: _settleWindowMs), () {
       _tryPromoteFromSettle();
     });
-    _preGreetTimer = Timer(const Duration(milliseconds: _preGreetDelayMs), () {
-      _firePreGreeting();
-    });
   }
 
-  /// Extend settling when IVR audio keeps arriving.
+  /// Extend settling when IVR audio keeps arriving, up to the hard ceiling.
   void _extendSettleTimer() {
     _settleTimer?.cancel();
     _preGreetTimer?.cancel();
+    final elapsed = _settleStartTime != null
+        ? DateTime.now().difference(_settleStartTime!).inMilliseconds
+        : 0;
+    if (elapsed >= _maxSettleMs) {
+      debugPrint('[AgentService] Settle ceiling reached — force-promoting');
+      _promoteToConnected();
+      return;
+    }
     _settleTimer = Timer(const Duration(milliseconds: _settleExtendMs), () {
       _tryPromoteFromSettle();
     });
   }
 
   /// Only promote to connected if no one is currently speaking (VAD inactive).
-  /// If speech is ongoing (e.g. voicemail greeting still playing), reschedule.
+  /// If speech is ongoing (e.g. voicemail greeting still playing), reschedule
+  /// — but honour the hard ceiling so we never stay in settling forever.
   void _tryPromoteFromSettle() {
     if (_callPhase != CallPhase.settling) return;
-    if (_whisper.vadActive) {
+    final elapsed = _settleStartTime != null
+        ? DateTime.now().difference(_settleStartTime!).inMilliseconds
+        : 0;
+    if (_whisper.vadActive && elapsed < _maxSettleMs) {
       debugPrint('[AgentService] Settle timer fired but VAD active — deferring');
       _settleTimer = Timer(const Duration(milliseconds: 1000), () {
         _tryPromoteFromSettle();
       });
       return;
+    }
+    if (elapsed >= _maxSettleMs) {
+      debugPrint('[AgentService] Settle ceiling reached in VAD loop — force-promoting');
     }
     _promoteToConnected();
   }
@@ -1820,25 +1833,6 @@ class AgentService extends ChangeNotifier {
     _preGreetTimer?.cancel();
     _preGreetTimer = null;
     _ivrHitsInSettle = 0;
-  }
-
-  /// Fire the greeting prompt early (during settling) so Claude's response
-  /// is ready before the settle timer expires. Skipped if IVR was detected.
-  void _firePreGreeting() {
-    if (_callPhase != CallPhase.settling) return;
-    if (_ivrHitsInSettle > 0) return;
-    if (_hasConnectedBefore) return;
-    _hasConnectedBefore = true;
-    const prompt =
-        '[SYSTEM] The call is connected and the line is quiet. '
-        'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
-        'Otherwise, begin the conversation per your job function instructions.';
-    if (_splitPipeline && _textAgent != null) {
-      _textAgent!.sendUserMessage(prompt);
-    } else if (_active) {
-      _whisper.sendSystemDirective(prompt);
-    }
-    debugPrint('[AgentService] Pre-greeting fired during settling');
   }
 
   void _promoteToConnected() {
@@ -1860,24 +1854,48 @@ class AgentService extends ChangeNotifier {
   /// Schedule a deferred nudge so the agent begins the conversation if the
   /// line stays quiet after connected. Cancelled when a transcript arrives
   /// first (the transcript flow will prompt the agent naturally).
+  ///
+  /// The greeting is VAD-aware: if the remote party is still speaking when
+  /// the timer fires, it re-defers in 800 ms increments (up to 8 s) so the
+  /// agent waits for a natural pause before talking.
+  static const _maxGreetDeferMs = 8000;
+  DateTime? _greetDeferStart;
+
   void _scheduleConnectedGreeting() {
     _connectedGreetTimer?.cancel();
+    _greetDeferStart = null;
     _connectedGreetTimer = Timer(
       const Duration(milliseconds: _connectedGreetDelayMs),
-      () {
-        if (_callPhase != CallPhase.connected) return;
-        const prompt =
-            '[SYSTEM] The call is connected and the line is quiet. '
-            'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
-            'Otherwise, begin the conversation per your job function instructions.';
-        if (_splitPipeline && _textAgent != null) {
-          _textAgent!.sendUserMessage(prompt);
-        } else if (_active) {
-          _whisper.sendSystemDirective(prompt);
-        }
-        debugPrint('[AgentService] Connected greeting triggered (line quiet)');
-      },
+      () => _tryFireConnectedGreeting(),
     );
+  }
+
+  void _tryFireConnectedGreeting() {
+    if (_callPhase != CallPhase.connected) return;
+
+    _greetDeferStart ??= DateTime.now();
+    final elapsed =
+        DateTime.now().difference(_greetDeferStart!).inMilliseconds;
+
+    if (_whisper.vadActive && elapsed < _maxGreetDeferMs) {
+      debugPrint('[AgentService] Greeting deferred — VAD still active');
+      _connectedGreetTimer = Timer(const Duration(milliseconds: 800), () {
+        _tryFireConnectedGreeting();
+      });
+      return;
+    }
+
+    _greetDeferStart = null;
+    const prompt =
+        '[SYSTEM] The call is connected and the line is quiet. '
+        'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+        'Otherwise, begin the conversation per your job function instructions.';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(prompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(prompt);
+    }
+    debugPrint('[AgentService] Connected greeting triggered (line quiet)');
   }
 
   void _cancelConnectedGreeting() {
