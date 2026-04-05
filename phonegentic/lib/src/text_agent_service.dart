@@ -37,7 +37,7 @@ class TextAgentService {
   final _toolCallController = StreamController<ToolCallRequest>.broadcast();
   Stream<ToolCallRequest> get toolCalls => _toolCallController.stream;
 
-  static const _debounceMs = 2500;
+  static const _debounceMs = 1500;
   static const _maxHistory = 60;
 
   TextAgentService({

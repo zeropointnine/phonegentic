@@ -168,9 +168,17 @@ class AgentService extends ChangeNotifier {
   String _lastTranscriptText = '';
   DateTime _lastTranscriptTime = DateTime(2000);
 
-  // Cooldown after agent stops speaking to let TTS drain from whisper buffer
+  // Cooldown after agent stops speaking to let TTS drain from whisper buffer.
+  // 3000 ms accounts for the gap between ElevenLabs declaring generation
+  // complete and the WebRTC audio pipeline actually finishing playback.
   DateTime _speakingEndTime = DateTime(2000);
-  int _echoGuardMs = 2500;
+  int _echoGuardMs = 2000;
+
+  // Transcripts that arrive while the agent is speaking or in the echo guard
+  // window.  Instead of dropping them (which loses context), we buffer and
+  // process after the echo guard clears.
+  final List<TranscriptionEvent> _pendingTranscripts = [];
+  Timer? _postSpeakFlushTimer;
 
   // Recent agent response texts for text-based echo suppression.
   // If an incoming transcript fuzzy-matches a recent agent response, it is
@@ -182,6 +190,7 @@ class AgentService extends ChangeNotifier {
   Timer? _settleTimer;
   Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
+  final List<TranscriptionEvent> _settleTranscripts = [];
   static const _settleWindowMs = 4000;
   static const _settleExtendMs = 8000;
   static const _maxSettleMs = 20000;
@@ -385,7 +394,10 @@ class AgentService extends ChangeNotifier {
         _statusText = isSpeaking
             ? 'Speaking'
             : (_muted ? 'Not Listening...' : 'Listening');
-        if (!isSpeaking) _speakingEndTime = DateTime.now();
+        if (!isSpeaking) {
+          _speakingEndTime = DateTime.now();
+          _schedulePostSpeakFlush();
+        }
         notifyListeners();
       });
 
@@ -482,6 +494,7 @@ class AgentService extends ChangeNotifier {
       _speaking = speaking;
       if (!speaking) {
         _speakingEndTime = DateTime.now();
+        _schedulePostSpeakFlush();
       }
     });
 
@@ -544,11 +557,27 @@ class AgentService extends ChangeNotifier {
     final calendar = _buildCalendarContext();
     final prompt = _textAgentConfig?.systemPrompt ?? '';
     final buf = StringBuffer(base);
+    buf.write(_buildDateTimeContext());
     if (calendar.isNotEmpty) buf.write(calendar);
     if (prompt.isNotEmpty) {
       buf.write('\n\n## Additional Instructions\n$prompt');
     }
     return buf.toString();
+  }
+
+  static String _buildDateTimeContext() {
+    final now = DateTime.now();
+    final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    final months = ['January', 'February', 'March', 'April', 'May', 'June',
+                    'July', 'August', 'September', 'October', 'November', 'December'];
+    final day = weekdays[now.weekday - 1];
+    final month = months[now.month - 1];
+    final h = now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
+    final m = now.minute.toString().padLeft(2, '0');
+    final ap = now.hour >= 12 ? 'PM' : 'AM';
+    final tz = now.timeZoneName;
+    return '\n## Current Date & Time\n'
+        '$day, $month ${now.day}, ${now.year} at $h:$m $ap $tz\n';
   }
 
   /// Save the remote party's voiceprint embedding to SQLite for future
@@ -684,10 +713,45 @@ class AgentService extends ChangeNotifier {
           agentLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
       if (tWords.isNotEmpty && aWords.isNotEmpty) {
         final overlap = tWords.intersection(aWords).length;
-        if (overlap / tWords.length >= 0.6) return true;
+        if (overlap / tWords.length >= 0.4) return true;
       }
     }
     return false;
+  }
+
+  /// Schedule a flush of buffered transcripts after the echo guard window.
+  void _schedulePostSpeakFlush() {
+    _postSpeakFlushTimer?.cancel();
+    _postSpeakFlushTimer = Timer(
+      Duration(milliseconds: _echoGuardMs),
+      _flushPendingTranscripts,
+    );
+  }
+
+  /// Process transcripts that were buffered while the agent was speaking.
+  /// Echo-like entries are filtered; genuine remote speech is forwarded.
+  void _flushPendingTranscripts() {
+    if (_pendingTranscripts.isEmpty) return;
+    if (_speaking) return; // still speaking, wait
+    final msSince =
+        DateTime.now().difference(_speakingEndTime).inMilliseconds;
+    if (msSince < _echoGuardMs) {
+      _schedulePostSpeakFlush();
+      return;
+    }
+
+    final batch = List<TranscriptionEvent>.from(_pendingTranscripts);
+    _pendingTranscripts.clear();
+
+    for (final event in batch) {
+      final text = event.text.trim();
+      if (text.isEmpty) continue;
+      if (_isEchoOfAgentResponse(text)) {
+        debugPrint('[AgentService] Buffered echo discarded: "$text"');
+        continue;
+      }
+      _processTranscript(event);
+    }
   }
 
   void _onTranscript(TranscriptionEvent event) async {
@@ -702,8 +766,10 @@ class AgentService extends ChangeNotifier {
 
     // During settling, check for IVR patterns. If detected, extend the
     // settle window. If clean human speech arrives instead, promote to
-    // connected immediately so the agent can respond without waiting for
-    // the full settle timer.
+    // connected — but DON'T forward the transcript to the LLM yet.
+    // Buffer it so the VAD-aware connected greeting can forward it once
+    // the remote party stops speaking, preventing the agent from talking
+    // over them.
     if (_callPhase.isSettling) {
       final text = event.text.trim();
       if (IvrDetector.isIvr(text)) {
@@ -712,28 +778,44 @@ class AgentService extends ChangeNotifier {
         _extendSettleTimer();
         debugPrint(
             '[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
-      } else if (text.length >= 3 && _ivrHitsInSettle == 0) {
+        return;
+      }
+      _settleTranscripts.add(event);
+      if (text.length >= 3 && _ivrHitsInSettle == 0) {
         debugPrint(
-            '[AgentService] Human speech during settle: "$text" — promoting now');
+            '[AgentService] Human speech during settle: "$text" — promoting (transcript buffered)');
         _promoteToConnected();
       }
       return;
     }
 
-    // Suppress agent echo: when the agent is speaking (or just finished),
-    // its TTS audio loops back through the whisper buffer and gets
-    // transcribed as input. Wait for the echo to drain.
-    if (_speaking) return;
+    // While the agent is speaking (or within the echo guard cooldown after
+    // it stops), buffer transcripts instead of dropping them.  They will be
+    // processed once the echo guard clears via _flushPendingTranscripts().
+    // We intentionally do NOT interrupt TTS here — echo detection is not
+    // reliable enough mid-speech to distinguish the agent's own audio being
+    // transcribed back from genuine remote party speech.
+    if (_speaking) {
+      _pendingTranscripts.add(event);
+      return;
+    }
     final msSinceSpoke =
         DateTime.now().difference(_speakingEndTime).inMilliseconds;
-    if (msSinceSpoke < _echoGuardMs) return;
+    if (msSinceSpoke < _echoGuardMs) {
+      _pendingTranscripts.add(event);
+      return;
+    }
 
+    _processTranscript(event);
+  }
+
+  /// Core transcript processing shared by the live path and the post-speak
+  /// buffer flush.
+  void _processTranscript(TranscriptionEvent event) async {
     final text = event.text.trim();
+    if (text.isEmpty) return;
 
     // Filter stray IVR/auto-attendant fragments that arrive after settling.
-    // Mark _ivrHeard so the native beep detector can trigger voicemail if a
-    // beep actually arrives, but don't cancel the connected greeting or
-    // assume voicemail — many IVRs are just long menus with no beep.
     if (IvrDetector.isIvr(text)) {
       _ivrHeard = true;
       debugPrint('[AgentService] IVR filtered post-settle: "$text"');
@@ -743,6 +825,10 @@ class AgentService extends ChangeNotifier {
     // Real human speech — cancel any pending connected greeting so the
     // agent doesn't talk over whoever is already speaking.
     _cancelConnectedGreeting();
+
+    // If there are buffered settle-phase transcripts, forward them first
+    // so the LLM has the full context of what was said before connected.
+    _drainSettleTranscripts();
 
     // Text-based echo suppression: if the transcript is a substantial
     // substring of a recent agent response, it's the agent hearing itself.
@@ -780,11 +866,17 @@ class AgentService extends ChangeNotifier {
 
     final lowConfidence = confidence > 0.0 && confidence < 0.5;
 
-    // If voiceprint identified a name and the speaker doesn't have one yet,
-    // update the speaker label and push refreshed instructions.
+    // If voiceprint identified a name with reasonable confidence and the
+    // speaker doesn't have one yet, update the label.  A threshold of 0.65
+    // avoids false positives from ambient audio or dissimilar voices.
     if (voiceprintName.isNotEmpty && speaker.name.isEmpty) {
-      speaker.name = voiceprintName;
-      _pushInstructionsIfLive();
+      if (confidence >= 0.65) {
+        speaker.name = voiceprintName;
+        _pushInstructionsIfLive();
+        debugPrint('[AgentService] Voiceprint accepted: "$voiceprintName" (confidence=$confidence)');
+      } else {
+        debugPrint('[AgentService] Voiceprint rejected: "$voiceprintName" (confidence=$confidence < 0.65)');
+      }
     }
 
     _messages.add(ChatMessage.transcript(
@@ -1685,6 +1777,9 @@ class AgentService extends ChangeNotifier {
       _cancelSettleTimer();
       _cancelConnectedGreeting();
       _recentAgentTexts.clear();
+      _pendingTranscripts.clear();
+      _settleTranscripts.clear();
+      _postSpeakFlushTimer?.cancel();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
       _tts?.endGeneration();
@@ -1886,6 +1981,16 @@ class AgentService extends ChangeNotifier {
     }
 
     _greetDeferStart = null;
+
+    // If we captured transcripts during the settling phase, forward them
+    // now so the LLM can respond to what the remote party actually said
+    // instead of getting a generic "begin conversation" nudge.
+    if (_settleTranscripts.isNotEmpty) {
+      debugPrint('[AgentService] Connected greeting — forwarding ${_settleTranscripts.length} settle transcript(s)');
+      _drainSettleTranscripts();
+      return;
+    }
+
     const prompt =
         '[SYSTEM] The call is connected and the line is quiet. '
         'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
@@ -1901,6 +2006,18 @@ class AgentService extends ChangeNotifier {
   void _cancelConnectedGreeting() {
     _connectedGreetTimer?.cancel();
     _connectedGreetTimer = null;
+  }
+
+  /// Forward any transcripts captured during the settling phase to the LLM
+  /// via the normal transcript processing path, then clear the buffer.
+  void _drainSettleTranscripts() {
+    if (_settleTranscripts.isEmpty) return;
+    final batch = List<TranscriptionEvent>.from(_settleTranscripts);
+    _settleTranscripts.clear();
+    for (final event in batch) {
+      _processTranscript(event);
+    }
+    debugPrint('[AgentService] Drained ${batch.length} settle transcript(s)');
   }
 
   /// Immediately prompt the agent to leave a voicemail — no timer delay.
@@ -2022,6 +2139,7 @@ class AgentService extends ChangeNotifier {
   void dispose() {
     _cancelSettleTimer();
     _cancelConnectedGreeting();
+    _postSpeakFlushTimer?.cancel();
     _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
