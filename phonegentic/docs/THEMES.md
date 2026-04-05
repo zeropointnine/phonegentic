@@ -13,7 +13,7 @@ a new theme you need to supply values for every role and wire up a
 
 Warm CRT phosphor golds on a near-black background. The original theme.
 
-![Amber VT-100 swatch card](themes/amber-vt100.svg)
+<p><img src="themes/amber-vt100.svg" alt="Amber VT-100 swatch card" width="720"></p>
 
 ### Miami Vice &nbsp;`AppTheme.miamiVice`
 
@@ -21,13 +21,13 @@ Electric cyan + hot pink on midnight navy. Purple bridges the two accent
 hues via split-complementary color theory. Inspired by an 80s LEGO
 supercar's teal/magenta livery.
 
-![Miami Vice swatch card](themes/miami-vice.svg)
+<p><img src="themes/miami-vice.svg" alt="Miami Vice swatch card" width="720"></p>
 
 ### Pedestrian Neutral &nbsp;`AppTheme.light`
 
 Light parchment background with dark text and warm amber accents.
 
-![Pedestrian Neutral swatch card](themes/pedestrian-neutral.svg)
+<p><img src="themes/pedestrian-neutral.svg" alt="Pedestrian Neutral swatch card" width="720"></p>
 
 ---
 

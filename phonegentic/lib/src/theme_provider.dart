@@ -225,20 +225,20 @@ class ThemeProvider extends ChangeNotifier {
   // ─────────────────────────────────────────────
 
   ThemeData _buildMiamiViceTheme() {
-    const bg = Color(0xFF0B0D1A);
-    const surface = Color(0xFF111528);
-    const card = Color(0xFF181D35);
-    const borderColor = Color(0xFF272D4A);
+    const bg = Color(0xFF080A14);
+    const surface = Color(0xFF101626);
+    const card = Color(0xFF1C2240);
+    const borderColor = Color(0xFF303860);
     const textPrimary = Color(0xFF00E5FF);
-    const textHint = Color(0xFF3A5968);
-    const iconColor = Color(0xFF7C4DFF);
+    const textHint = Color(0xFF507888);
+    const iconColor = Color(0xFF8B5CF6);
 
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: bg,
       colorScheme: ColorScheme.dark(
         primary: const Color(0xFF00E5FF),
-        secondary: const Color(0xFFFF1493),
+        secondary: const Color(0xFFFF3CA0),
         surface: surface,
         error: const Color(0xFFFF4081),
         onPrimary: const Color(0xFF001A22),
@@ -289,7 +289,7 @@ class ThemeProvider extends ChangeNotifier {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF00E5FF),
-          foregroundColor: const Color(0xFF06080F),
+          foregroundColor: const Color(0xFF050710),
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           shape:
