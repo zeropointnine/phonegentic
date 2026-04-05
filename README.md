@@ -151,6 +151,91 @@ flowchart TB
 7. An IVR/auto-attendant detector suppresses transcripts during the settling window after a call connects, preventing robotic prompts from polluting the conversation.
 8. Speaker identification via on-device voiceprint embeddings labels transcripts with known contact names.
 
+### Echo cancellation, VAD & turn-taking
+
+The agent speaks into the same call it listens to. Without careful suppression it would transcribe its own TTS output, respond to itself, and loop forever. This section documents the three-layer defence and the tradeoffs behind each tuning knob.
+
+#### Layer 1 — Time-based echo guard
+
+While ElevenLabs reports `speaking = true`, and for **`_echoGuardMs` (2 000 ms)** after it reports `speaking = false`, all incoming Whisper transcripts are diverted into a `_pendingTranscripts` buffer instead of reaching the LLM.
+
+Once the guard window expires, `_flushPendingTranscripts()` runs each buffered transcript through the text-based echo check (layer 2) and forwards survivors to the LLM.
+
+| Knob | File | Default | Effect of increasing |
+|------|------|---------|----------------------|
+| `_echoGuardMs` | `agent_service.dart` | `2000` | Catches more echo, but the agent stays "deaf" longer after speaking — sluggish turn-taking |
+
+> **Why not just mute Whisper while speaking?** We tried. The problem is Whisper has ~1-2 s pipeline lag, so transcripts of the agent's own audio keep arriving *after* TTS stops. A pure mute-while-speaking approach either drops the first words the human says (if the guard is too long) or lets echo through (if too short). The buffer-and-flush approach keeps everything and filters selectively.
+
+#### Layer 2 — Text-based echo detection
+
+`_isEchoOfAgentResponse()` compares incoming transcripts against the last 5 agent responses (`_recentAgentTexts`):
+
+1. **Exact substring** — if the transcript text is contained verbatim within a recent agent response, it's almost certainly the mic picking up TTS.
+2. **Word overlap ≥ 40%** — for transcripts with **3+ significant words**, if 40%+ of the words appear in a recent agent response, it's flagged as echo.
+
+The word-overlap check requires 3+ words to avoid false positives on short commands (e.g., "Call Lee" sharing the common word "call" with an agent response "would you like me to call Kali").
+
+This check is **time-gated**: it only runs within `_echoGuardMs × 2` of the last speech end. Beyond that window it's disabled entirely, so user commands spoken well after the agent finishes are never suppressed.
+
+| Knob | Default | Effect of increasing |
+|------|---------|----------------------|
+| Word-overlap threshold | `0.40` | Catches more echo, but risks suppressing genuine speech that reuses common words |
+| Minimum word count | `3` | Raising it exempts more short commands from overlap checking |
+| `_maxRecentAgentTexts` | `5` | More history = more chances for false matches |
+| Time gate | `_echoGuardMs × 2` | Wider window = safer against late echo, but legitimate speech can be blocked longer |
+
+#### Layer 3 — Native audio processing
+
+The `AudioTap` native layer provides hardware-level mitigation:
+
+- **WebRTC APM** — Acoustic Echo Cancellation (AEC), Noise Suppression (NS), and Automatic Gain Control (AGC) run in the WebRTC audio processing module.
+- **Mic mute during TTS** — While TTS audio is being injected into the capture path, the mic is muted so the agent's own voice doesn't feed back into the Whisper stream.
+- **Dominant speaker detection** — The `RenderPreProc` / `CapturePostProc` native processors track `remoteRMS` vs `micRMS` to determine who is dominant, which helps with speaker attribution.
+
+This layer reduces echo at the audio level before Whisper ever sees it, but is not sufficient on its own — residual audio bleed and transcription lag necessitate layers 1 and 2.
+
+#### Voice Activity Detection (VAD)
+
+OpenAI Realtime provides server-side VAD via `server_vad` turn detection. The `vadActive` flag reflects whether speech is currently detected in the audio stream.
+
+VAD is used for:
+- **Greeting deferral** — `_tryFireConnectedGreeting()` waits for VAD to go inactive before the agent speaks, preventing it from talking over someone.
+- **Settle timer deferral** — if VAD is active when the settle timer fires, the timer re-arms instead of forcing promotion.
+
+```
+VAD parameters (WhisperRealtimeService session config):
+  threshold:            0.5    — sensitivity (0=very sensitive, 1=least)
+  prefix_padding_ms:    300    — audio kept before detected speech onset
+  silence_duration_ms:  1800   — silence before speech is "ended"
+```
+
+| Knob | Effect of increasing |
+|------|----------------------|
+| `threshold` | Less sensitive — ignores quiet speech and background noise, but may miss soft-spoken callers |
+| `silence_duration_ms` | Agent waits longer before responding — more natural for speakers who pause, but feels sluggish for quick back-and-forth |
+| `prefix_padding_ms` | More lead-in audio is captured — better transcription of first words, but increases buffered audio size |
+
+#### TTS text pipeline (split pipeline mode)
+
+In split pipeline mode, Claude generates text and ElevenLabs synthesizes speech:
+
+```
+Claude streaming deltas
+  → _appendStreamingResponse()
+    → _stripBracketsForTts()     strips [stage directions]
+    → ElevenLabsTtsService.sendText()
+      → _textBuffer              accumulates until 50 chars or sentence boundary
+      → WebSocket JSON            { text: "buffered chunk" }
+      → ElevenLabs server         respects chunk_length_schedule [80,120,200,260]
+      → PCM16 audio chunks        streamed back via WebSocket
+      → playResponseAudio()       injected into call audio
+```
+
+**Key tradeoff — text buffering (`_minFlushChars = 50`):** Claude often sends a single word as the first streaming delta (e.g., "Would"). If forwarded immediately, ElevenLabs generates a tiny audio clip for just that word, then pauses while it processes the rest — perceived as **stuttering**. Buffering 50 characters (or until a sentence boundary) ensures ElevenLabs gets enough context for smooth prosody. The cost is ~0.3 s additional latency on the first audio chunk.
+
+**Key tradeoff — BOS timing:** The ElevenLabs BOS (Beginning of Stream) message is sent at `startGeneration()` time, NOT during `warmUp()`. If BOS were sent during warmup (seconds before text arrives), ElevenLabs would start an idle generation session. When the first text fragment arrives after a long gap, ElevenLabs may auto-flush it as a separate tiny audio clip, causing audible stuttering. Deferring BOS to generation time keeps everything in sync.
+
 ### Call lifecycle
 
 ```mermaid

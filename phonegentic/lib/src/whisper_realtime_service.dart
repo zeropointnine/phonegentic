@@ -317,6 +317,17 @@ class WhisperRealtimeService {
       },
       {
         'type': 'function',
+        'name': 'check_locale',
+        'description':
+            'Get the host\'s phone-number locale: country code, expected '
+                'digit length, format example, and sanitization rules.',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
+        },
+      },
+      {
+        'type': 'function',
         'name': 'end_call',
         'description': 'Hang up the current active call.',
         'parameters': {

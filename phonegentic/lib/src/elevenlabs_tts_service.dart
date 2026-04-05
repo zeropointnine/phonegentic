@@ -8,6 +8,81 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'agent_config_service.dart';
 
+// =============================================================================
+// ElevenLabs TTS Service — Architecture & Lifecycle
+// =============================================================================
+//
+// This service manages a WebSocket connection to the ElevenLabs streaming
+// text-to-speech API. Text arrives incrementally from the LLM (Claude) via
+// AgentService._appendStreamingResponse, and audio chunks are emitted back
+// to be injected into the call's audio pipeline.
+//
+// ## Connection lifecycle
+//
+//   warmUp()        — Pre-establishes the WebSocket + TLS handshake so the
+//                     first generation doesn't pay the ~200-500ms connection
+//                     cost.  Does NOT send a BOS (Beginning of Stream)
+//                     message.  The connection idles until startGeneration().
+//
+//   startGeneration() — Begins a new TTS generation.  Resets _bosSent so
+//                       _connectAndFlush() will send a fresh BOS with voice
+//                       settings and chunk_length_schedule.  If the WS was
+//                       closed after a previous EOS (ElevenLabs closes on
+//                       EOS), _connectAndFlush() will reconnect first.
+//
+//   sendText(text)  — Buffers text in _textBuffer.  Flushes to the WS when
+//                     the buffer reaches _minFlushChars (50) characters OR
+//                     a sentence-ending punctuation mark is detected.
+//                     This prevents tiny fragments (e.g. a single word like
+//                     "Would") from being sent alone, which causes ElevenLabs
+//                     to generate a tiny audio clip followed by a long pause
+//                     before the rest arrives — perceived as "stuttering."
+//
+//   endGeneration() — Flushes any remaining _textBuffer, sends a flush + EOS
+//                     to ElevenLabs, and marks generation complete.
+//
+// ## ElevenLabs WebSocket protocol
+//
+//   BOS  →  { text: " ", voice_settings: {...}, generation_config: {...} }
+//   Text →  { text: "chunk of text" }   (one or more)
+//   EOS  →  { text: "", flush: true }   then  { text: "" }
+//
+//   After EOS, ElevenLabs sends remaining audio chunks, then { isFinal: true }
+//   and closes the WebSocket (code 1000).  A new generation requires a new
+//   connection + BOS.
+//
+// ## chunk_length_schedule: [80, 120, 200, 260]
+//
+//   Controls how many characters ElevenLabs buffers before generating each
+//   successive audio chunk.  The first chunk waits for 80 chars, the second
+//   for 120 more, etc.  Lower values reduce time-to-first-audio but produce
+//   choppier prosody; higher values sound smoother but add latency.
+//
+// ## Key tradeoff: BOS timing
+//
+//   The BOS must be sent CLOSE to when the first text arrives.  If BOS is
+//   sent during warmUp() (seconds before text), ElevenLabs starts a
+//   generation session that sits idle.  When the first small text fragment
+//   arrives after a long gap, ElevenLabs may auto-flush it as a separate
+//   audio clip, causing audible stuttering.  That's why BOS is deferred to
+//   startGeneration() time — it's sent on the already-warm connection right
+//   before the first text, keeping the chunk_length_schedule in sync with
+//   actual text delivery.
+//
+// ## Buffering layers (text → audio)
+//
+//   1. _pendingText   — Pre-connection buffer.  Text arriving before the WS
+//                       is ready is queued here and flushed once connected.
+//   2. _textBuffer    — Post-connection buffer.  Accumulates small Claude
+//                       streaming deltas until _minFlushChars or a sentence
+//                       boundary, then sends as one WS message.
+//   3. ElevenLabs     — Server-side buffer controlled by chunk_length_schedule.
+//                       Accumulates characters before synthesizing audio.
+//   4. AudioTap ring  — Native-side ring buffer that feeds PCM into the
+//                       WebRTC capture pipeline at the hardware sample rate.
+//
+// =============================================================================
+
 /// Streams text to ElevenLabs WebSocket TTS and emits PCM16 24 kHz audio
 /// chunks that can be fed directly into [WhisperRealtimeService.playResponseAudio].
 class ElevenLabsTtsService {
@@ -19,9 +94,12 @@ class ElevenLabsTtsService {
   bool _connected = false;
   bool _generating = false;
   bool _endAfterFlush = false;
+  bool _bosSent = false;
   int _audioChunkCount = 0;
 
   final List<String> _pendingText = [];
+  final StringBuffer _textBuffer = StringBuffer();
+  static const _minFlushChars = 50;
   Completer<void>? _connectCompleter;
 
   final _audioController = StreamController<Uint8List>.broadcast();
@@ -109,18 +187,7 @@ class ElevenLabsTtsService {
       );
 
       _connected = true;
-
-      _ws!.sink.add(jsonEncode({
-        'text': ' ',
-        'voice_settings': {
-          'stability': 0.5,
-          'similarity_boost': 0.8,
-          'use_speaker_boost': false,
-        },
-        'generation_config': {
-          'chunk_length_schedule': [80, 120, 200, 260],
-        },
-      }));
+      _bosSent = false;
 
       debugPrint('[ElevenLabsTTS] Connected, voice=$voiceId model=$modelId');
       _connectCompleter!.complete();
@@ -167,6 +234,26 @@ class ElevenLabsTtsService {
     }
   }
 
+  /// Send the BOS (Beginning of Stream) message that initialises an
+  /// ElevenLabs generation session.  Must be called once per generation,
+  /// right before the first text is sent.
+  void _sendBos() {
+    if (_bosSent || !_connected) return;
+    _ws!.sink.add(jsonEncode({
+      'text': ' ',
+      'voice_settings': {
+        'stability': 0.5,
+        'similarity_boost': 0.8,
+        'use_speaker_boost': false,
+      },
+      'generation_config': {
+        'chunk_length_schedule': [80, 120, 200, 260],
+      },
+    }));
+    _bosSent = true;
+    debugPrint('[ElevenLabsTTS] BOS sent');
+  }
+
   /// Begin a new TTS generation. Text sent via [sendText] before the
   /// connection is ready will be buffered and flushed once connected.
   void startGeneration() {
@@ -176,6 +263,8 @@ class ElevenLabsTtsService {
     _generating = true;
     _endAfterFlush = false;
     _pendingText.clear();
+    _textBuffer.clear();
+    _bosSent = false;
     _speakingController.add(true);
     _connectAndFlush();
   }
@@ -185,6 +274,8 @@ class ElevenLabsTtsService {
       if (!_connected) {
         await _connect();
       }
+
+      _sendBos();
 
       if (_pendingText.isNotEmpty) {
         debugPrint('[ElevenLabsTTS] Flushing ${_pendingText.length} '
@@ -213,7 +304,10 @@ class ElevenLabsTtsService {
     }
   }
 
-  /// Stream a text chunk. Buffers if the WebSocket isn't ready yet.
+  /// Stream a text chunk.  Small fragments are accumulated in [_textBuffer]
+  /// and flushed once [_minFlushChars] is reached or a sentence boundary
+  /// is detected, preventing ElevenLabs from generating tiny audio clips
+  /// for partial words.
   void sendText(String text) {
     if (!_generating || text.isEmpty) {
       if (!_generating && text.isNotEmpty) {
@@ -228,18 +322,39 @@ class ElevenLabsTtsService {
           '"${text.length > 40 ? text.substring(0, 40) : text}"');
       return;
     }
+
+    _textBuffer.write(text);
+    if (_textBuffer.length >= _minFlushChars || _hasSentenceEnd(text)) {
+      _flushTextBuffer();
+    }
+  }
+
+  static bool _hasSentenceEnd(String text) {
+    for (int i = text.length - 1; i >= 0; i--) {
+      final ch = text[i];
+      if (ch == '.' || ch == '?' || ch == '!' || ch == ';') return true;
+      if (ch != ' ' && ch != '\n') break;
+    }
+    return false;
+  }
+
+  void _flushTextBuffer() {
+    if (_textBuffer.isEmpty) return;
+    final text = _textBuffer.toString();
+    _textBuffer.clear();
     _ws?.sink.add(jsonEncode({'text': text}));
-    debugPrint('[ElevenLabsTTS] sendText SENT: '
-        '"${text.length > 40 ? text.substring(0, 40) : text}"');
+    debugPrint('[ElevenLabsTTS] sendText SENT (${text.length} chars): '
+        '"${text.length > 60 ? text.substring(0, 60) : text}"');
   }
 
   /// Flush remaining text and close the current generation.
   void endGeneration() {
     debugPrint('[ElevenLabsTTS] endGeneration called '
         '(generating=$_generating pending=${_pendingText.length} '
-        'connected=$_connected endAfterFlush=$_endAfterFlush)');
+        'buf=${_textBuffer.length} connected=$_connected '
+        'endAfterFlush=$_endAfterFlush)');
 
-    if (!_generating && _pendingText.isEmpty) return;
+    if (!_generating && _pendingText.isEmpty && _textBuffer.isEmpty) return;
 
     if (!_connected) {
       _endAfterFlush = true;
@@ -248,6 +363,7 @@ class ElevenLabsTtsService {
       return;
     }
 
+    _flushTextBuffer();
     _generating = false;
     _pendingText.clear();
     try {
@@ -267,7 +383,9 @@ class ElevenLabsTtsService {
     _connected = false;
     _generating = false;
     _endAfterFlush = false;
+    _bosSent = false;
     _pendingText.clear();
+    _textBuffer.clear();
   }
 
   Future<void> dispose() async {

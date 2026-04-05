@@ -117,13 +117,15 @@ class TextAgentService {
     _respond();
   }
 
+  static const _maxRetries = 2;
+
   Future<void> _respond() async {
     if (_responding) return;
     _responding = true;
 
     try {
       if (_config.provider == TextAgentProvider.claude) {
-        await _callClaude();
+        await _callClaudeWithRetry();
       }
     } catch (e) {
       debugPrint('[TextAgentService] Error: $e');
@@ -134,6 +136,24 @@ class TextAgentService {
     } finally {
       _responding = false;
       if (_pendingContext.isNotEmpty) _scheduleFlush();
+    }
+  }
+
+  Future<void> _callClaudeWithRetry() async {
+    for (var attempt = 0; attempt <= _maxRetries; attempt++) {
+      try {
+        await _callClaude();
+        return;
+      } catch (e) {
+        final isTransient = e is HttpException ||
+            e.toString().contains('Connection closed') ||
+            e.toString().contains('Connection reset') ||
+            e.toString().contains('SocketException');
+        if (!isTransient || attempt >= _maxRetries) rethrow;
+        final delayMs = 500 * (attempt + 1);
+        debugPrint('[TextAgentService] Transient error (attempt ${attempt + 1}/$_maxRetries), retrying in ${delayMs}ms: $e');
+        await Future.delayed(Duration(milliseconds: delayMs));
+      }
     }
   }
 
@@ -151,6 +171,17 @@ class TextAgentService {
           },
         },
         'required': ['number'],
+      },
+    },
+    {
+      'name': 'check_locale',
+      'description':
+          'Get the host\'s phone-number locale: country code, expected digit '
+          'length, format example, and sanitization rules. Call this when you '
+          'need to validate or interpret a spoken phone number.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {},
       },
     },
     {

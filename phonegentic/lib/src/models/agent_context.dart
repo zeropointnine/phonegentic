@@ -183,6 +183,7 @@ class AgentBootContext {
   final List<String> guardrails;
   final bool textOnly;
   final String? elevenLabsVoiceId;
+  final String defaultCountryCode;
 
   const AgentBootContext({
     this.name,
@@ -192,6 +193,7 @@ class AgentBootContext {
     this.guardrails = const [],
     this.textOnly = false,
     this.elevenLabsVoiceId,
+    this.defaultCountryCode = '1',
   });
 
   factory AgentBootContext.trivia() {
@@ -253,6 +255,23 @@ class AgentBootContext {
     buf.writeln('    When in doubt, stay silent. Only respond when you are confident the host or call party is speaking TO you.');
     buf.writeln();
 
+    buf.writeln('## Command Recognition');
+    buf.writeln('"Call [name]" is the #1 most frequent command the host gives you. Speech-to-text often garbles it. Treat ANY of these as "Call <name>":');
+    buf.writeln('  - "Cal ...", "Calli", "Callie", "Calar", "Calarca", "Col ...", "Kali", "Call a ...", "Caller ...", "Caul ...", "Caw ..."');
+    buf.writeln('When idle, a short utterance starting with any of these phonetic variants followed by a name-like word is almost certainly a call command — NOT conversation.');
+    buf.writeln('Workflow: extract the name portion, run search_contacts to find a match, then make_call with the matched number. If no contact matches, ask the host for clarification or a number.');
+    buf.writeln();
+
+    buf.writeln('## Phone Numbers');
+    buf.writeln('All outbound calls use E.164 format (+<country_code><national_number>). The host\'s default country code is +$defaultCountryCode.');
+    buf.writeln('- When the host says a name, ALWAYS search_contacts first — most calls are to known contacts.');
+    buf.writeln('- National numbers (no country code prefix) belong to the host\'s locale. A ${_nationalLen(defaultCountryCode)}-digit number means +$defaultCountryCode plus those digits.');
+    buf.writeln('- Spoken digits: "five one oh" = 510, "eight hundred" = 800, "triple five" = 555, "double oh" = 00, "oh" = 0.');
+    buf.writeln('- Strip filler: "area code", "the number is", "at" are not digits.');
+    buf.writeln('- If the digit count doesn\'t match the expected national length (${_nationalLen(defaultCountryCode)} for +$defaultCountryCode), ask the host to repeat or confirm before dialing.');
+    buf.writeln('- Use check_locale if you need details on the current phone number format or sanitization rules.');
+    buf.writeln();
+
     buf.writeln('## Call State Awareness');
     buf.writeln('You will receive [CALL_STATE: ...] system messages as the call progresses.');
     buf.writeln('- NEVER read these aloud, repeat them, or verbally acknowledge them.');
@@ -305,6 +324,14 @@ class AgentBootContext {
     }
 
     return buf.toString().trimRight();
+  }
+
+  static String _nationalLen(String cc) {
+    const lengths = {
+      '1': '10', '44': '10', '33': '9', '49': '11', '61': '9', '81': '10',
+      '86': '11', '91': '10', '52': '10', '55': '11',
+    };
+    return lengths[cc] ?? '10';
   }
 
   static const _defaultRole =

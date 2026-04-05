@@ -168,21 +168,104 @@ class AgentService extends ChangeNotifier {
   String _lastTranscriptText = '';
   DateTime _lastTranscriptTime = DateTime(2000);
 
-  // Cooldown after agent stops speaking to let TTS drain from whisper buffer.
-  // 3000 ms accounts for the gap between ElevenLabs declaring generation
-  // complete and the WebRTC audio pipeline actually finishing playback.
+  // ---------------------------------------------------------------------------
+  // Echo suppression & turn-taking — READ THIS BEFORE CHANGING TIMING VALUES
+  // ---------------------------------------------------------------------------
+  //
+  // The agent plays TTS audio into the call.  The mic picks up that audio and
+  // sends it to OpenAI Whisper, which transcribes it as if someone spoke.
+  // Without suppression the agent would "hear itself" and respond in a loop.
+  //
+  // We use a THREE-LAYER defence, each tuned through painful iteration:
+  //
+  //  Layer 1 — Time-based buffering (_echoGuardMs)
+  //    While _speaking is true (ElevenLabs reports generation active) and
+  //    for _echoGuardMs milliseconds AFTER it stops, all incoming transcripts
+  //    go into _pendingTranscripts instead of the LLM.  This catches the
+  //    vast majority of echo because the mic-to-Whisper-to-transcript
+  //    pipeline has ~1-2s latency after TTS finishes.
+  //
+  //    Tradeoff: too short → echoes leak through and the agent answers
+  //    itself.  Too long → the agent is deaf to the human for too long
+  //    after speaking, making the conversation feel sluggish.  2000ms is
+  //    the current sweet spot.
+  //
+  //  Layer 2 — Text-based echo detection (_isEchoOfAgentResponse)
+  //    Buffered transcripts (from layer 1) are checked against
+  //    _recentAgentTexts before being forwarded to the LLM.  Two checks:
+  //      a) Exact substring: "call lee" in "would you like me to call lee"
+  //      b) Word overlap ≥40% (only for transcripts with 3+ words to avoid
+  //         false positives on short commands like "Call Lee")
+  //
+  //    This also runs on LIVE transcripts, but only within _echoGuardMs*2
+  //    of the last speech.  Beyond that window it's disabled so legitimate
+  //    user commands sharing common words aren't suppressed.
+  //
+  //    Tradeoff: too aggressive → real speech blocked (the "Call Lee" bug).
+  //    Too lax → echoes sneak through.  The 3-word minimum and time gate
+  //    are the current balance.
+  //
+  //  Layer 3 — Native audio processing (outside this file)
+  //    The AudioTap native layer does basic AEC (acoustic echo cancellation)
+  //    via the WebRTC audio processing module, and mutes mic injection into
+  //    the capture path while TTS audio is playing.  This reduces echo at
+  //    the audio level before Whisper ever sees it.
+  //
+  // ## Transcript flow through the pipeline
+  //
+  //   Whisper transcription
+  //     → _onTranscript()
+  //       ├─ settling?  → buffer in _settleTranscripts, detect IVR
+  //       ├─ speaking?  → buffer in _pendingTranscripts
+  //       ├─ echo guard window?  → buffer in _pendingTranscripts
+  //       └─ otherwise  → _processTranscript()
+  //                         ├─ IVR filter
+  //                         ├─ time-gated text echo check
+  //                         ├─ deduplication
+  //                         ├─ speaker identification
+  //                         └─ → TextAgentService (Claude)
+  //
+  //   When speaking stops → _schedulePostSpeakFlush()
+  //     → waits _echoGuardMs
+  //     → _flushPendingTranscripts()
+  //       ├─ text echo check each buffered transcript
+  //       └─ survivors → _processTranscript()
+  //
+  // ## TTS text flow (Claude → ElevenLabs)
+  //
+  //   Claude streams text deltas via ResponseTextEvent
+  //     → _appendStreamingResponse()
+  //       ├─ isFinal? → endGeneration(), store in _recentAgentTexts
+  //       ├─ suppress during settling/pre-connect
+  //       ├─ first delta → startGeneration() on ElevenLabsTtsService
+  //       ├─ _stripBracketsForTts() removes [stage directions]
+  //       └─ sendText() → ElevenLabs text buffer → audio chunks
+  //
+  // ## VAD (Voice Activity Detection)
+  //
+  //   OpenAI Realtime provides server-side VAD via the 'server_vad' turn
+  //   detection mode.  The _whisper.vadActive flag reflects whether OpenAI
+  //   currently detects speech in the audio stream.  We use this to:
+  //     - Defer the connected greeting while the remote party is speaking
+  //       (_tryFireConnectedGreeting checks vadActive)
+  //     - Defer the settle-to-connected promotion timer when VAD is active
+  //
+  //   VAD parameters (set in WhisperRealtimeService session config):
+  //     threshold: 0.5       — sensitivity (0-1, higher = less sensitive)
+  //     prefix_padding_ms: 300  — audio kept before speech onset
+  //     silence_duration_ms: 1800 — silence before speech is considered ended
+  //
+  //   Tradeoff: lower silence_duration_ms makes the agent respond faster
+  //   but risks cutting off mid-sentence pauses.  1800ms is a compromise.
+  //
+  // ---------------------------------------------------------------------------
+
   DateTime _speakingEndTime = DateTime(2000);
   int _echoGuardMs = 2000;
 
-  // Transcripts that arrive while the agent is speaking or in the echo guard
-  // window.  Instead of dropping them (which loses context), we buffer and
-  // process after the echo guard clears.
   final List<TranscriptionEvent> _pendingTranscripts = [];
   Timer? _postSpeakFlushTimer;
 
-  // Recent agent response texts for text-based echo suppression.
-  // If an incoming transcript fuzzy-matches a recent agent response, it is
-  // almost certainly the agent's own TTS being picked up by the mic.
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
 
@@ -552,6 +635,7 @@ class AgentService extends ChangeNotifier {
       speakers: _bootContext.speakers,
       guardrails: _bootContext.guardrails,
       textOnly: !hasTts,
+      defaultCountryCode: _bootContext.defaultCountryCode,
     );
     final base = ctx.toInstructions();
     final calendar = _buildCalendarContext();
@@ -706,12 +790,14 @@ class AgentService extends ChangeNotifier {
       final agentLower = agentText.toLowerCase();
       // Check if the transcript is contained within a recent agent response
       if (agentLower.contains(lower)) return true;
-      // Check if a significant portion of the transcript words overlap
+      // Word-overlap check — only for transcripts with 3+ significant words
+      // so short commands like "Call Lee" aren't blocked by common words.
       final tWords =
           lower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      if (tWords.length < 3) continue;
       final aWords =
           agentLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
-      if (tWords.isNotEmpty && aWords.isNotEmpty) {
+      if (aWords.isNotEmpty) {
         final overlap = tWords.intersection(aWords).length;
         if (overlap / tWords.length >= 0.4) return true;
       }
@@ -830,9 +916,14 @@ class AgentService extends ChangeNotifier {
     // so the LLM has the full context of what was said before connected.
     _drainSettleTranscripts();
 
-    // Text-based echo suppression: if the transcript is a substantial
-    // substring of a recent agent response, it's the agent hearing itself.
-    if (_isEchoOfAgentResponse(text)) {
+    // Text-based echo suppression — only within a short window after the
+    // agent finishes speaking.  Outside this window the check is skipped so
+    // legitimate user commands that share common words with prior agent
+    // responses (e.g. "Call Lee" vs "would you like me to call Kali") are
+    // not incorrectly suppressed.
+    final msSinceSpoke =
+        DateTime.now().difference(_speakingEndTime).inMilliseconds;
+    if (msSinceSpoke < _echoGuardMs * 2 && _isEchoOfAgentResponse(text)) {
       debugPrint('[AgentService] Echo suppressed (text match): "$text"');
       return;
     }
@@ -1015,6 +1106,9 @@ class AgentService extends ChangeNotifier {
         case 'make_call':
           result = await _handleMakeCall(args);
           break;
+        case 'check_locale':
+          result = _handleCheckLocale();
+          break;
         case 'end_call':
           result = await _handleEndCall();
           break;
@@ -1071,6 +1165,9 @@ class AgentService extends ChangeNotifier {
       switch (req.name) {
         case 'make_call':
           result = await _handleMakeCall(req.arguments);
+          break;
+        case 'check_locale':
+          result = _handleCheckLocale();
           break;
         case 'end_call':
           result = await _handleEndCall();
@@ -1214,6 +1311,10 @@ class AgentService extends ChangeNotifier {
     callHistory!.openHistory();
 
     return result;
+  }
+
+  String _handleCheckLocale() {
+    return describeLocale(_bootContext.defaultCountryCode);
   }
 
   Future<String> _handleMakeCall(Map<String, dynamic> args) async {
@@ -1802,7 +1903,12 @@ class AgentService extends ChangeNotifier {
           _callPhase = CallPhase.idle;
           _partyCount = 1;
           _userMuteOverride = false;
-          // Restore listening state for split pipeline
+          // Restore listening state so the agent can hear new commands
+          if (_muted) {
+            _muted = false;
+            _whisper.muted = false;
+            _statusText = _speaking ? 'Speaking...' : 'Listening...';
+          }
           if (_splitPipeline && _ttsMuted) {
             _ttsMuted = false;
           }
@@ -2008,14 +2114,37 @@ class AgentService extends ChangeNotifier {
     _connectedGreetTimer = null;
   }
 
-  /// Forward any transcripts captured during the settling phase to the LLM
-  /// via the normal transcript processing path, then clear the buffer.
+  /// Forward any transcripts captured during the settling phase to the LLM.
+  /// Unlike the normal live path, we skip the async getSpeakerInfo() call
+  /// because the speaker state has changed since these were captured.
+  /// Settle-phase audio is always from the remote party.
   void _drainSettleTranscripts() {
     if (_settleTranscripts.isEmpty) return;
     final batch = List<TranscriptionEvent>.from(_settleTranscripts);
     _settleTranscripts.clear();
+
+    final speaker = remoteSpeaker;
+
     for (final event in batch) {
-      _processTranscript(event);
+      final text = event.text.trim();
+      if (text.isEmpty) continue;
+      if (IvrDetector.isIvr(text)) continue;
+      if (_isEchoOfAgentResponse(text)) continue;
+
+      _messages.add(ChatMessage.transcript(
+        ChatRole.remoteParty,
+        text,
+        speakerName: speaker.label,
+      ));
+      notifyListeners();
+
+      callHistory?.addTranscript(
+        role: 'remote',
+        speakerName: speaker.label,
+        text: text,
+      );
+
+      _textAgent?.addTranscript(speaker.label, text);
     }
     debugPrint('[AgentService] Drained ${batch.length} settle transcript(s)');
   }

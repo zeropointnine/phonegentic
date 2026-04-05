@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/test_credentials.dart';
 import 'package:phonegentic/src/theme_provider.dart';
@@ -221,6 +222,12 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
   }
 
   // -- Registration status helpers --
+  bool get _hasSipError {
+    final state = helper?.registerState.state;
+    return state == RegistrationStateEnum.REGISTRATION_FAILED ||
+        state == RegistrationStateEnum.UNREGISTERED;
+  }
+
   String get _statusText {
     final name = helper?.registerState.state?.name ?? '';
     if (name.isEmpty) return 'Disconnected';
@@ -236,6 +243,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
       default:
         return AppColors.burntAmber;
     }
+  }
+
+  void _handleReconnect() {
+    reRegisterWithCurrentUser();
+    context.read<AgentService>().reconnect();
   }
 
   // ------- BUILD -------
@@ -536,34 +548,45 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               ),
               _buildConferenceBadge(),
               const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: _statusColor.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: _statusColor.withOpacity(0.25), width: 0.5),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                          shape: BoxShape.circle, color: _statusColor),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _statusText,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: _statusColor,
+              GestureDetector(
+                onTap: _hasSipError ? _handleReconnect : null,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _statusColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: _statusColor.withOpacity(0.25), width: 0.5),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle, color: _statusColor),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      Text(
+                        _statusText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: _statusColor,
+                        ),
+                      ),
+                      if (_hasSipError) ...[
+                        const SizedBox(width: 5),
+                        Icon(
+                          Icons.refresh_rounded,
+                          size: 13,
+                          color: _statusColor,
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
