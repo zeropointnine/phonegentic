@@ -5,11 +5,13 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include "audio_device_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  AudioDeviceChannel* audio_device_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -73,6 +75,11 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  // Register audio device channel
+  FlEngine* engine = fl_view_get_engine(view);
+  FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
+  self->audio_device_channel = audio_device_channel_new(messenger);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -106,9 +113,13 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  //MyApplication* self = MY_APPLICATION(object);
+  MyApplication* self = MY_APPLICATION(application);
 
-  // Perform any actions required at application shutdown.
+  // Cleanup audio device channel
+  if (self->audio_device_channel) {
+    audio_device_channel_dispose(self->audio_device_channel);
+    self->audio_device_channel = nullptr;
+  }
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
