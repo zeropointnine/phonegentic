@@ -2,6 +2,7 @@ import 'package:phonegentic/src/agent_config_service.dart';
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/calendar_sync_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
+import 'package:phonegentic/src/chrome/flight_aware_service.dart';
 import 'package:phonegentic/src/conference/conference_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
@@ -78,14 +79,19 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<DemoModeService>(
           create: (_) => DemoModeService()..load(),
         ),
-        ChangeNotifierProxyProvider3<CallHistoryService, ContactService,
-            JobFunctionService, AgentService>(
+        ChangeNotifierProvider<FlightAwareService>(
+          create: (_) => FlightAwareService()..loadConfig(),
+        ),
+        ChangeNotifierProxyProvider4<CallHistoryService, ContactService,
+            JobFunctionService, FlightAwareService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
-          update: (context, history, contacts, jobFunctions, agent) => agent!
-            ..callHistory = history
-            ..contactService = contacts
-            ..jobFunctionService = jobFunctions
-            ..demoModeService = context.read<DemoModeService>(),
+          update: (context, history, contacts, jobFunctions, flight, agent) =>
+              agent!
+                ..callHistory = history
+                ..contactService = contacts
+                ..jobFunctionService = jobFunctions
+                ..flightAwareService = flight
+                ..demoModeService = context.read<DemoModeService>(),
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
           create: (_) => MessagingService()..start(),

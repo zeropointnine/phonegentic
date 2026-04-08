@@ -151,6 +151,14 @@ class WhisperRealtimeService {
     }
   }
 
+  List<Map<String, dynamic>> _extraTools = [];
+
+  /// Register additional tools (e.g. from 3rd-party integrations) before
+  /// or after connect.  Triggers a session.update if already connected.
+  void setExtraTools(List<Map<String, dynamic>> tools) {
+    _extraTools = tools;
+  }
+
   Future<void> connect({
     required String apiKey,
     required String model,
@@ -533,6 +541,7 @@ class WhisperRealtimeService {
           'required': ['voice_id'],
         },
       },
+      ..._extraTools,
     ];
 
     _send({'type': 'session.update', 'session': session});
