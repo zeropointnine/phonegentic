@@ -9,19 +9,27 @@ class ChromeBrowserService {
 
   Browser? _browser;
   int _debugPort = 9222;
+  String? _userDataDir;
 
   bool get isRunning => _browser != null;
   int get debugPort => _debugPort;
 
-  void configure({int? debugPort}) {
+  void configure({int? debugPort, String? userDataDir}) {
     if (debugPort != null) _debugPort = debugPort;
+    _userDataDir = userDataDir;
   }
 
-  String get launchCommand =>
+  String get launchCommand {
+    final buf = StringBuffer(
       '/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome '
-      '--remote-debugging-port=$_debugPort '
-      '--user-data-dir=/tmp/phonegentic_chrome_debug '
-      '--no-first-run --no-default-browser-check';
+      '--remote-debugging-port=$_debugPort ',
+    );
+    if (_userDataDir != null && _userDataDir!.isNotEmpty) {
+      buf.write('--user-data-dir=$_userDataDir ');
+    }
+    buf.write('--no-first-run --no-default-browser-check');
+    return buf.toString();
+  }
 
   Future<bool> isDebugPortOpen() async {
     try {

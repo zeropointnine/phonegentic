@@ -14,6 +14,10 @@ import 'agent_config_service.dart';
 import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
 import 'chrome/flight_aware_service.dart';
+import 'chrome/gmail_config.dart';
+import 'chrome/gmail_service.dart';
+import 'chrome/google_calendar_config.dart';
+import 'chrome/google_calendar_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
@@ -68,6 +72,8 @@ class AgentService extends ChangeNotifier {
   MessagingService? messagingService;
   DemoModeService? demoModeService;
   FlightAwareService? flightAwareService;
+  GmailService? gmailService;
+  GoogleCalendarService? googleCalendarService;
   JobFunctionService? _jobFunctionService;
   SIPUAHelper? sipHelper;
 
@@ -362,7 +368,9 @@ class AgentService extends ChangeNotifier {
     if (!_active) return;
     final base = _bootContext.toInstructions();
     final flight = _buildFlightAwareContext();
-    _whisper.updateSessionInstructions('$base$flight');
+    final gmail = _buildGmailContext();
+    final gcal = _buildGoogleCalendarContext();
+    _whisper.updateSessionInstructions('$base$flight$gmail$gcal');
     _textAgent?.updateInstructions(_buildTextAgentInstructions());
     _applyIntegrationTools();
   }
@@ -646,11 +654,15 @@ class AgentService extends ChangeNotifier {
     final base = ctx.toInstructions();
     final calendar = _buildCalendarContext();
     final flight = _buildFlightAwareContext();
+    final gmail = _buildGmailContext();
+    final gcal = _buildGoogleCalendarContext();
     final prompt = _textAgentConfig?.systemPrompt ?? '';
     final buf = StringBuffer(base);
     buf.write(_buildDateTimeContext());
     if (calendar.isNotEmpty) buf.write(calendar);
     if (flight.isNotEmpty) buf.write(flight);
+    if (gmail.isNotEmpty) buf.write(gmail);
+    if (gcal.isNotEmpty) buf.write(gcal);
     if (prompt.isNotEmpty) {
       buf.write('\n\n## Additional Instructions\n$prompt');
     }
@@ -679,6 +691,12 @@ class AgentService extends ChangeNotifier {
   bool get _flightAwareEnabled =>
       flightAwareService != null && flightAwareService!.config.enabled;
 
+  bool get _gmailEnabled =>
+      gmailService != null && gmailService!.config.enabled;
+
+  bool get _googleCalendarEnabled =>
+      googleCalendarService != null && googleCalendarService!.config.enabled;
+
   String _buildFlightAwareContext() {
     if (!_flightAwareEnabled) return '';
     return '\n\n## Flight Lookup (FlightAware)\n'
@@ -689,6 +707,40 @@ class AgentService extends ChangeNotifier {
         'ICAO codes (e.g. KSFO→KJFK, KLAX→KORD). Returns a table of upcoming and recent flights.\n'
         'Use these when the caller or host asks about flight status, arrival times, '
         'which flights serve a route, or anything aviation-related.\n';
+  }
+
+  String _buildGmailContext() {
+    if (!_gmailEnabled) return '';
+    final access = gmailService!.config.readAccessMode;
+    final accessNote = access == GmailReadAccess.hostOnly
+        ? ' Note: email reading is restricted to the host only.'
+        : access == GmailReadAccess.allowList
+            ? ' Note: email reading is restricted to approved callers only.'
+            : '';
+    return '\n\n## Gmail Integration\n'
+        'You can interact with the user\'s Gmail using these tools:\n'
+        '- **send_gmail**: Send an email. Parameters: to (email address), subject, body.\n'
+        '- **search_gmail**: Search the inbox. Parameter: query (Gmail search string).\n'
+        '- **read_gmail**: Read a specific email. Parameters: query (search to find it), '
+        'index (0-based, which result to open, default 0).\n'
+        'Use these when asked to send, find, or read emails.$accessNote\n';
+  }
+
+  String _buildGoogleCalendarContext() {
+    if (!_googleCalendarEnabled) return '';
+    final access = googleCalendarService!.config.readAccessMode;
+    final accessNote = access == CalendarReadAccess.hostOnly
+        ? ' Note: calendar reading is restricted to the host only.'
+        : access == CalendarReadAccess.allowList
+            ? ' Note: calendar reading is restricted to approved callers only.'
+            : '';
+    return '\n\n## Google Calendar Integration\n'
+        'You can interact with the user\'s Google Calendar using these tools:\n'
+        '- **create_google_calendar_event**: Create an event. Parameters: title, date (YYYY-MM-DD), '
+        'start_time (HH:MM), end_time (HH:MM), description (optional), location (optional).\n'
+        '- **read_google_calendar**: Read events for a date. Parameter: date (YYYY-MM-DD).\n'
+        '- **sync_google_calendar**: Sync local calendar with Google Calendar (bidirectional).\n'
+        'Use these when asked to create, check, or sync calendar events.$accessNote\n';
   }
 
   static const _flightToolsOpenAi = [
@@ -778,6 +830,267 @@ class AgentService extends ChangeNotifier {
     },
   ];
 
+  // ── Gmail tools ─────────────────────────────────────────────────────
+
+  static const _gmailToolsOpenAi = [
+    {
+      'type': 'function',
+      'name': 'send_gmail',
+      'description':
+          'Send an email via Gmail. Composes and sends immediately.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'to': {
+            'type': 'string',
+            'description': 'Recipient email address.',
+          },
+          'subject': {
+            'type': 'string',
+            'description': 'Email subject line.',
+          },
+          'body': {
+            'type': 'string',
+            'description': 'Email body text.',
+          },
+        },
+        'required': ['to', 'subject', 'body'],
+      },
+    },
+    {
+      'type': 'function',
+      'name': 'search_gmail',
+      'description':
+          'Search the user\'s Gmail inbox. Returns a list of matching emails '
+              'with sender, subject, snippet, and date.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description':
+                'Gmail search query (e.g. "from:alice subject:meeting", '
+                    '"is:unread", "after:2026/01/01").',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+    {
+      'type': 'function',
+      'name': 'read_gmail',
+      'description':
+          'Read the full content of a specific email found by searching Gmail.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description': 'Gmail search query to locate the email.',
+          },
+          'index': {
+            'type': 'integer',
+            'description':
+                'Zero-based index of the search result to open (default 0 = first/newest).',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+  ];
+
+  static const _gmailToolsClaude = [
+    {
+      'name': 'send_gmail',
+      'description':
+          'Send an email via Gmail. Composes and sends immediately.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'to': {
+            'type': 'string',
+            'description': 'Recipient email address.',
+          },
+          'subject': {
+            'type': 'string',
+            'description': 'Email subject line.',
+          },
+          'body': {
+            'type': 'string',
+            'description': 'Email body text.',
+          },
+        },
+        'required': ['to', 'subject', 'body'],
+      },
+    },
+    {
+      'name': 'search_gmail',
+      'description':
+          'Search the user\'s Gmail inbox. Returns matching emails with '
+          'sender, subject, snippet, and date.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description':
+                'Gmail search query (e.g. "from:alice subject:meeting").',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+    {
+      'name': 'read_gmail',
+      'description':
+          'Read the full content of a specific email found by searching Gmail.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description': 'Gmail search query to locate the email.',
+          },
+          'index': {
+            'type': 'integer',
+            'description':
+                'Zero-based index of the search result to open (default 0).',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+  ];
+
+  // ── Google Calendar tools ──────────────────────────────────────────
+
+  static const _googleCalendarToolsOpenAi = [
+    {
+      'type': 'function',
+      'name': 'create_google_calendar_event',
+      'description':
+          'Create an event on Google Calendar.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'title': {
+            'type': 'string',
+            'description': 'Event title.',
+          },
+          'date': {
+            'type': 'string',
+            'description': 'Event date in YYYY-MM-DD format.',
+          },
+          'start_time': {
+            'type': 'string',
+            'description': 'Start time in HH:MM format (24-hour).',
+          },
+          'end_time': {
+            'type': 'string',
+            'description': 'End time in HH:MM format (24-hour).',
+          },
+          'description': {
+            'type': 'string',
+            'description': 'Optional event description.',
+          },
+          'location': {
+            'type': 'string',
+            'description': 'Optional event location.',
+          },
+        },
+        'required': ['title', 'date', 'start_time', 'end_time'],
+      },
+    },
+    {
+      'type': 'function',
+      'name': 'read_google_calendar',
+      'description':
+          'Read all events from Google Calendar for a specific date.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'date': {
+            'type': 'string',
+            'description': 'Date to read events for in YYYY-MM-DD format.',
+          },
+        },
+        'required': ['date'],
+      },
+    },
+    {
+      'type': 'function',
+      'name': 'sync_google_calendar',
+      'description':
+          'Synchronize the local calendar with Google Calendar (bidirectional). '
+              'Pulls events from Google and pushes local events to Google.',
+      'parameters': {
+        'type': 'object',
+        'properties': {},
+      },
+    },
+  ];
+
+  static const _googleCalendarToolsClaude = [
+    {
+      'name': 'create_google_calendar_event',
+      'description': 'Create an event on Google Calendar.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'title': {
+            'type': 'string',
+            'description': 'Event title.',
+          },
+          'date': {
+            'type': 'string',
+            'description': 'Event date in YYYY-MM-DD format.',
+          },
+          'start_time': {
+            'type': 'string',
+            'description': 'Start time in HH:MM format (24-hour).',
+          },
+          'end_time': {
+            'type': 'string',
+            'description': 'End time in HH:MM format (24-hour).',
+          },
+          'description': {
+            'type': 'string',
+            'description': 'Optional event description.',
+          },
+          'location': {
+            'type': 'string',
+            'description': 'Optional event location.',
+          },
+        },
+        'required': ['title', 'date', 'start_time', 'end_time'],
+      },
+    },
+    {
+      'name': 'read_google_calendar',
+      'description':
+          'Read all events from Google Calendar for a specific date.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'date': {
+            'type': 'string',
+            'description': 'Date to read events for in YYYY-MM-DD format.',
+          },
+        },
+        'required': ['date'],
+      },
+    },
+    {
+      'name': 'sync_google_calendar',
+      'description':
+          'Synchronize local calendar with Google Calendar (bidirectional).',
+      'input_schema': {
+        'type': 'object',
+        'properties': {},
+      },
+    },
+  ];
+
   /// Push integration-specific tools and instructions to both pipelines.
   void _applyIntegrationTools() {
     final oaiExtra = <Map<String, dynamic>>[];
@@ -786,6 +1099,14 @@ class AgentService extends ChangeNotifier {
     if (_flightAwareEnabled) {
       oaiExtra.addAll(_flightToolsOpenAi);
       claudeExtra.addAll(_flightToolsClaude);
+    }
+    if (_gmailEnabled) {
+      oaiExtra.addAll(_gmailToolsOpenAi);
+      claudeExtra.addAll(_gmailToolsClaude);
+    }
+    if (_googleCalendarEnabled) {
+      oaiExtra.addAll(_googleCalendarToolsOpenAi);
+      claudeExtra.addAll(_googleCalendarToolsClaude);
     }
 
     _whisper.setExtraTools(oaiExtra);
@@ -1275,6 +1596,24 @@ class AgentService extends ChangeNotifier {
         case 'search_flights_by_route':
           result = await _handleSearchFlightsByRoute(args);
           break;
+        case 'send_gmail':
+          result = await _handleSendGmail(args);
+          break;
+        case 'search_gmail':
+          result = await _handleSearchGmail(args);
+          break;
+        case 'read_gmail':
+          result = await _handleReadGmail(args);
+          break;
+        case 'create_google_calendar_event':
+          result = await _handleCreateGoogleCalendarEvent(args);
+          break;
+        case 'read_google_calendar':
+          result = await _handleReadGoogleCalendar(args);
+          break;
+        case 'sync_google_calendar':
+          result = await _handleSyncGoogleCalendar(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -1337,6 +1676,24 @@ class AgentService extends ChangeNotifier {
           break;
         case 'search_flights_by_route':
           result = await _handleSearchFlightsByRoute(req.arguments);
+          break;
+        case 'send_gmail':
+          result = await _handleSendGmail(req.arguments);
+          break;
+        case 'search_gmail':
+          result = await _handleSearchGmail(req.arguments);
+          break;
+        case 'read_gmail':
+          result = await _handleReadGmail(req.arguments);
+          break;
+        case 'create_google_calendar_event':
+          result = await _handleCreateGoogleCalendarEvent(req.arguments);
+          break;
+        case 'read_google_calendar':
+          result = await _handleReadGoogleCalendar(req.arguments);
+          break;
+        case 'sync_google_calendar':
+          result = await _handleSyncGoogleCalendar(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -1827,6 +2184,244 @@ class AgentService extends ChangeNotifier {
       return buf.toString();
     } catch (e) {
       return 'Route search failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Access control helper for Gmail / Google Calendar read operations
+  // ---------------------------------------------------------------------------
+
+  /// Returns null if access is granted, or a rejection message if denied.
+  String? _checkReadAccess({
+    required dynamic readAccessMode,
+    required List<String> allowedPhones,
+  }) {
+    // Unrestricted always passes
+    if (readAccessMode == GmailReadAccess.unrestricted ||
+        readAccessMode == CalendarReadAccess.unrestricted) {
+      return null;
+    }
+
+    final hasInboundCall = _callPhase.isActive && !_isOutbound;
+
+    // hostOnly: block if there's an active inbound call (meaning a remote
+    // caller is on the line and may be the one requesting the read).
+    if (readAccessMode == GmailReadAccess.hostOnly ||
+        readAccessMode == CalendarReadAccess.hostOnly) {
+      if (hasInboundCall) {
+        return 'Reading is restricted to the host only. '
+            'There is an active inbound call, so this request is denied.';
+      }
+      return null;
+    }
+
+    // allowList: host always passes; remote caller must be on the list.
+    if (!hasInboundCall) return null;
+
+    final remote = _remoteIdentity;
+    if (remote == null || remote.isEmpty) {
+      return 'Cannot verify caller identity. Reading denied by access policy.';
+    }
+
+    final normalizedRemote = CallHistoryDb.normalizePhone(remote);
+    for (final phone in allowedPhones) {
+      if (CallHistoryDb.normalizePhone(phone) == normalizedRemote) {
+        return null;
+      }
+    }
+
+    // Also check by contact lookup
+    final contact = contactService?.lookupByPhone(remote);
+    if (contact != null) {
+      final contactPhone = contact['phone_number'] as String? ?? '';
+      for (final phone in allowedPhones) {
+        if (CallHistoryDb.normalizePhone(phone) ==
+            CallHistoryDb.normalizePhone(contactPhone)) {
+          return null;
+        }
+      }
+    }
+
+    return 'The caller is not on the approved list for reading. Access denied.';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gmail tool handlers
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleSendGmail(Map<String, dynamic> args) async {
+    if (gmailService == null || !gmailService!.config.enabled) {
+      return 'Gmail integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final to = args['to'] as String?;
+    final subject = args['subject'] as String?;
+    final body = args['body'] as String?;
+    if (to == null || to.isEmpty) return 'No recipient email provided.';
+    if (subject == null || subject.isEmpty) return 'No subject provided.';
+    if (body == null || body.isEmpty) return 'No body provided.';
+
+    try {
+      final ok = await gmailService!.sendEmail(to, subject, body);
+      return ok
+          ? 'Email sent successfully to $to with subject "$subject".'
+          : 'Failed to send email: ${gmailService!.error ?? "unknown error"}';
+    } catch (e) {
+      return 'Email send failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  Future<String> _handleSearchGmail(Map<String, dynamic> args) async {
+    if (gmailService == null || !gmailService!.config.enabled) {
+      return 'Gmail integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final denial = _checkReadAccess(
+      readAccessMode: gmailService!.config.readAccessMode,
+      allowedPhones: gmailService!.config.allowedPhoneNumbers,
+    );
+    if (denial != null) return denial;
+
+    final query = args['query'] as String?;
+    if (query == null || query.isEmpty) return 'No search query provided.';
+
+    try {
+      final result = await gmailService!.searchEmails(query);
+      if (result == null || result.emails.isEmpty) {
+        return 'No emails found for "$query".';
+      }
+      final buf = StringBuffer('Found ${result.emails.length} email(s) for "$query":\n');
+      for (var i = 0; i < result.emails.length && i < 10; i++) {
+        final e = result.emails[i];
+        buf.write('${i + 1}. ');
+        if (e.sender.isNotEmpty) buf.write('From: ${e.sender} ');
+        buf.write('Subject: ${e.subject}');
+        if (e.date.isNotEmpty) buf.write(' (${e.date})');
+        if (e.isUnread) buf.write(' [UNREAD]');
+        buf.writeln();
+        if (e.snippet.isNotEmpty) buf.writeln('   ${e.snippet}');
+      }
+      if (result.emails.length > 10) {
+        buf.writeln('(${result.emails.length - 10} more not shown)');
+      }
+      return buf.toString();
+    } catch (e) {
+      return 'Gmail search failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  Future<String> _handleReadGmail(Map<String, dynamic> args) async {
+    if (gmailService == null || !gmailService!.config.enabled) {
+      return 'Gmail integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final denial = _checkReadAccess(
+      readAccessMode: gmailService!.config.readAccessMode,
+      allowedPhones: gmailService!.config.allowedPhoneNumbers,
+    );
+    if (denial != null) return denial;
+
+    final query = args['query'] as String?;
+    final index = args['index'] as int? ?? 0;
+    if (query == null || query.isEmpty) return 'No search query provided.';
+
+    try {
+      final info = await gmailService!.readEmail(query, index: index);
+      if (info == null || !info.hasContent) {
+        return 'Could not read email. Make sure Chrome is running and you are logged into Gmail.';
+      }
+      final buf = StringBuffer();
+      if (info.sender.isNotEmpty) buf.writeln('From: ${info.sender}');
+      if (info.recipient.isNotEmpty) buf.writeln('To: ${info.recipient}');
+      buf.writeln('Subject: ${info.subject}');
+      if (info.date.isNotEmpty) buf.writeln('Date: ${info.date}');
+      buf.writeln('---');
+      buf.writeln(info.body.length > 2000
+          ? '${info.body.substring(0, 2000)}...(truncated)'
+          : info.body);
+      return buf.toString();
+    } catch (e) {
+      return 'Email read failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Google Calendar tool handlers
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleCreateGoogleCalendarEvent(
+      Map<String, dynamic> args) async {
+    if (googleCalendarService == null ||
+        !googleCalendarService!.config.enabled) {
+      return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final title = args['title'] as String?;
+    final date = args['date'] as String?;
+    final startTime = args['start_time'] as String?;
+    final endTime = args['end_time'] as String?;
+    if (title == null || title.isEmpty) return 'No event title provided.';
+    if (date == null || date.isEmpty) return 'No date provided.';
+    if (startTime == null || startTime.isEmpty) return 'No start time provided.';
+    if (endTime == null || endTime.isEmpty) return 'No end time provided.';
+
+    try {
+      final ok = await googleCalendarService!.createEvent(
+        title: title,
+        date: date,
+        startTime: startTime,
+        endTime: endTime,
+        description: args['description'] as String?,
+        location: args['location'] as String?,
+      );
+      return ok
+          ? 'Event "$title" created on $date from $startTime to $endTime.'
+          : 'Failed to create event: ${googleCalendarService!.error ?? "unknown error"}';
+    } catch (e) {
+      return 'Event creation failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  Future<String> _handleReadGoogleCalendar(Map<String, dynamic> args) async {
+    if (googleCalendarService == null ||
+        !googleCalendarService!.config.enabled) {
+      return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final denial = _checkReadAccess(
+      readAccessMode: googleCalendarService!.config.readAccessMode,
+      allowedPhones: googleCalendarService!.config.allowedPhoneNumbers,
+    );
+    if (denial != null) return denial;
+
+    final date = args['date'] as String?;
+    if (date == null || date.isEmpty) return 'No date provided.';
+
+    try {
+      final events = await googleCalendarService!.readEvents(date);
+      if (events.isEmpty) {
+        return 'No events found on $date.';
+      }
+      final buf = StringBuffer('Events on $date (${events.length}):\n');
+      for (var i = 0; i < events.length; i++) {
+        final e = events[i];
+        buf.write('${i + 1}. ${e.title}');
+        if (e.startTime.isNotEmpty || e.endTime.isNotEmpty) {
+          buf.write(' (${e.startTime}–${e.endTime})');
+        }
+        if (e.location.isNotEmpty) buf.write(' @ ${e.location}');
+        buf.writeln();
+      }
+      return buf.toString();
+    } catch (e) {
+      return 'Calendar read failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  Future<String> _handleSyncGoogleCalendar(Map<String, dynamic> args) async {
+    if (googleCalendarService == null ||
+        !googleCalendarService!.config.enabled) {
+      return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    try {
+      return await googleCalendarService!.syncBidirectional();
+    } catch (e) {
+      return 'Calendar sync failed: ${e.toString().split('\n').first}';
     }
   }
 

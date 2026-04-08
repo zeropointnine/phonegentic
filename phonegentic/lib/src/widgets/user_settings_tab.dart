@@ -5,6 +5,10 @@ import '../calendar_sync_service.dart';
 import '../calendly_service.dart';
 import '../chrome/flight_aware_config.dart';
 import '../chrome/flight_aware_service.dart';
+import '../chrome/gmail_config.dart';
+import '../chrome/gmail_service.dart';
+import '../chrome/google_calendar_config.dart';
+import '../chrome/google_calendar_service.dart';
 import '../demo_mode_service.dart';
 import '../messaging/messaging_config.dart';
 import '../messaging/messaging_service.dart';
@@ -39,6 +43,16 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   FlightAwareConfig _flightAware = const FlightAwareConfig();
   bool _flightAwareExpanded = false;
 
+  GmailConfig _gmail = const GmailConfig();
+  bool _gmailExpanded = false;
+  final _gmailSearchCtrl = TextEditingController();
+  final _gmailAllowPhoneCtrl = TextEditingController();
+
+  GoogleCalendarConfig _gcal = const GoogleCalendarConfig();
+  bool _gcalExpanded = false;
+  final _gcalDateCtrl = TextEditingController();
+  final _gcalAllowPhoneCtrl = TextEditingController();
+
   final _calendlyKeyCtrl = TextEditingController();
   final _fakeNumberCtrl = TextEditingController();
   final _telnyxMsgKeyCtrl = TextEditingController();
@@ -71,6 +85,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _flightNumberCtrl.dispose();
     _originCtrl.dispose();
     _destCtrl.dispose();
+    _gmailSearchCtrl.dispose();
+    _gmailAllowPhoneCtrl.dispose();
+    _gcalDateCtrl.dispose();
+    _gcalAllowPhoneCtrl.dispose();
     super.dispose();
   }
 
@@ -81,6 +99,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final tw = await TwilioMessagingConfig.load();
     final backend = await MessagingSettings.loadBackend();
     final fa = await FlightAwareConfig.load();
+    final gm = await GmailConfig.load();
+    final gc = await GoogleCalendarConfig.load();
     if (!mounted) return;
     setState(() {
       _calendly = c;
@@ -89,6 +109,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _twilioMsg = tw;
       _messagingBackend = backend;
       _flightAware = fa;
+      _gmail = gm;
+      _gcal = gc;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
       _telnyxMsgKeyCtrl.text = t.apiKey;
@@ -142,6 +164,18 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     setState(() => _flightAware = fa);
     fa.save();
     context.read<FlightAwareService>().updateConfig(fa);
+  }
+
+  void _updateGmail(GmailConfig gm) {
+    setState(() => _gmail = gm);
+    gm.save();
+    context.read<GmailService>().updateConfig(gm);
+  }
+
+  void _updateGcal(GoogleCalendarConfig gc) {
+    setState(() => _gcal = gc);
+    gc.save();
+    context.read<GoogleCalendarService>().updateConfig(gc);
   }
 
   Future<void> _lookupFlight() async {
@@ -516,6 +550,48 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   _divider(),
                   _buildRouteLookupRow(),
                   _buildRouteResultsArea(),
+                ],
+              ],
+              Divider(
+                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+              _buildGmailHeader(),
+              if (_gmailExpanded) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withOpacity(0.5)),
+                _buildGmailEnableToggle(),
+                if (_gmail.enabled) ...[
+                  _divider(),
+                  _buildGmailReadAccessRow(),
+                  if (_gmail.readAccessMode == GmailReadAccess.allowList) ...[
+                    _divider(),
+                    _buildGmailAllowListRow(),
+                  ],
+                  _divider(),
+                  _buildGmailSearchTestRow(),
+                  _buildGmailSearchResultsArea(),
+                ],
+              ],
+              Divider(
+                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+              _buildGcalHeader(),
+              if (_gcalExpanded) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withOpacity(0.5)),
+                _buildGcalEnableToggle(),
+                if (_gcal.enabled) ...[
+                  _divider(),
+                  _buildGcalReadAccessRow(),
+                  if (_gcal.readAccessMode == CalendarReadAccess.allowList) ...[
+                    _divider(),
+                    _buildGcalAllowListRow(),
+                  ],
+                  _divider(),
+                  _buildGcalSyncToggle(),
+                  _divider(),
+                  _buildGcalReadTestRow(),
+                  _buildGcalReadResultsArea(),
                 ],
               ],
             ],
@@ -1571,6 +1647,709 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  // ───── Gmail ─────
+
+  Widget _buildGmailHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _gmailExpanded = !_gmailExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _gmail.isConfigured
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.email_rounded,
+                  size: 17,
+                  color: _gmail.isConfigured
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Gmail',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'Email via Chrome CDP',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _gmail.isConfigured
+                              ? AppColors.green.withOpacity(0.12)
+                              : AppColors.orange.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _gmail.isConfigured ? 'Enabled' : 'Disabled',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: _gmail.isConfigured
+                                ? AppColors.green
+                                : AppColors.orange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _gmailExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGmailEnableToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Enabled',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: Switch(
+              value: _gmail.enabled,
+              onChanged: (v) => _updateGmail(_gmail.copyWith(enabled: v)),
+              activeColor: AppColors.accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGmailReadAccessRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Read Access',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: DropdownButton<GmailReadAccess>(
+              value: _gmail.readAccessMode,
+              isExpanded: true,
+              dropdownColor: AppColors.card,
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              underline: const SizedBox.shrink(),
+              items: const [
+                DropdownMenuItem(
+                    value: GmailReadAccess.unrestricted,
+                    child: Text('Unrestricted')),
+                DropdownMenuItem(
+                    value: GmailReadAccess.hostOnly,
+                    child: Text('Host Only')),
+                DropdownMenuItem(
+                    value: GmailReadAccess.allowList,
+                    child: Text('Allow List')),
+              ],
+              onChanged: (v) {
+                if (v != null) {
+                  _updateGmail(_gmail.copyWith(readAccessMode: v));
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGmailAllowListRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Allowed Phone Numbers',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final phone in _gmail.allowedPhoneNumbers)
+                Chip(
+                  label: Text(phone,
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textPrimary)),
+                  deleteIcon: Icon(Icons.close, size: 14),
+                  onDeleted: () {
+                    final updated = List<String>.from(_gmail.allowedPhoneNumbers)
+                      ..remove(phone);
+                    _updateGmail(
+                        _gmail.copyWith(allowedPhoneNumbers: updated));
+                  },
+                  backgroundColor: AppColors.card,
+                  side: BorderSide(
+                      color: AppColors.border.withOpacity(0.5)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _gmailAllowPhoneCtrl,
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    hintText: '+1234567890',
+                    hintStyle: TextStyle(
+                        fontSize: 12, color: AppColors.textTertiary),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 8),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () {
+                  final phone = _gmailAllowPhoneCtrl.text.trim();
+                  if (phone.isEmpty) return;
+                  final updated =
+                      List<String>.from(_gmail.allowedPhoneNumbers)
+                        ..add(phone);
+                  _updateGmail(
+                      _gmail.copyWith(allowedPhoneNumbers: updated));
+                  _gmailAllowPhoneCtrl.clear();
+                },
+                child: Text('Add',
+                    style:
+                        TextStyle(fontSize: 12, color: AppColors.accent)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGmailSearchTestRow() {
+    final svc = context.watch<GmailService>();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _gmailSearchCtrl,
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Search emails...',
+                hintStyle:
+                    TextStyle(fontSize: 12, color: AppColors.textTertiary),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 70,
+            height: 30,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+                textStyle: const TextStyle(fontSize: 11),
+              ),
+              onPressed: svc.loading
+                  ? null
+                  : () => svc.searchEmails(_gmailSearchCtrl.text),
+              child: svc.loading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Search'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGmailSearchResultsArea() {
+    final svc = context.watch<GmailService>();
+    final result = svc.lastSearch;
+    final error = svc.error;
+
+    if (result == null && error == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(error,
+                style: TextStyle(fontSize: 11, color: AppColors.red)),
+          if (result != null)
+            for (final e in result.emails.take(5))
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (e.isUnread)
+                      Container(
+                        width: 6,
+                        height: 6,
+                        margin: const EdgeInsets.only(top: 4, right: 6),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            e.subject.isNotEmpty ? e.subject : '(no subject)',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            '${e.sender}  ${e.date}',
+                            style: TextStyle(
+                                fontSize: 10, color: AppColors.textTertiary),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (e.snippet.isNotEmpty)
+                            Text(
+                              e.snippet,
+                              style: TextStyle(
+                                  fontSize: 10, color: AppColors.textSecondary),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  // ───── Google Calendar ─────
+
+  Widget _buildGcalHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _gcalExpanded = !_gcalExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _gcal.isConfigured
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.calendar_month_rounded,
+                  size: 17,
+                  color: _gcal.isConfigured
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Google Calendar',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'Calendar via Chrome CDP',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _gcal.isConfigured
+                              ? AppColors.green.withOpacity(0.12)
+                              : AppColors.orange.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _gcal.isConfigured ? 'Enabled' : 'Disabled',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: _gcal.isConfigured
+                                ? AppColors.green
+                                : AppColors.orange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _gcalExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGcalEnableToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Enabled',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: Switch(
+              value: _gcal.enabled,
+              onChanged: (v) => _updateGcal(_gcal.copyWith(enabled: v)),
+              activeColor: AppColors.accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGcalReadAccessRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Read Access',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: DropdownButton<CalendarReadAccess>(
+              value: _gcal.readAccessMode,
+              isExpanded: true,
+              dropdownColor: AppColors.card,
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              underline: const SizedBox.shrink(),
+              items: const [
+                DropdownMenuItem(
+                    value: CalendarReadAccess.unrestricted,
+                    child: Text('Unrestricted')),
+                DropdownMenuItem(
+                    value: CalendarReadAccess.hostOnly,
+                    child: Text('Host Only')),
+                DropdownMenuItem(
+                    value: CalendarReadAccess.allowList,
+                    child: Text('Allow List')),
+              ],
+              onChanged: (v) {
+                if (v != null) {
+                  _updateGcal(_gcal.copyWith(readAccessMode: v));
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGcalAllowListRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Allowed Phone Numbers',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final phone in _gcal.allowedPhoneNumbers)
+                Chip(
+                  label: Text(phone,
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textPrimary)),
+                  deleteIcon: Icon(Icons.close, size: 14),
+                  onDeleted: () {
+                    final updated =
+                        List<String>.from(_gcal.allowedPhoneNumbers)
+                          ..remove(phone);
+                    _updateGcal(
+                        _gcal.copyWith(allowedPhoneNumbers: updated));
+                  },
+                  backgroundColor: AppColors.card,
+                  side: BorderSide(
+                      color: AppColors.border.withOpacity(0.5)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _gcalAllowPhoneCtrl,
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    hintText: '+1234567890',
+                    hintStyle: TextStyle(
+                        fontSize: 12, color: AppColors.textTertiary),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 8),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () {
+                  final phone = _gcalAllowPhoneCtrl.text.trim();
+                  if (phone.isEmpty) return;
+                  final updated =
+                      List<String>.from(_gcal.allowedPhoneNumbers)
+                        ..add(phone);
+                  _updateGcal(
+                      _gcal.copyWith(allowedPhoneNumbers: updated));
+                  _gcalAllowPhoneCtrl.clear();
+                },
+                child: Text('Add',
+                    style:
+                        TextStyle(fontSize: 12, color: AppColors.accent)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGcalSyncToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Sync',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: Switch(
+              value: _gcal.syncEnabled,
+              onChanged: (v) =>
+                  _updateGcal(_gcal.copyWith(syncEnabled: v)),
+              activeColor: AppColors.accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGcalReadTestRow() {
+    final svc = context.watch<GoogleCalendarService>();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _gcalDateCtrl,
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'YYYY-MM-DD',
+                hintStyle:
+                    TextStyle(fontSize: 12, color: AppColors.textTertiary),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 80,
+            height: 30,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+                textStyle: const TextStyle(fontSize: 11),
+              ),
+              onPressed: svc.loading
+                  ? null
+                  : () => svc.readEvents(_gcalDateCtrl.text),
+              child: svc.loading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Read Day'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGcalReadResultsArea() {
+    final svc = context.watch<GoogleCalendarService>();
+    final events = svc.lastEvents;
+    final error = svc.error;
+
+    if (events == null && error == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(error,
+                style: TextStyle(fontSize: 11, color: AppColors.red)),
+          if (events != null)
+            for (final e in events.take(10))
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      e.title.isNotEmpty ? e.title : '(no title)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (e.startTime.isNotEmpty || e.endTime.isNotEmpty)
+                      Text(
+                        '${e.startTime} – ${e.endTime}',
+                        style: TextStyle(
+                            fontSize: 10, color: AppColors.textTertiary),
+                      ),
+                    if (e.location.isNotEmpty)
+                      Text(
+                        e.location,
+                        style: TextStyle(
+                            fontSize: 10, color: AppColors.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
         ],
       ),
     );
