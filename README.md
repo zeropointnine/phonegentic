@@ -561,21 +561,16 @@ On narrow windows (below 700px), the Tear Sheet, Contacts, Call History, and Aud
 
 ## Supported platforms
 
-- [] iOS
-- [] Android
-- [] Web
+
 - [x] macOS
-- [ ] Windows
-- [ ] Linux
+- [x] Linux
 
 
 
 ## FAQ
 
-<details>
-<summary>Expand</summary>
+### SIP INFO Server not configured for DTLS/SRTP
 
-### Server not configured for DTLS/SRTP
 
 `WEBRTC_SET_REMOTE_DESCRIPTION_ERROR: Failed to set remote offer sdp: Called with SDP without DTLS fingerprint.`
 
@@ -584,10 +579,6 @@ Your server is not sending a DTLS fingerprint inside the SDP. WebRTC requires en
 ### Why isn't there a UDP connection option?
 
 This package uses WS or TCP for SIP signalling. Once the session is connected, WebRTC transmits media (audio/video) over UDP automatically.
-
-### SIP/2.0 488 Not acceptable here
-
-The codecs on your PBX server don't match what WebRTC offers:
 
 - **opus** (111, 48 kHz, 2ch)
 - **G722** (9, 8 kHz, 1ch)

@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SMS updates — Phonegentic AI</title>
+  <meta name="description" content="Opt in to SMS marketing messages from Phonegentic AI. E.164 phone number, explicit consent, and privacy policy.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0c0a09;
+      --bg-card: #1a1714;
+      --gold: #d4a853;
+      --gold-dim: #b8923f;
+      --text: #e8e0d4;
+      --text-dim: #9a917f;
+      --border: rgba(212, 168, 83, 0.12);
+      --radius: 12px;
+      --error: #e07a6e;
+      --ok: #7bc96f;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--gold); text-decoration: none; transition: opacity 0.2s; }
+    a:hover { opacity: 0.88; }
+    .container { max-width: 560px; margin: 0 auto; padding: 0 24px; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      background: rgba(12, 10, 9, 0.88);
+      border-bottom: 1px solid var(--border);
+    }
+    nav .inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-brand { font-weight: 700; font-size: 1rem; color: var(--gold); }
+    .nav-meta { font-size: 0.8rem; color: var(--text-dim); }
+    main { padding: 40px 0 72px; }
+    h1 {
+      font-size: clamp(1.6rem, 4vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+    .sub {
+      font-size: 0.95rem;
+      color: var(--text-dim);
+      margin-bottom: 28px;
+      line-height: 1.6;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 26px 32px;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+      margin-top: 18px;
+    }
+    label:first-of-type { margin-top: 0; }
+    .hint { font-weight: 400; color: var(--text-dim); font-size: 0.78rem; }
+    input[type="text"],
+    input[type="tel"] {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 1rem;
+      font-family: inherit;
+      color: var(--text);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: border-color 0.2s;
+    }
+    input:focus {
+      outline: none;
+      border-color: rgba(212, 168, 83, 0.45);
+    }
+    .consent-box {
+      margin-top: 22px;
+      padding: 18px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid var(--border);
+    }
+    .consent-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .consent-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin-top: 3px;
+      flex-shrink: 0;
+      accent-color: var(--gold);
+      cursor: pointer;
+    }
+    .consent-text {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      line-height: 1.55;
+    }
+    .consent-text strong { color: var(--text); font-weight: 600; }
+    .hp-wrap {
+      position: absolute;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+    .submit-row { margin-top: 28px; }
+    button[type="submit"] {
+      width: 100%;
+      padding: 14px 20px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      font-family: inherit;
+      color: var(--bg);
+      background: var(--gold);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.15s;
+    }
+    button[type="submit"]:hover { background: var(--gold-dim); transform: translateY(-1px); }
+    .fineprint {
+      margin-top: 20px;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .banner {
+      display: none;
+      margin-bottom: 24px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+    .banner.ok {
+      background: rgba(123, 201, 111, 0.12);
+      border: 1px solid rgba(123, 201, 111, 0.35);
+      color: var(--ok);
+    }
+    .banner.err {
+      background: rgba(224, 122, 110, 0.12);
+      border: 1px solid rgba(224, 122, 110, 0.35);
+      color: #e07a6e;
+    }
+    #thanksBanner:not([hidden]),
+    #formError:not([hidden]) {
+      display: block;
+    }
+    footer {
+      padding: 28px 0;
+      border-top: 1px solid var(--border);
+    }
+    footer .container {
+      max-width: 1100px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .footer-left { font-size: 0.82rem; color: var(--text-dim); }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      font-size: 0.82rem;
+    }
+    .footer-links a { color: var(--text-dim); }
+    .footer-links a:hover { color: var(--gold); opacity: 1; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="inner">
+    <a href="index.html" class="nav-brand">Phonegentic AI</a>
+    <span class="nav-meta">SMS marketing opt-in</span>
+  </div>
+</nav>
+
+<main>
+  <div class="container">
+    <h1>Subscribe to SMS updates</h1>
+    <p class="sub">
+      Use this form to opt in to <strong>marketing and promotional</strong> text messages from <strong>Phonegentic AI</strong>.
+      Message frequency may vary. Read our <a href="privacy.html">Privacy Policy</a> before subscribing.
+    </p>
+
+    <div id="thanksBanner" class="banner ok" role="status" hidden>
+      Thank you — your request was received. If you texted START to our number, you should also receive a confirmation message.
+    </div>
+    <div id="formError" class="banner err" role="alert" hidden></div>
+
+    <div class="card">
+      <form id="smsOptIn" method="post" action="/api/sms-opt-in" novalidate>
+        <label for="phone">Mobile number <span class="hint">(we add + and country code if you omit them)</span></label>
+        <input
+          type="tel"
+          id="phone"
+          name="phone"
+          autocomplete="tel"
+          inputmode="tel"
+          placeholder="4155331352 or +14155331352"
+          maxlength="22"
+          aria-describedby="phoneHelp"
+        >
+        <p id="phoneHelp" class="fineprint" style="margin-top:8px;margin-bottom:0;">US/Canada: 10 digits is fine (we add +1). Or include + and country code. Message and data rates may apply.</p>
+
+        <label for="name">Name <span class="hint">(optional)</span></label>
+        <input type="text" id="name" name="name" maxlength="256" autocomplete="name" placeholder="Jane Doe">
+
+        <label for="company">Company <span class="hint">(optional)</span></label>
+        <input type="text" id="company" name="company" maxlength="256" autocomplete="organization" placeholder="Acme Inc.">
+
+        <div class="hp-wrap" aria-hidden="true">
+          <label for="website">Website</label>
+          <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+        </div>
+
+        <div class="consent-box">
+          <label class="consent-row" style="cursor:pointer;margin:0;">
+            <input type="checkbox" id="sms_consent" name="sms_consent" value="yes">
+            <span class="consent-text" id="consentLabel">
+              <strong>SMS consent</strong> — By providing your phone number, you agree to receive
+              <strong>SMS marketing and promotional messages</strong> from <strong>Phonegentic AI</strong>.
+              <strong>You are opting in to marketing texts.</strong>
+              Message frequency may vary. Standard message and data rates may apply.
+              Reply <strong>STOP</strong> to opt out. Reply <strong>HELP</strong> for help.
+              <strong>Your mobile information will not be sold or shared with third parties for promotional or marketing purposes.</strong>
+              See our <a href="privacy.html" onclick="event.stopPropagation()">Privacy Policy</a>.
+            </span>
+          </label>
+        </div>
+
+        <div class="submit-row">
+          <button type="submit" formnovalidate>Subscribe</button>
+        </div>
+
+        <p class="fineprint">
+          The SMS consent checkbox is optional until you choose to subscribe; it is <strong>unchecked by default</strong> and is not combined with unrelated agreements.
+        </p>
+      </form>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="container">
+    <div class="footer-left">&copy; 2026 Phonegentic LLC. Brand site: <a href="https://phonegentic.ai">phonegentic.ai</a></div>
+    <div class="footer-links">
+      <a href="index.html">Home</a>
+      <a href="sms-opt-out.html">SMS unsubscribe</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/reduxdj/phonegentic" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    /** Normalize common US/CA and +prefixed input to E.164 (+ and 7–15 digits). */
+    function phoneToE164(raw) {
+      var s = String(raw || '').trim();
+      var digits = s.replace(/\D/g, '');
+      if (s.indexOf('+') === 0) {
+        var rest = digits;
+        if (rest.length >= 7 && rest.length <= 15) return '+' + rest;
+        return null;
+      }
+      if (digits.length === 10) return '+1' + digits;
+      if (digits.length === 11 && digits.charAt(0) === '1') return '+' + digits;
+      if (digits.length >= 7 && digits.length <= 15) return '+' + digits;
+      return null;
+    }
+
+    function hideFormError() {
+      var err = document.getElementById('formError');
+      err.hidden = true;
+      err.textContent = '';
+    }
+
+    function showFormError(msg) {
+      var err = document.getElementById('formError');
+      err.textContent = msg;
+      err.hidden = false;
+      err.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function showThanks() {
+      hideFormError();
+      var b = document.getElementById('thanksBanner');
+      b.hidden = false;
+      b.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      try { history.replaceState({}, '', 'sms-opt-in.html'); } catch (e2) {}
+    }
+
+    if (new URLSearchParams(location.search).get('thanks') === '1') {
+      showThanks();
+    }
+
+    var form = document.getElementById('smsOptIn');
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      hideFormError();
+      var input = document.getElementById('phone');
+      var raw = String(input.value || '').trim();
+      if (!raw) {
+        alert('Enter your mobile number.');
+        input.focus();
+        return;
+      }
+      var e164 = phoneToE164(raw);
+      if (!e164) {
+        alert('Please enter a valid mobile number (e.g. 4155331352, 5551234567, or +14155331352).');
+        input.focus();
+        return;
+      }
+      var consent = document.getElementById('sms_consent');
+      if (!consent.checked) {
+        showFormError('Please check the SMS consent box to subscribe.');
+        consent.focus();
+        return;
+      }
+      input.value = e164;
+
+      var btn = form.querySelector('button[type="submit"]');
+      var hp = document.getElementById('website');
+      var params = new URLSearchParams();
+      params.set('phone', e164);
+      params.set('name', String(document.getElementById('name').value || '').trim());
+      params.set('company', String(document.getElementById('company').value || '').trim());
+      params.set('website', String(hp.value || ''));
+      params.set('sms_consent', 'yes');
+
+      btn.disabled = true;
+      fetch(form.action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+        credentials: 'same-origin',
+      })
+        .then(function (res) {
+          btn.disabled = false;
+          if (res.ok) {
+            showThanks();
+            form.reset();
+            return;
+          }
+          return res.text().then(function (t) {
+            showFormError((t && t.trim()) || 'Something went wrong. Please try again.');
+          });
+        })
+        .catch(function () {
+          btn.disabled = false;
+          showFormError('Network error. Check your connection and try again.');
+        });
+    });
+  })();
+</script>
+
+</body>
+</html>
