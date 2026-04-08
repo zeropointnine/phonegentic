@@ -65,8 +65,10 @@ class ChromeBrowserService {
   }
 
   /// Navigate to [url], wait for DOM + a JS render delay, then evaluate
-  /// [jsExpression]. Uses domContentLoaded + manual delay because
-  /// FlightAware's persistent connections prevent networkIdle from firing.
+  /// [jsExpression]. If the navigation times out waiting for
+  /// domContentLoaded (common with heavy SPAs like Gmail), we still
+  /// proceed with the JS evaluation since the page content is typically
+  /// available before that event formally fires.
   Future<T> navigateAndEvaluate<T>(
     String url,
     String jsExpression, {
@@ -76,7 +78,11 @@ class ChromeBrowserService {
     final browser = await ensureBrowser();
     final page = await browser.newPage();
     try {
-      await page.goto(url, wait: Until.domContentLoaded, timeout: timeout);
+      try {
+        await page.goto(url, wait: Until.domContentLoaded, timeout: timeout);
+      } on TimeoutException {
+        _log.w('Navigation timed out for $url — proceeding with evaluation');
+      }
       await Future<void>.delayed(renderDelay);
       final result = await page.evaluate<T>(jsExpression);
       return result;

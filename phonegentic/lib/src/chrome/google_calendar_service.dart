@@ -172,11 +172,12 @@ class GoogleCalendarService extends ChangeNotifier {
           'https://calendar.google.com/calendar/r/eventedit?${params.join('&')}';
       _log.i('Creating calendar event: $url');
 
-      final result = await _chrome.navigateAndEvaluate<Map<String, dynamic>>(
+      final raw = await _chrome.navigateAndEvaluate(
         url,
         _createEventJs,
         renderDelay: const Duration(seconds: 5),
       );
+      final result = Map<String, dynamic>.from(raw as Map);
 
       final success = result['success'] as bool? ?? false;
       if (!success) {
@@ -223,8 +224,11 @@ class GoogleCalendarService extends ChangeNotifier {
       );
 
       final events = raw
-          .cast<Map<String, dynamic>>()
-          .map((m) => GCalEventInfo.fromMap({...m, 'date': date}))
+          .whereType<Map>()
+          .map((m) => GCalEventInfo.fromMap({
+                ...Map<String, dynamic>.from(m),
+                'date': date,
+              }))
           .toList();
 
       _lastEvents = events;

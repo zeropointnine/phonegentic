@@ -151,11 +151,12 @@ class GmailService extends ChangeNotifier {
           '&body=$encodedBody';
       _log.i('Sending email via: $url');
 
-      final result = await _chrome.navigateAndEvaluate<Map<String, dynamic>>(
+      final raw = await _chrome.navigateAndEvaluate(
         url,
         _sendJs,
         renderDelay: const Duration(seconds: 4),
       );
+      final result = Map<String, dynamic>.from(raw as Map);
 
       final success = result['success'] as bool? ?? false;
       if (!success) {
@@ -201,8 +202,8 @@ class GmailService extends ChangeNotifier {
       );
 
       final emails = raw
-          .cast<Map<String, dynamic>>()
-          .map((m) => EmailInfo.fromMap(m))
+          .whereType<Map>()
+          .map((m) => EmailInfo.fromMap(Map<String, dynamic>.from(m)))
           .toList();
 
       final result = EmailSearchResult(
@@ -241,9 +242,13 @@ class GmailService extends ChangeNotifier {
       final browser = await _chrome.ensureBrowser();
       final page = await browser.newPage();
       try {
-        await page.goto(url,
-            wait: Until.domContentLoaded,
-            timeout: const Duration(seconds: 20));
+        try {
+          await page.goto(url,
+              wait: Until.domContentLoaded,
+              timeout: const Duration(seconds: 20));
+        } on TimeoutException {
+          _log.w('Navigation timed out for $url — proceeding');
+        }
         await Future<void>.delayed(const Duration(seconds: 5));
 
         // Click the Nth result row to open the email
@@ -255,9 +260,8 @@ class GmailService extends ChangeNotifier {
         ''');
         await Future<void>.delayed(const Duration(seconds: 4));
 
-        final raw =
-            await page.evaluate<Map<String, dynamic>>(_readJs);
-        final info = EmailInfo.fromMap(raw);
+        final raw = await page.evaluate(_readJs);
+        final info = EmailInfo.fromMap(Map<String, dynamic>.from(raw as Map));
         _lastRead = info;
         _connected = true;
         _error = info.hasContent ? null : 'Could not parse email content';

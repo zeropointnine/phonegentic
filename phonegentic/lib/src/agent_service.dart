@@ -18,6 +18,7 @@ import 'chrome/gmail_config.dart';
 import 'chrome/gmail_service.dart';
 import 'chrome/google_calendar_config.dart';
 import 'chrome/google_calendar_service.dart';
+import 'chrome/google_search_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
@@ -74,6 +75,7 @@ class AgentService extends ChangeNotifier {
   FlightAwareService? flightAwareService;
   GmailService? gmailService;
   GoogleCalendarService? googleCalendarService;
+  GoogleSearchService? googleSearchService;
   JobFunctionService? _jobFunctionService;
   SIPUAHelper? sipHelper;
 
@@ -370,7 +372,8 @@ class AgentService extends ChangeNotifier {
     final flight = _buildFlightAwareContext();
     final gmail = _buildGmailContext();
     final gcal = _buildGoogleCalendarContext();
-    _whisper.updateSessionInstructions('$base$flight$gmail$gcal');
+    final gsearch = _buildGoogleSearchContext();
+    _whisper.updateSessionInstructions('$base$flight$gmail$gcal$gsearch');
     _textAgent?.updateInstructions(_buildTextAgentInstructions());
     _applyIntegrationTools();
   }
@@ -656,6 +659,7 @@ class AgentService extends ChangeNotifier {
     final flight = _buildFlightAwareContext();
     final gmail = _buildGmailContext();
     final gcal = _buildGoogleCalendarContext();
+    final gsearch = _buildGoogleSearchContext();
     final prompt = _textAgentConfig?.systemPrompt ?? '';
     final buf = StringBuffer(base);
     buf.write(_buildDateTimeContext());
@@ -663,6 +667,7 @@ class AgentService extends ChangeNotifier {
     if (flight.isNotEmpty) buf.write(flight);
     if (gmail.isNotEmpty) buf.write(gmail);
     if (gcal.isNotEmpty) buf.write(gcal);
+    if (gsearch.isNotEmpty) buf.write(gsearch);
     if (prompt.isNotEmpty) {
       buf.write('\n\n## Additional Instructions\n$prompt');
     }
@@ -696,6 +701,9 @@ class AgentService extends ChangeNotifier {
 
   bool get _googleCalendarEnabled =>
       googleCalendarService != null && googleCalendarService!.config.enabled;
+
+  bool get _googleSearchEnabled =>
+      googleSearchService != null && googleSearchService!.config.enabled;
 
   String _buildFlightAwareContext() {
     if (!_flightAwareEnabled) return '';
@@ -1091,6 +1099,56 @@ class AgentService extends ChangeNotifier {
     },
   ];
 
+  // ── Google Search tools ─────────────────────────────────────────────
+
+  String _buildGoogleSearchContext() {
+    if (!_googleSearchEnabled) return '';
+    return '\n\n## Google Search Integration\n'
+        'You can search the web using Google:\n'
+        '- **google_search**: Search Google for any query. Returns top results '
+        'with title, URL, and snippet.\n'
+        'Use this when the caller or host asks you to look something up, '
+        'find information online, or answer factual questions you are '
+        'unsure about.\n';
+  }
+
+  static const _googleSearchToolsOpenAi = [
+    {
+      'type': 'function',
+      'name': 'google_search',
+      'description':
+          'Search Google and return top results with title, URL, and snippet.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description': 'The search query to send to Google.',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+  ];
+
+  static const _googleSearchToolsClaude = [
+    {
+      'name': 'google_search',
+      'description':
+          'Search Google and return top results with title, URL, and snippet.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'query': {
+            'type': 'string',
+            'description': 'The search query to send to Google.',
+          },
+        },
+        'required': ['query'],
+      },
+    },
+  ];
+
   /// Push integration-specific tools and instructions to both pipelines.
   void _applyIntegrationTools() {
     final oaiExtra = <Map<String, dynamic>>[];
@@ -1107,6 +1165,10 @@ class AgentService extends ChangeNotifier {
     if (_googleCalendarEnabled) {
       oaiExtra.addAll(_googleCalendarToolsOpenAi);
       claudeExtra.addAll(_googleCalendarToolsClaude);
+    }
+    if (_googleSearchEnabled) {
+      oaiExtra.addAll(_googleSearchToolsOpenAi);
+      claudeExtra.addAll(_googleSearchToolsClaude);
     }
 
     _whisper.setExtraTools(oaiExtra);
@@ -1614,6 +1676,9 @@ class AgentService extends ChangeNotifier {
         case 'sync_google_calendar':
           result = await _handleSyncGoogleCalendar(args);
           break;
+        case 'google_search':
+          result = await _handleGoogleSearch(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -1694,6 +1759,9 @@ class AgentService extends ChangeNotifier {
           break;
         case 'sync_google_calendar':
           result = await _handleSyncGoogleCalendar(req.arguments);
+          break;
+        case 'google_search':
+          result = await _handleGoogleSearch(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -2422,6 +2490,38 @@ class AgentService extends ChangeNotifier {
       return await googleCalendarService!.syncBidirectional();
     } catch (e) {
       return 'Calendar sync failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Google Search tool handler
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleGoogleSearch(Map<String, dynamic> args) async {
+    if (googleSearchService == null || !googleSearchService!.config.enabled) {
+      return 'Google Search integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final query = args['query'] as String?;
+    if (query == null || query.isEmpty) return 'No search query provided.';
+
+    try {
+      final result = await googleSearchService!.searchGoogle(query);
+      if (result == null || result.items.isEmpty) {
+        return 'No results found for "$query".';
+      }
+      final buf = StringBuffer('Google results for "$query":\n\n');
+      for (final item in result.items.take(8)) {
+        buf.writeln('**${item.title}**');
+        if (item.url.isNotEmpty) buf.writeln(item.url);
+        if (item.snippet.isNotEmpty) buf.writeln(item.snippet);
+        buf.writeln();
+      }
+      if (result.items.length > 8) {
+        buf.writeln('(${result.items.length - 8} more results not shown)');
+      }
+      return buf.toString();
+    } catch (e) {
+      return 'Google search failed: ${e.toString().split('\n').first}';
     }
   }
 

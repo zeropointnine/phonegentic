@@ -1,4 +1,4 @@
-import 'package:phonegentic/src/test_credentials.dart';
+import 'package:phonegentic/src/test_credentials_local.dart';
 import 'package:phonegentic/src/user_state/sip_user.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
 import 'package:flutter/material.dart';
@@ -90,8 +90,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
     }
 
     setState(() {
-      _portController.text =
-          _preferences.getString('port') ?? defaultUser.port;
+      _portController.text = _preferences.getString('port') ?? defaultUser.port;
       _wsUriController.text =
           _preferences.getString('ws_uri') ?? defaultUser.wsUrl ?? '';
       _sipUriController.text =
@@ -269,13 +268,9 @@ class _MyRegisterWidget extends State<RegisterWidget>
             labelColor: AppColors.onAccent,
             unselectedLabelColor: AppColors.textSecondary,
             labelStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.2),
+                fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: -0.2),
             unselectedLabelStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.2),
+                fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: -0.2),
             tabs: const [
               Tab(
                 height: 32,
@@ -426,8 +421,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                                 ? 'Merge calls via SIP REFER'
                                 : 'Merge calls into a server-side conference bridge',
                             style: TextStyle(
-                                fontSize: 11,
-                                color: AppColors.textTertiary),
+                                fontSize: 11, color: AppColors.textTertiary),
                           ),
                         ],
                       ),
@@ -436,8 +430,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
                       value: _conf.provider,
                       dropdownColor: AppColors.card,
                       underline: const SizedBox.shrink(),
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textPrimary),
+                      style:
+                          TextStyle(fontSize: 13, color: AppColors.textPrimary),
                       items: const [
                         DropdownMenuItem(
                           value: ConferenceProviderType.none,
@@ -461,15 +455,13 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
               ),
               if (isBasic) ...[
-                Divider(
-                    height: 1,
-                    color: AppColors.border.withOpacity(0.4)),
+                Divider(height: 1, color: AppColors.border.withOpacity(0.4)),
                 _buildBasicConfToggle(
                   label: 'Platform supports sending Updates',
                   subtitle: 'Use SIP UPDATE for hold; otherwise re-INVITE',
                   value: _conf.basicSupportsUpdate,
-                  onChanged: (v) => _updateConference(
-                      _conf.copyWith(basicSupportsUpdate: v)),
+                  onChanged: (v) =>
+                      _updateConference(_conf.copyWith(basicSupportsUpdate: v)),
                 ),
                 _buildBasicConfToggle(
                   label: 'Renegotiate media after merge',
@@ -480,56 +472,50 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
               ],
               if (isTelnyx) ...[
-                Divider(
-                    height: 1,
-                    color: AppColors.border.withOpacity(0.4)),
+                Divider(height: 1, color: AppColors.border.withOpacity(0.4)),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: TextField(
                     controller: _confTelnyxKeyCtrl,
                     obscureText: true,
-                    style: TextStyle(
-                        fontSize: 13, color: AppColors.textPrimary),
+                    style:
+                        TextStyle(fontSize: 13, color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'Telnyx API Key (v2)',
-                      labelStyle:
-                          TextStyle(color: AppColors.textTertiary),
+                      labelStyle: TextStyle(color: AppColors.textTertiary),
                       isDense: true,
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8)),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(
-                            color: AppColors.border, width: 0.5),
+                        borderSide:
+                            BorderSide(color: AppColors.border, width: 0.5),
                       ),
                     ),
-                    onChanged: (v) => _updateConference(
-                        _conf.copyWith(telnyxApiKey: v)),
+                    onChanged: (v) =>
+                        _updateConference(_conf.copyWith(telnyxApiKey: v)),
                   ),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
                   child: TextField(
                     controller: _confTelnyxConnIdCtrl,
-                    style: TextStyle(
-                        fontSize: 13, color: AppColors.textPrimary),
+                    style:
+                        TextStyle(fontSize: 13, color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'Telnyx Connection ID',
-                      labelStyle:
-                          TextStyle(color: AppColors.textTertiary),
+                      labelStyle: TextStyle(color: AppColors.textTertiary),
                       isDense: true,
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8)),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(
-                            color: AppColors.border, width: 0.5),
+                        borderSide:
+                            BorderSide(color: AppColors.border, width: 0.5),
                       ),
-                      helperText:
-                          'SIP credential or Call Control App ID',
+                      helperText: 'SIP credential or Call Control App ID',
                       helperStyle: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textTertiary),
+                          fontSize: 10, color: AppColors.textTertiary),
                     ),
                     onChanged: (v) => _updateConference(
                         _conf.copyWith(telnyxConnectionId: v)),
@@ -539,28 +525,26 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
                   child: TextField(
                     controller: _confTelnyxWebhookCtrl,
-                    style: TextStyle(
-                        fontSize: 13, color: AppColors.textPrimary),
+                    style:
+                        TextStyle(fontSize: 13, color: AppColors.textPrimary),
                     decoration: InputDecoration(
                       labelText: 'Webhook URL (optional)',
-                      labelStyle:
-                          TextStyle(color: AppColors.textTertiary),
+                      labelStyle: TextStyle(color: AppColors.textTertiary),
                       isDense: true,
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8)),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(
-                            color: AppColors.border, width: 0.5),
+                        borderSide:
+                            BorderSide(color: AppColors.border, width: 0.5),
                       ),
                       helperText:
                           'Auto-enables Call Control on credential connections',
                       helperStyle: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textTertiary),
+                          fontSize: 10, color: AppColors.textTertiary),
                     ),
-                    onChanged: (v) => _updateConference(
-                        _conf.copyWith(telnyxWebhookUrl: v)),
+                    onChanged: (v) =>
+                        _updateConference(_conf.copyWith(telnyxWebhookUrl: v)),
                   ),
                 ),
               ],
@@ -596,8 +580,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                      fontSize: 10, color: AppColors.textTertiary),
+                  style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
                 ),
               ],
             ),
@@ -691,8 +674,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
             width: 100,
             child: Text(
               label,
-              style: TextStyle(
-                  fontSize: 13, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
           ),
           Expanded(
@@ -700,16 +682,14 @@ class _MyRegisterWidget extends State<RegisterWidget>
               controller: controller,
               obscureText: obscure,
               autocorrect: false,
-              style: TextStyle(
-                  fontSize: 14, color: AppColors.textPrimary),
+              style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
                 hintText: placeholder,
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 filled: false,
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),
@@ -752,8 +732,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color:
-                    selected ? AppColors.onAccent : AppColors.textTertiary,
+                color: selected ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),
@@ -775,7 +754,9 @@ class _MyRegisterWidget extends State<RegisterWidget>
         child: Text(
           'Register',
           style: TextStyle(
-              fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.onAccent),
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: AppColors.onAccent),
         ),
       ),
     );

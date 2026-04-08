@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
-import 'package:phonegentic/src/test_credentials.dart';
+import 'package:phonegentic/src/test_credentials_local.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
 import 'package:flutter/foundation.dart';
@@ -45,7 +45,8 @@ class DialPadWidget extends StatefulWidget {
   State<DialPadWidget> createState() => _MyDialPadWidget();
 }
 
-class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListener {
+class _MyDialPadWidget extends State<DialPadWidget>
+    implements SipUaHelperListener {
   String? _dest;
   SIPUAHelper? get helper => widget._helper;
   TextEditingController? _textController;
@@ -165,7 +166,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
 
   Future<Widget?> _handleCall(BuildContext context) async {
     final dest = _textController?.text;
-    if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) {
+    if (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS) {
       await Permission.microphone.request();
       await Permission.camera.request();
     }
@@ -176,7 +178,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         builder: (BuildContext context) {
           return AlertDialog(
             backgroundColor: AppColors.card,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             title: const Text('No number entered'),
             content: const Text('Please enter a number or SIP URI.'),
             actions: [
@@ -200,7 +203,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
       },
       'video': false,
     };
-    final mediaStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    final mediaStream =
+        await navigator.mediaDevices.getUserMedia(mediaConstraints);
     final normalized = dest.contains('@') ? dest : ensureE164(dest);
     helper!.call(normalized, voiceOnly: true, mediaStream: mediaStream);
     return null;
@@ -485,9 +489,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
                   ? Icons.groups_rounded
                   : Icons.call_split_rounded,
               size: 12,
-              color: conf.hasConference
-                  ? AppColors.green
-                  : AppColors.burntAmber,
+              color:
+                  conf.hasConference ? AppColors.green : AppColors.burntAmber,
             ),
             const SizedBox(width: 4),
             Text(
@@ -497,9 +500,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
-                color: conf.hasConference
-                    ? AppColors.green
-                    : AppColors.burntAmber,
+                color:
+                    conf.hasConference ? AppColors.green : AppColors.burntAmber,
               ),
             ),
           ],
@@ -515,8 +517,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= _collapseThreshold;
         return Padding(
-          padding: const EdgeInsets.only(
-              left: 90, right: 16, top: 18, bottom: 15),
+          padding:
+              const EdgeInsets.only(left: 90, right: 16, top: 18, bottom: 15),
           child: Row(
             children: [
               const PhonegenticLogo(size: 30),
@@ -636,9 +638,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
             child: Icon(
               Icons.chat_bubble_outline_rounded,
               size: 16,
-              color: messaging.isOpen
-                  ? AppColors.accent
-                  : AppColors.textSecondary,
+              color:
+                  messaging.isOpen ? AppColors.accent : AppColors.textSecondary,
             ),
           ),
           if (unread > 0)
@@ -696,9 +697,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         child: Icon(
           Icons.receipt_long_rounded,
           size: 16,
-          color: tearSheet.isActive
-              ? AppColors.accent
-              : AppColors.textSecondary,
+          color:
+              tearSheet.isActive ? AppColors.accent : AppColors.textSecondary,
         ),
       ),
     );
@@ -715,9 +715,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         decoration: BoxDecoration(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+          border:
+              Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
         ),
-        child: Icon(Icons.contacts_rounded, size: 16, color: AppColors.textSecondary),
+        child: Icon(Icons.contacts_rounded,
+            size: 16, color: AppColors.textSecondary),
       ),
     );
   }
@@ -733,9 +735,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         decoration: BoxDecoration(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+          border:
+              Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
         ),
-        child: Icon(Icons.history_rounded, size: 16, color: AppColors.textSecondary),
+        child: Icon(Icons.history_rounded,
+            size: 16, color: AppColors.textSecondary),
       ),
     );
   }
@@ -749,9 +753,11 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
         decoration: BoxDecoration(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+          border:
+              Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
         ),
-        child: Icon(Icons.headphones_rounded, size: 16, color: AppColors.textSecondary),
+        child: Icon(Icons.headphones_rounded,
+            size: 16, color: AppColors.textSecondary),
       ),
     );
   }
@@ -1038,7 +1044,8 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
                       child: SizedBox(
                         width: 56,
                         height: 56,
-                        child: Icon(Icons.backspace_outlined, size: 22, color: AppColors.textTertiary),
+                        child: Icon(Icons.backspace_outlined,
+                            size: 22, color: AppColors.textTertiary),
                       ),
                     )
                   : const SizedBox.shrink()),
@@ -1111,12 +1118,14 @@ class _MyDialPadWidget extends State<DialPadWidget> implements SipUaHelperListen
           final remaining = _calls.values.first;
           if (remaining.state == CallStateEnum.HOLD) {
             remaining.unhold();
-            debugPrint('[Dialpad] Auto-unhold remaining call after conference leg failed');
+            debugPrint(
+                '[Dialpad] Auto-unhold remaining call after conference leg failed');
           }
           if (callState.state == CallStateEnum.FAILED && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Conference call failed — returned to active call'),
+                content:
+                    Text('Conference call failed — returned to active call'),
                 duration: Duration(seconds: 3),
               ),
             );
@@ -1291,8 +1300,7 @@ class _CallButtonState extends State<_CallButton>
                       ),
                   ],
                 ),
-                child: Icon(
-                    Icons.phone, size: 30, color: AppColors.crtBlack),
+                child: Icon(Icons.phone, size: 30, color: AppColors.crtBlack),
               );
             },
           ),

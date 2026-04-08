@@ -5,6 +5,7 @@ import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/chrome/flight_aware_service.dart';
 import 'package:phonegentic/src/chrome/gmail_service.dart';
 import 'package:phonegentic/src/chrome/google_calendar_service.dart';
+import 'package:phonegentic/src/chrome/google_search_service.dart';
 import 'package:phonegentic/src/conference/conference_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
@@ -90,6 +91,9 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<GoogleCalendarService>(
           create: (_) => GoogleCalendarService()..loadConfig(),
         ),
+        ChangeNotifierProvider<GoogleSearchService>(
+          create: (_) => GoogleSearchService()..loadConfig(),
+        ),
         ChangeNotifierProxyProvider6<CallHistoryService, ContactService,
             JobFunctionService, FlightAwareService, GmailService,
             GoogleCalendarService, AgentService>(
@@ -103,6 +107,7 @@ class MyApp extends StatelessWidget {
                 ..flightAwareService = flight
                 ..gmailService = gmail
                 ..googleCalendarService = gcal
+                ..googleSearchService = context.read<GoogleSearchService>()
                 ..demoModeService = context.read<DemoModeService>(),
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(

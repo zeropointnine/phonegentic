@@ -9,6 +9,8 @@ import '../chrome/gmail_config.dart';
 import '../chrome/gmail_service.dart';
 import '../chrome/google_calendar_config.dart';
 import '../chrome/google_calendar_service.dart';
+import '../chrome/google_search_config.dart';
+import '../chrome/google_search_service.dart';
 import '../demo_mode_service.dart';
 import '../messaging/messaging_config.dart';
 import '../messaging/messaging_service.dart';
@@ -16,6 +18,172 @@ import '../messaging/telnyx_messaging_provider.dart';
 import '../messaging/twilio_messaging_provider.dart';
 import '../theme_provider.dart';
 import '../user_config_service.dart';
+
+/// Shows a modal dialog prompting the user to start Chrome with remote
+/// debugging. Returns `true` if the connection was established via retry.
+Future<bool> showChromeLaunchDialog(
+  BuildContext context, {
+  required String launchCommand,
+  required VoidCallback onCopy,
+  required Future<bool> Function() onTest,
+}) async {
+  return await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => _ChromeLaunchDialog(
+          launchCommand: launchCommand,
+          onCopy: onCopy,
+          onTest: onTest,
+        ),
+      ) ??
+      false;
+}
+
+class _ChromeLaunchDialog extends StatefulWidget {
+  final String launchCommand;
+  final VoidCallback onCopy;
+  final Future<bool> Function() onTest;
+
+  const _ChromeLaunchDialog({
+    required this.launchCommand,
+    required this.onCopy,
+    required this.onTest,
+  });
+
+  @override
+  State<_ChromeLaunchDialog> createState() => _ChromeLaunchDialogState();
+}
+
+class _ChromeLaunchDialogState extends State<_ChromeLaunchDialog> {
+  bool _testing = false;
+  bool? _result;
+
+  Future<void> _retry() async {
+    setState(() {
+      _testing = true;
+      _result = null;
+    });
+    final ok = await widget.onTest();
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pop(true);
+    } else {
+      setState(() {
+        _testing = false;
+        _result = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          Icon(Icons.terminal_rounded, color: AppColors.accent, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Start Chrome with Remote Debugging',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'This integration requires Chrome running with a debug port. '
+            'Open Terminal and paste the command below:',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          GestureDetector(
+            onTap: () {
+              widget.onCopy();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Copied to clipboard'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.launchCommand,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'Courier',
+                        height: 1.4,
+                      ),
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.copy_rounded,
+                      size: 14, color: AppColors.textTertiary),
+                ],
+              ),
+            ),
+          ),
+          if (_result == false) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Chrome not detected. Make sure it is running and try again.',
+              style: TextStyle(fontSize: 11, color: AppColors.red),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text('Cancel',
+              style: TextStyle(color: AppColors.textTertiary, fontSize: 13)),
+        ),
+        ElevatedButton.icon(
+          onPressed: _testing ? null : _retry,
+          icon: _testing
+              ? SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.refresh_rounded, size: 16),
+          label: Text(_testing ? 'Testing...' : 'Test Connection',
+              style: const TextStyle(fontSize: 12)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.accent,
+            foregroundColor: Colors.white,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class UserSettingsTab extends StatefulWidget {
   const UserSettingsTab({Key? key}) : super(key: key);
@@ -53,6 +221,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   final _gcalDateCtrl = TextEditingController();
   final _gcalAllowPhoneCtrl = TextEditingController();
 
+  GoogleSearchConfig _googleSearch = const GoogleSearchConfig();
+  bool _googleSearchExpanded = false;
+  final _googleSearchCtrl = TextEditingController();
+
   final _calendlyKeyCtrl = TextEditingController();
   final _fakeNumberCtrl = TextEditingController();
   final _telnyxMsgKeyCtrl = TextEditingController();
@@ -89,6 +261,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _gmailAllowPhoneCtrl.dispose();
     _gcalDateCtrl.dispose();
     _gcalAllowPhoneCtrl.dispose();
+    _googleSearchCtrl.dispose();
     super.dispose();
   }
 
@@ -101,6 +274,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final fa = await FlightAwareConfig.load();
     final gm = await GmailConfig.load();
     final gc = await GoogleCalendarConfig.load();
+    final gs = await GoogleSearchConfig.load();
     if (!mounted) return;
     setState(() {
       _calendly = c;
@@ -111,6 +285,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _flightAware = fa;
       _gmail = gm;
       _gcal = gc;
+      _googleSearch = gs;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
       _telnyxMsgKeyCtrl.text = t.apiKey;
@@ -160,22 +335,80 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     context.read<MessagingService>().reconfigure();
   }
 
-  void _updateFlightAware(FlightAwareConfig fa) {
+  Future<void> _updateFlightAware(FlightAwareConfig fa) async {
+    final wasEnabled = _flightAware.enabled;
     setState(() => _flightAware = fa);
     fa.save();
-    context.read<FlightAwareService>().updateConfig(fa);
+    final svc = context.read<FlightAwareService>();
+    await svc.updateConfig(fa);
+    if (fa.enabled && !wasEnabled) {
+      final ok = await svc.testConnection();
+      if (!ok && mounted) {
+        showChromeLaunchDialog(
+          context,
+          launchCommand: svc.chrome.launchCommand,
+          onCopy: svc.copyLaunchCommand,
+          onTest: svc.testConnection,
+        );
+      }
+    }
   }
 
-  void _updateGmail(GmailConfig gm) {
+  Future<void> _updateGmail(GmailConfig gm) async {
+    final wasEnabled = _gmail.enabled;
     setState(() => _gmail = gm);
     gm.save();
-    context.read<GmailService>().updateConfig(gm);
+    final svc = context.read<GmailService>();
+    await svc.updateConfig(gm);
+    if (gm.enabled && !wasEnabled) {
+      final ok = await svc.testConnection();
+      if (!ok && mounted) {
+        showChromeLaunchDialog(
+          context,
+          launchCommand: svc.chrome.launchCommand,
+          onCopy: svc.copyLaunchCommand,
+          onTest: svc.testConnection,
+        );
+      }
+    }
   }
 
-  void _updateGcal(GoogleCalendarConfig gc) {
+  Future<void> _updateGcal(GoogleCalendarConfig gc) async {
+    final wasEnabled = _gcal.enabled;
     setState(() => _gcal = gc);
     gc.save();
-    context.read<GoogleCalendarService>().updateConfig(gc);
+    final svc = context.read<GoogleCalendarService>();
+    await svc.updateConfig(gc);
+    if (gc.enabled && !wasEnabled) {
+      final ok = await svc.testConnection();
+      if (!ok && mounted) {
+        showChromeLaunchDialog(
+          context,
+          launchCommand: svc.chrome.launchCommand,
+          onCopy: svc.copyLaunchCommand,
+          onTest: svc.testConnection,
+        );
+      }
+    }
+  }
+
+  Future<void> _updateGoogleSearch(GoogleSearchConfig gs) async {
+    final wasEnabled = _googleSearch.enabled;
+    setState(() => _googleSearch = gs);
+    gs.save();
+    final svc = context.read<GoogleSearchService>();
+    await svc.updateConfig(gs);
+    if (gs.enabled && !wasEnabled) {
+      final ok = await svc.testConnection();
+      if (!ok && mounted) {
+        showChromeLaunchDialog(
+          context,
+          launchCommand: svc.chrome.launchCommand,
+          onCopy: svc.copyLaunchCommand,
+          onTest: svc.testConnection,
+        );
+      }
+    }
   }
 
   Future<void> _lookupFlight() async {
@@ -541,9 +774,21 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 _buildFlightAwareEnableToggle(),
                 if (_flightAware.enabled) ...[
                   _divider(),
-                  _buildChromeCommandRow(),
-                  _divider(),
-                  _buildChromeTestRow(),
+                  Builder(builder: (ctx) {
+                    final svc = ctx.watch<FlightAwareService>();
+                    return Column(children: [
+                      _buildChromeCommandRow(
+                        launchCommand: svc.chrome.launchCommand,
+                        onCopy: svc.copyLaunchCommand,
+                      ),
+                      _divider(),
+                      _buildChromeTestRow(
+                        isLoading: svc.loading,
+                        connected: svc.connected,
+                        onTest: svc.testConnection,
+                      ),
+                    ]);
+                  }),
                   _divider(),
                   _buildFlightLookupRow(),
                   _buildFlightResultsArea(),
@@ -561,6 +806,22 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                     color: AppColors.border.withOpacity(0.5)),
                 _buildGmailEnableToggle(),
                 if (_gmail.enabled) ...[
+                  _divider(),
+                  Builder(builder: (ctx) {
+                    final svc = ctx.watch<GmailService>();
+                    return Column(children: [
+                      _buildChromeCommandRow(
+                        launchCommand: svc.chrome.launchCommand,
+                        onCopy: svc.copyLaunchCommand,
+                      ),
+                      _divider(),
+                      _buildChromeTestRow(
+                        isLoading: svc.loading,
+                        connected: svc.connected,
+                        onTest: svc.testConnection,
+                      ),
+                    ]);
+                  }),
                   _divider(),
                   _buildGmailReadAccessRow(),
                   if (_gmail.readAccessMode == GmailReadAccess.allowList) ...[
@@ -582,6 +843,22 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 _buildGcalEnableToggle(),
                 if (_gcal.enabled) ...[
                   _divider(),
+                  Builder(builder: (ctx) {
+                    final svc = ctx.watch<GoogleCalendarService>();
+                    return Column(children: [
+                      _buildChromeCommandRow(
+                        launchCommand: svc.chrome.launchCommand,
+                        onCopy: svc.copyLaunchCommand,
+                      ),
+                      _divider(),
+                      _buildChromeTestRow(
+                        isLoading: svc.loading,
+                        connected: svc.connected,
+                        onTest: svc.testConnection,
+                      ),
+                    ]);
+                  }),
+                  _divider(),
                   _buildGcalReadAccessRow(),
                   if (_gcal.readAccessMode == CalendarReadAccess.allowList) ...[
                     _divider(),
@@ -592,6 +869,36 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   _divider(),
                   _buildGcalReadTestRow(),
                   _buildGcalReadResultsArea(),
+                ],
+              ],
+              Divider(
+                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+              _buildGoogleSearchHeader(),
+              if (_googleSearchExpanded) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withOpacity(0.5)),
+                _buildGoogleSearchEnableToggle(),
+                if (_googleSearch.enabled) ...[
+                  _divider(),
+                  Builder(builder: (ctx) {
+                    final svc = ctx.watch<GoogleSearchService>();
+                    return Column(children: [
+                      _buildChromeCommandRow(
+                        launchCommand: svc.chrome.launchCommand,
+                        onCopy: svc.copyLaunchCommand,
+                      ),
+                      _divider(),
+                      _buildChromeTestRow(
+                        isLoading: svc.loading,
+                        connected: svc.connected,
+                        onTest: svc.testConnection,
+                      ),
+                    ]);
+                  }),
+                  _divider(),
+                  _buildGoogleSearchTestRow(),
+                  _buildGoogleSearchResultsArea(),
                 ],
               ],
             ],
@@ -1261,8 +1568,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     );
   }
 
-  Widget _buildChromeCommandRow() {
-    final svc = context.read<FlightAwareService>();
+  Widget _buildChromeCommandRow({
+    required String launchCommand,
+    required VoidCallback onCopy,
+  }) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Column(
@@ -1275,11 +1584,11 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
           const SizedBox(height: 6),
           GestureDetector(
             onTap: () {
-              svc.copyLaunchCommand();
+              onCopy();
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
+                const SnackBar(
                   content: Text('Copied to clipboard'),
-                  duration: const Duration(seconds: 2),
+                  duration: Duration(seconds: 2),
                 ),
               );
             },
@@ -1294,7 +1603,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 children: [
                   Expanded(
                     child: Text(
-                      svc.chrome.launchCommand,
+                      launchCommand,
                       style: TextStyle(
                         fontSize: 10,
                         color: AppColors.textSecondary,
@@ -1317,16 +1626,18 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     );
   }
 
-  Widget _buildChromeTestRow() {
-    final svc = context.watch<FlightAwareService>();
-    final connected = svc.connected;
+  Widget _buildChromeTestRow({
+    required bool isLoading,
+    required bool? connected,
+    required VoidCallback onTest,
+  }) {
     final isSuccess = connected == true;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
       child: Row(
         children: [
           GestureDetector(
-            onTap: svc.loading ? null : () => svc.testConnection(),
+            onTap: isLoading ? null : onTest,
             child: Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -1334,7 +1645,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 color: AppColors.accent.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: svc.loading
+              child: isLoading
                   ? SizedBox(
                       width: 14,
                       height: 14,
@@ -2345,6 +2656,208 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                         style: TextStyle(
                             fontSize: 10, color: AppColors.textSecondary),
                         maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  // ───── Google Search ─────
+
+  Widget _buildGoogleSearchHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () =>
+          setState(() => _googleSearchExpanded = !_googleSearchExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _googleSearch.isConfigured
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.search_rounded,
+                  size: 17,
+                  color: _googleSearch.isConfigured
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Google Search',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: _googleSearch.isConfigured
+                          ? AppColors.green.withOpacity(0.12)
+                          : AppColors.card,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      _googleSearch.isConfigured ? 'Enabled' : 'Disabled',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _googleSearch.isConfigured
+                            ? AppColors.green
+                            : AppColors.textTertiary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _googleSearchExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGoogleSearchEnableToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Enabled',
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+          Switch(
+            value: _googleSearch.enabled,
+            onChanged: (v) =>
+                _updateGoogleSearch(_googleSearch.copyWith(enabled: v)),
+            activeColor: AppColors.accent,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGoogleSearchTestRow() {
+    final svc = context.watch<GoogleSearchService>();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _googleSearchCtrl,
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Search Google...',
+                hintStyle:
+                    TextStyle(fontSize: 12, color: AppColors.textTertiary),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 70,
+            height: 30,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+                textStyle: const TextStyle(fontSize: 11),
+              ),
+              onPressed: svc.loading
+                  ? null
+                  : () => svc.searchGoogle(_googleSearchCtrl.text),
+              child: svc.loading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('Search'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGoogleSearchResultsArea() {
+    final svc = context.watch<GoogleSearchService>();
+    final result = svc.lastSearch;
+    final error = svc.error;
+
+    if (result == null && error == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(error,
+                style: TextStyle(fontSize: 11, color: AppColors.red)),
+          if (result != null)
+            for (final item in result.items.take(5))
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title.isNotEmpty ? item.title : '(no title)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (item.url.isNotEmpty)
+                      Text(
+                        item.url,
+                        style: TextStyle(
+                            fontSize: 10, color: AppColors.accent),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    if (item.snippet.isNotEmpty)
+                      Text(
+                        item.snippet,
+                        style: TextStyle(
+                            fontSize: 10, color: AppColors.textSecondary),
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                   ],
