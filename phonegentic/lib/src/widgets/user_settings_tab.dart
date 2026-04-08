@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../calendar_sync_service.dart';
 import '../calendly_service.dart';
+import '../chrome/flight_aware_config.dart';
+import '../chrome/flight_aware_service.dart';
 import '../demo_mode_service.dart';
 import '../messaging/messaging_config.dart';
 import '../messaging/messaging_service.dart';
@@ -34,6 +36,9 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   bool _testingTwilioMsg = false;
   String? _twilioMsgStatus;
 
+  FlightAwareConfig _flightAware = const FlightAwareConfig();
+  bool _flightAwareExpanded = false;
+
   final _calendlyKeyCtrl = TextEditingController();
   final _fakeNumberCtrl = TextEditingController();
   final _telnyxMsgKeyCtrl = TextEditingController();
@@ -42,6 +47,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   final _twilioSidCtrl = TextEditingController();
   final _twilioTokenCtrl = TextEditingController();
   final _twilioFromCtrl = TextEditingController();
+
+  final _flightNumberCtrl = TextEditingController();
+  final _originCtrl = TextEditingController();
+  final _destCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -59,6 +68,9 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _twilioSidCtrl.dispose();
     _twilioTokenCtrl.dispose();
     _twilioFromCtrl.dispose();
+    _flightNumberCtrl.dispose();
+    _originCtrl.dispose();
+    _destCtrl.dispose();
     super.dispose();
   }
 
@@ -68,6 +80,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final t = await TelnyxMessagingConfig.load();
     final tw = await TwilioMessagingConfig.load();
     final backend = await MessagingSettings.loadBackend();
+    final fa = await FlightAwareConfig.load();
     if (!mounted) return;
     setState(() {
       _calendly = c;
@@ -75,6 +88,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _telnyxMsg = t;
       _twilioMsg = tw;
       _messagingBackend = backend;
+      _flightAware = fa;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
       _telnyxMsgKeyCtrl.text = t.apiKey;
@@ -122,6 +136,22 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     await MessagingSettings.saveBackend(b);
     if (!mounted) return;
     context.read<MessagingService>().reconfigure();
+  }
+
+  void _updateFlightAware(FlightAwareConfig fa) {
+    setState(() => _flightAware = fa);
+    fa.save();
+    context.read<FlightAwareService>().updateConfig(fa);
+  }
+
+  Future<void> _lookupFlight() async {
+    final svc = context.read<FlightAwareService>();
+    await svc.lookupFlight(_flightNumberCtrl.text);
+  }
+
+  Future<void> _searchRoute() async {
+    final svc = context.read<FlightAwareService>();
+    await svc.searchRoute(_originCtrl.text, _destCtrl.text);
   }
 
   Future<void> _testTwilioMsgConnection() async {
@@ -465,6 +495,27 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                     _updateTwilioMsg(_twilioMsg.copyWith(fromNumber: val));
                   }),
                   _buildTwilioMsgTestRow(),
+                ],
+              ],
+              Divider(
+                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+              _buildFlightAwareHeader(),
+              if (_flightAwareExpanded) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withOpacity(0.5)),
+                _buildFlightAwareEnableToggle(),
+                if (_flightAware.enabled) ...[
+                  _divider(),
+                  _buildChromeCommandRow(),
+                  _divider(),
+                  _buildChromeTestRow(),
+                  _divider(),
+                  _buildFlightLookupRow(),
+                  _buildFlightResultsArea(),
+                  _divider(),
+                  _buildRouteLookupRow(),
+                  _buildRouteResultsArea(),
                 ],
               ],
             ],
@@ -1016,6 +1067,510 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  // ───── FlightAware ─────
+
+  Widget _buildFlightAwareHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () =>
+          setState(() => _flightAwareExpanded = !_flightAwareExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _flightAware.isConfigured
+                    ? AppColors.accent.withOpacity(0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.flight_rounded,
+                  size: 17,
+                  color: _flightAware.isConfigured
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'FlightAware',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'Flight tracking via Chrome CDP',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _flightAware.isConfigured
+                              ? AppColors.green.withOpacity(0.12)
+                              : AppColors.orange.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _flightAware.isConfigured ? 'Enabled' : 'Disabled',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: _flightAware.isConfigured
+                                ? AppColors.green
+                                : AppColors.orange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _flightAwareExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFlightAwareEnableToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Enabled',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          const Spacer(),
+          SizedBox(
+            height: 28,
+            child: Switch.adaptive(
+              value: _flightAware.enabled,
+              onChanged: (v) =>
+                  _updateFlightAware(_flightAware.copyWith(enabled: v)),
+              activeColor: AppColors.accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChromeCommandRow() {
+    final svc = context.read<FlightAwareService>();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Paste in Terminal to start debug Chrome:',
+            style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
+          ),
+          const SizedBox(height: 6),
+          GestureDetector(
+            onTap: () {
+              svc.copyLaunchCommand();
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Copied to clipboard'),
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      svc.chrome.launchCommand,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'Courier',
+                        height: 1.4,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.copy_rounded,
+                      size: 14, color: AppColors.textTertiary),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChromeTestRow() {
+    final svc = context.watch<FlightAwareService>();
+    final connected = svc.connected;
+    final isSuccess = connected == true;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: svc.loading ? null : () => svc.testConnection(),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: svc.loading
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+            ),
+          ),
+          if (connected != null) ...[
+            const SizedBox(width: 10),
+            Icon(
+              isSuccess ? Icons.check_circle_rounded : Icons.cancel_rounded,
+              size: 14,
+              color: isSuccess ? AppColors.green : AppColors.red,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              isSuccess ? 'Connected' : 'Not found',
+              style: TextStyle(
+                fontSize: 11,
+                color: isSuccess ? AppColors.green : AppColors.red,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlightLookupRow() {
+    final svc = context.watch<FlightAwareService>();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _flightNumberCtrl,
+              autocorrect: false,
+              textCapitalization: TextCapitalization.characters,
+              style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'UA100 or UAL100',
+                hintStyle:
+                    TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onSubmitted: (_) => _lookupFlight(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: svc.loading ? null : _lookupFlight,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: svc.loading
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Look Up',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlightResultsArea() {
+    final svc = context.watch<FlightAwareService>();
+    final info = svc.lastFlight;
+    final error = svc.error;
+
+    if (info == null && error == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (error != null)
+            Text(
+              error,
+              style: TextStyle(fontSize: 11, color: AppColors.red),
+            ),
+          if (info != null) ...[
+            _flightDetailRow('Flight', info.flightNumber),
+            if (info.airline.isNotEmpty)
+              _flightDetailRow('Airline', info.airline),
+            if (info.origin.isNotEmpty)
+              _flightDetailRow('Origin', info.origin),
+            if (info.destination.isNotEmpty)
+              _flightDetailRow('Destination', info.destination),
+            if (info.departureTime != null)
+              _flightDetailRow('Departure', info.departureTime!),
+            if (info.arrivalTime != null)
+              _flightDetailRow('Arrival', info.arrivalTime!),
+            if (info.status != null)
+              _flightDetailRow('Status', info.status!),
+            if (info.aircraft != null)
+              _flightDetailRow('Aircraft', info.aircraft!),
+            if (info.gate != null)
+              _flightDetailRow('Gate', info.gate!),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _flightDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(fontSize: 11, color: AppColors.textPrimary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRouteLookupRow() {
+    final svc = context.watch<FlightAwareService>();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _originCtrl,
+              autocorrect: false,
+              textCapitalization: TextCapitalization.characters,
+              style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'KSFO',
+                hintStyle:
+                    TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Icon(Icons.arrow_forward_rounded,
+                size: 14, color: AppColors.textTertiary),
+          ),
+          Expanded(
+            child: TextField(
+              controller: _destCtrl,
+              autocorrect: false,
+              textCapitalization: TextCapitalization.characters,
+              style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'KJFK',
+                hintStyle:
+                    TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onSubmitted: (_) => _searchRoute(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: svc.loading ? null : _searchRoute,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: svc.loading
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Search',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRouteResultsArea() {
+    final svc = context.watch<FlightAwareService>();
+    final route = svc.lastRoute;
+    if (route == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${route.origin} → ${route.destination}  '
+            '(${route.flights.length} flights)',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          for (final f in route.flights.take(15))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 60,
+                    child: Text(
+                      f.flightNumber,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${f.airline}  ${f.aircraft ?? ""}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          '${f.status ?? ""}'
+                          '${f.departureTime != null ? "  Dep ${f.departureTime}" : ""}'
+                          '${f.arrivalTime != null ? "  Arr ${f.arrivalTime}" : ""}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

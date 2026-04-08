@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'chrome/flight_aware_config.dart';
+
 class CalendlyConfig {
   final String apiKey;
   final bool syncToMacOS;
@@ -72,4 +74,10 @@ class UserConfigService {
     await prefs.setBool('${_prefix}demo_mode_enabled', config.enabled);
     await prefs.setString('${_prefix}demo_fake_number', config.fakeNumber);
   }
+
+  static Future<FlightAwareConfig> loadFlightAwareConfig() =>
+      FlightAwareConfig.load();
+
+  static Future<void> saveFlightAwareConfig(FlightAwareConfig config) =>
+      config.save();
 }

@@ -13,6 +13,7 @@ import 'package:sip_ua/sip_ua.dart';
 import 'agent_config_service.dart';
 import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
+import 'chrome/flight_aware_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
@@ -66,6 +67,7 @@ class AgentService extends ChangeNotifier {
   TearSheetService? tearSheetService;
   MessagingService? messagingService;
   DemoModeService? demoModeService;
+  FlightAwareService? flightAwareService;
   JobFunctionService? _jobFunctionService;
   SIPUAHelper? sipHelper;
 
@@ -358,8 +360,11 @@ class AgentService extends ChangeNotifier {
 
   Future<void> _pushInstructionsIfLive() async {
     if (!_active) return;
-    _whisper.updateSessionInstructions(_bootContext.toInstructions());
+    final base = _bootContext.toInstructions();
+    final flight = _buildFlightAwareContext();
+    _whisper.updateSessionInstructions('$base$flight');
     _textAgent?.updateInstructions(_buildTextAgentInstructions());
+    _applyIntegrationTools();
   }
 
   Speaker get hostSpeaker => _bootContext.speakers.isNotEmpty
@@ -503,6 +508,7 @@ class AgentService extends ChangeNotifier {
       _functionCallSub = _whisper.functionCalls.listen(_onFunctionCall);
 
       _initTextAgent();
+      _applyIntegrationTools();
 
       // Apply the job function's ElevenLabs voice now that TTS is initialised.
       // The earlier updateVoiceId call (before _initTextAgent) was a no-op
@@ -639,10 +645,12 @@ class AgentService extends ChangeNotifier {
     );
     final base = ctx.toInstructions();
     final calendar = _buildCalendarContext();
+    final flight = _buildFlightAwareContext();
     final prompt = _textAgentConfig?.systemPrompt ?? '';
     final buf = StringBuffer(base);
     buf.write(_buildDateTimeContext());
     if (calendar.isNotEmpty) buf.write(calendar);
+    if (flight.isNotEmpty) buf.write(flight);
     if (prompt.isNotEmpty) {
       buf.write('\n\n## Additional Instructions\n$prompt');
     }
@@ -663,6 +671,128 @@ class AgentService extends ChangeNotifier {
     return '\n## Current Date & Time\n'
         '$day, $month ${now.day}, ${now.year} at $h:$m $ap $tz\n';
   }
+
+  // ---------------------------------------------------------------------------
+  // Dynamic integration tools
+  // ---------------------------------------------------------------------------
+
+  bool get _flightAwareEnabled =>
+      flightAwareService != null && flightAwareService!.config.enabled;
+
+  String _buildFlightAwareContext() {
+    if (!_flightAwareEnabled) return '';
+    return '\n\n## Flight Lookup (FlightAware)\n'
+        'You can look up real-time flight information using these tools:\n'
+        '- **lookup_flight**: Look up a specific flight by number (e.g. UAL278, AA100, DAL405). '
+        'Returns airline, origin/destination, departure/arrival times, status, and gate info.\n'
+        '- **search_flights_by_route**: Search all flights between two airports using '
+        'ICAO codes (e.g. KSFO→KJFK, KLAX→KORD). Returns a table of upcoming and recent flights.\n'
+        'Use these when the caller or host asks about flight status, arrival times, '
+        'which flights serve a route, or anything aviation-related.\n';
+  }
+
+  static const _flightToolsOpenAi = [
+    {
+      'type': 'function',
+      'name': 'lookup_flight',
+      'description':
+          'Look up real-time flight information by flight number. '
+              'Returns airline, origin, destination, departure/arrival times, '
+              'status, gate info.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'flight_number': {
+            'type': 'string',
+            'description':
+                'Flight number (e.g. UAL278, AA100, DAL405). ICAO or IATA format.',
+          },
+        },
+        'required': ['flight_number'],
+      },
+    },
+    {
+      'type': 'function',
+      'name': 'search_flights_by_route',
+      'description':
+          'Search for all flights between two airports. Returns a list of '
+              'upcoming and recent flights with airline, ident, aircraft, '
+              'status, and times.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'origin': {
+            'type': 'string',
+            'description': 'Origin airport ICAO code (e.g. KSFO, KLAX, KJFK)',
+          },
+          'destination': {
+            'type': 'string',
+            'description':
+                'Destination airport ICAO code (e.g. KJFK, KORD, KATL)',
+          },
+        },
+        'required': ['origin', 'destination'],
+      },
+    },
+  ];
+
+  static const _flightToolsClaude = [
+    {
+      'name': 'lookup_flight',
+      'description':
+          'Look up real-time flight information by flight number. '
+          'Returns airline, origin, destination, departure/arrival times, '
+          'status, gate info.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'flight_number': {
+            'type': 'string',
+            'description':
+                'Flight number (e.g. UAL278, AA100, DAL405). ICAO or IATA format.',
+          },
+        },
+        'required': ['flight_number'],
+      },
+    },
+    {
+      'name': 'search_flights_by_route',
+      'description':
+          'Search all flights between two airports. Returns upcoming and '
+          'recent flights with airline, ident, aircraft, status, and times.',
+      'input_schema': {
+        'type': 'object',
+        'properties': {
+          'origin': {
+            'type': 'string',
+            'description': 'Origin airport ICAO code (e.g. KSFO, KLAX, KJFK)',
+          },
+          'destination': {
+            'type': 'string',
+            'description':
+                'Destination airport ICAO code (e.g. KJFK, KORD, KATL)',
+          },
+        },
+        'required': ['origin', 'destination'],
+      },
+    },
+  ];
+
+  /// Push integration-specific tools and instructions to both pipelines.
+  void _applyIntegrationTools() {
+    final oaiExtra = <Map<String, dynamic>>[];
+    final claudeExtra = <Map<String, dynamic>>[];
+
+    if (_flightAwareEnabled) {
+      oaiExtra.addAll(_flightToolsOpenAi);
+      claudeExtra.addAll(_flightToolsClaude);
+    }
+
+    _whisper.setExtraTools(oaiExtra);
+    _textAgent?.setExtraTools(claudeExtra);
+  }
+
+  // ---------------------------------------------------------------------------
 
   /// Save the remote party's voiceprint embedding to SQLite for future
   /// identification, if we have both a known contact and an embedding.
@@ -1139,6 +1269,12 @@ class AgentService extends ChangeNotifier {
         case 'set_agent_voice':
           result = await _handleSetAgentVoice(args);
           break;
+        case 'lookup_flight':
+          result = await _handleLookupFlight(args);
+          break;
+        case 'search_flights_by_route':
+          result = await _handleSearchFlightsByRoute(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -1195,6 +1331,12 @@ class AgentService extends ChangeNotifier {
           break;
         case 'set_agent_voice':
           result = await _handleSetAgentVoice(req.arguments);
+          break;
+        case 'lookup_flight':
+          result = await _handleLookupFlight(req.arguments);
+          break;
+        case 'search_flights_by_route':
+          result = await _handleSearchFlightsByRoute(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -1613,6 +1755,79 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] Agent voice swapped to: $voiceId');
     return 'Voice updated. You are now speaking with voice_id=$voiceId. '
         'All subsequent speech will use this voice.';
+  }
+
+  // ---------------------------------------------------------------------------
+  // FlightAware tool handlers
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleLookupFlight(Map<String, dynamic> args) async {
+    if (flightAwareService == null || !flightAwareService!.config.enabled) {
+      return 'FlightAware integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final flightNumber = args['flight_number'] as String?;
+    if (flightNumber == null || flightNumber.isEmpty) {
+      return 'No flight number provided.';
+    }
+
+    try {
+      final info = await flightAwareService!.lookupFlight(flightNumber);
+      if (info == null || !info.hasRoute) {
+        return 'Could not find flight $flightNumber. '
+            'Make sure Chrome debug is running and the flight number is valid.';
+      }
+      final buf = StringBuffer('Flight $flightNumber:\n');
+      if (info.airline.isNotEmpty) buf.writeln('Airline: ${info.airline}');
+      buf.writeln('Origin: ${info.origin}');
+      buf.writeln('Destination: ${info.destination}');
+      if (info.departureTime != null) {
+        buf.writeln('Departure: ${info.departureTime}');
+      }
+      if (info.arrivalTime != null) {
+        buf.writeln('Arrival: ${info.arrivalTime}');
+      }
+      if (info.status != null) buf.writeln('Status: ${info.status}');
+      if (info.gate != null) buf.writeln('Gate: ${info.gate}');
+      return buf.toString();
+    } catch (e) {
+      return 'Flight lookup failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  Future<String> _handleSearchFlightsByRoute(Map<String, dynamic> args) async {
+    if (flightAwareService == null || !flightAwareService!.config.enabled) {
+      return 'FlightAware integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final origin = args['origin'] as String?;
+    final destination = args['destination'] as String?;
+    if (origin == null || origin.isEmpty || destination == null || destination.isEmpty) {
+      return 'Both origin and destination airport codes are required.';
+    }
+
+    try {
+      final result = await flightAwareService!.searchRoute(origin, destination);
+      if (result == null || result.flights.isEmpty) {
+        return 'No flights found for $origin → $destination.';
+      }
+      final buf = StringBuffer(
+          'Flights from $origin to $destination (${result.flights.length} total):\n');
+      for (final f in result.flights.take(15)) {
+        buf.write('${f.flightNumber} (${f.airline})');
+        if (f.aircraft != null && f.aircraft!.isNotEmpty) {
+          buf.write(' [${f.aircraft}]');
+        }
+        buf.write(' — ${f.status ?? "Unknown"}');
+        if (f.departureTime != null) buf.write('  Dep: ${f.departureTime}');
+        if (f.arrivalTime != null) buf.write('  Arr: ${f.arrivalTime}');
+        buf.writeln();
+      }
+      if (result.flights.length > 15) {
+        buf.writeln('(${result.flights.length - 15} more flights not shown)');
+      }
+      return buf.toString();
+    } catch (e) {
+      return 'Route search failed: ${e.toString().split('\n').first}';
+    }
   }
 
   void announceRecording() {

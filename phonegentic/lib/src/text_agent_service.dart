@@ -157,7 +157,16 @@ class TextAgentService {
     }
   }
 
-  static const _tools = [
+  List<Map<String, dynamic>> _extraTools = [];
+
+  /// Register additional tools from 3rd-party integrations.
+  void setExtraTools(List<Map<String, dynamic>> tools) {
+    _extraTools = tools;
+  }
+
+  List<Map<String, dynamic>> get _allTools => [..._baseTools, ..._extraTools];
+
+  static const _baseTools = [
     {
       'name': 'make_call',
       'description': 'Initiate an outbound phone call to a number.',
@@ -382,7 +391,7 @@ class TextAgentService {
       'max_tokens': 1024,
       'system': _systemInstructions,
       'messages': _mergedHistory(),
-      'tools': _tools,
+      'tools': _allTools,
       'stream': true,
     });
     request.add(utf8.encode(body));
