@@ -9,19 +9,27 @@ class ChromeBrowserService {
 
   Browser? _browser;
   int _debugPort = 9222;
+  String? _userDataDir;
 
   bool get isRunning => _browser != null;
   int get debugPort => _debugPort;
 
-  void configure({int? debugPort}) {
+  void configure({int? debugPort, String? userDataDir}) {
     if (debugPort != null) _debugPort = debugPort;
+    _userDataDir = userDataDir;
   }
 
-  String get launchCommand =>
+  String get launchCommand {
+    final buf = StringBuffer(
       '/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome '
-      '--remote-debugging-port=$_debugPort '
-      '--user-data-dir=/tmp/phonegentic_chrome_debug '
-      '--no-first-run --no-default-browser-check';
+      '--remote-debugging-port=$_debugPort ',
+    );
+    if (_userDataDir != null && _userDataDir!.isNotEmpty) {
+      buf.write('--user-data-dir=$_userDataDir ');
+    }
+    buf.write('--no-first-run --no-default-browser-check');
+    return buf.toString();
+  }
 
   Future<bool> isDebugPortOpen() async {
     try {
@@ -57,8 +65,10 @@ class ChromeBrowserService {
   }
 
   /// Navigate to [url], wait for DOM + a JS render delay, then evaluate
-  /// [jsExpression]. Uses domContentLoaded + manual delay because
-  /// FlightAware's persistent connections prevent networkIdle from firing.
+  /// [jsExpression]. If the navigation times out waiting for
+  /// domContentLoaded (common with heavy SPAs like Gmail), we still
+  /// proceed with the JS evaluation since the page content is typically
+  /// available before that event formally fires.
   Future<T> navigateAndEvaluate<T>(
     String url,
     String jsExpression, {
@@ -68,7 +78,11 @@ class ChromeBrowserService {
     final browser = await ensureBrowser();
     final page = await browser.newPage();
     try {
-      await page.goto(url, wait: Until.domContentLoaded, timeout: timeout);
+      try {
+        await page.goto(url, wait: Until.domContentLoaded, timeout: timeout);
+      } on TimeoutException {
+        _log.w('Navigation timed out for $url — proceeding with evaluation');
+      }
       await Future<void>.delayed(renderDelay);
       final result = await page.evaluate<T>(jsExpression);
       return result;

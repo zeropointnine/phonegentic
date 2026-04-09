@@ -19,3 +19,7 @@ example/lib/generated_plugin_registrant.dart
 
 # FVM Version Cache
 .fvm/
+
+# Credentials
+**/test_credentials.dart
+**/test_credentials_local.dart

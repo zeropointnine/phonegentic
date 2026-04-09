@@ -168,9 +168,10 @@ class FlightAwareService extends ChangeNotifier {
           'https://www.flightaware.com/live/flight/$normalized';
       _log.i('Looking up flight: $url');
 
-      final raw = await _chrome.navigateAndEvaluate<Map<String, dynamic>>(
+      final rawResult = await _chrome.navigateAndEvaluate(
         url, _flightJs,
       );
+      final raw = Map<String, dynamic>.from(rawResult as Map);
 
       final info = FlightInfo.fromMap({...raw, 'flightNumber': normalized});
       _lastFlight = info;
@@ -216,8 +217,8 @@ class FlightAwareService extends ChangeNotifier {
       );
 
       final flights = raw
-          .cast<Map<String, dynamic>>()
-          .map((m) => FlightInfo.fromMap(m))
+          .whereType<Map>()
+          .map((m) => FlightInfo.fromMap(Map<String, dynamic>.from(m)))
           .toList();
 
       final result = RouteSearchResult(

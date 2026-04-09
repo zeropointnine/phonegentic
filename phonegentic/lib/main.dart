@@ -3,6 +3,9 @@ import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/calendar_sync_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/chrome/flight_aware_service.dart';
+import 'package:phonegentic/src/chrome/gmail_service.dart';
+import 'package:phonegentic/src/chrome/google_calendar_service.dart';
+import 'package:phonegentic/src/chrome/google_search_service.dart';
 import 'package:phonegentic/src/conference/conference_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
@@ -82,15 +85,29 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<FlightAwareService>(
           create: (_) => FlightAwareService()..loadConfig(),
         ),
-        ChangeNotifierProxyProvider4<CallHistoryService, ContactService,
-            JobFunctionService, FlightAwareService, AgentService>(
+        ChangeNotifierProvider<GmailService>(
+          create: (_) => GmailService()..loadConfig(),
+        ),
+        ChangeNotifierProvider<GoogleCalendarService>(
+          create: (_) => GoogleCalendarService()..loadConfig(),
+        ),
+        ChangeNotifierProvider<GoogleSearchService>(
+          create: (_) => GoogleSearchService()..loadConfig(),
+        ),
+        ChangeNotifierProxyProvider6<CallHistoryService, ContactService,
+            JobFunctionService, FlightAwareService, GmailService,
+            GoogleCalendarService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
-          update: (context, history, contacts, jobFunctions, flight, agent) =>
+          update: (context, history, contacts, jobFunctions, flight, gmail,
+                  gcal, agent) =>
               agent!
                 ..callHistory = history
                 ..contactService = contacts
                 ..jobFunctionService = jobFunctions
                 ..flightAwareService = flight
+                ..gmailService = gmail
+                ..googleCalendarService = gcal
+                ..googleSearchService = context.read<GoogleSearchService>()
                 ..demoModeService = context.read<DemoModeService>(),
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
