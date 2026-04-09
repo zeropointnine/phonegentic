@@ -54,17 +54,7 @@ static gboolean g_mainloop_running = FALSE;
 static pthread_t g_mainloop_thread;
 static AudioTapChannel* g_tap_channel_instance = nullptr;
 
-// Playback-aware echo suppression
-static int64_t g_last_tts_time_ms = 0;
-static const int64_t kTTSSuppressionMs = 2000; // Match macOS callModeTTSSuppression
 static int64_t g_suppress_diag_count = 0;
-
-// Helper function to get current time in milliseconds
-static int64_t get_time_ms() {
-  struct timeval tv;
-  gettimeofday(&tv, nullptr);
-  return (int64_t)tv.tv_sec * 1000 + (int64_t)tv.tv_usec / 1000;
-}
 
 // Forward declarations
 static void audio_tap_channel_dispose(GObject* object);
@@ -87,6 +77,27 @@ static void context_state_cb(pa_context* c, void* userdata) {
   }
 }
 
+struct AudioData {
+  uint8_t* data;
+  size_t size;
+};
+
+static gboolean send_audio_idle(gpointer user_data) {
+  AudioData* audio = static_cast<AudioData*>(user_data);
+  if (g_tap_channel_instance && g_tap_channel_instance->event_listening) {
+    g_autoptr(FlValue) audio_data = fl_value_new_uint8_list(audio->data, audio->size);
+    GError* error = nullptr;
+    fl_event_channel_send(g_tap_channel_instance->event_channel, audio_data, nullptr, &error);
+    if (error) {
+      g_warning("[AudioTap] Failed to send audio data: %s", error->message);
+      g_error_free(error);
+    }
+  }
+  g_free(audio->data);
+  delete audio;
+  return G_SOURCE_REMOVE;
+}
+
 // Stream read callback - called when audio data is available
 static void stream_read_cb(pa_stream* s, size_t nbytes, void* userdata) {
   const void* data = nullptr;
@@ -102,47 +113,21 @@ static void stream_read_cb(pa_stream* s, size_t nbytes, void* userdata) {
   const uint8_t* processed_data = (const uint8_t*)data;
   size_t processed_bytes = bytes_read;
 
-  // Playback-aware echo suppression: drop mic audio while TTS is
-  // playing and for kTTSSuppressionMs after the last TTS chunk.
-  // This prevents the agent from hearing its own voice through
-  // the speakers. The WebRTC AEC handles residual echo; this gate
-  // handles the bulk of the energy.
-  int64_t now = get_time_ms();
-
-  if (g_last_tts_time_ms > 0 && now - g_last_tts_time_ms < kTTSSuppressionMs) {
-    // Still in suppression window — drop mic audio
-
-    // Diagnostic logging (first 5 and every 50th check)
-    g_suppress_diag_count++;
-    if (g_suppress_diag_count <= 5 || g_suppress_diag_count % 50 == 0) {
-      int64_t elapsed = g_last_tts_time_ms > 0 ? now - g_last_tts_time_ms : -1;
-      g_debug("[AudioTap] suppress check #%lld: tts_age=%lldms suppress=YES bytes=%zu",
-              (long long)g_suppress_diag_count,
-              (long long)elapsed,
-              processed_bytes);
-    }
-
-    pa_stream_drop(s);
-    return;
-  }
-
-  // Log when not suppressing (periodically)
+  // Log periodically
   g_suppress_diag_count++;
   if (g_suppress_diag_count <= 5 || g_suppress_diag_count % 50 == 0) {
-    g_debug("[AudioTap] suppress check #%lld: suppress=no bytes=%zu",
+    g_debug("[AudioTap] capture check #%lld: bytes=%zu",
             (long long)g_suppress_diag_count,
             processed_bytes);
   }
 
   // Send audio data to Flutter if event channel is listening
   if (processed_data && processed_bytes > 0 && g_tap_channel_instance && g_tap_channel_instance->event_listening) {
-    g_autoptr(FlValue) audio_data = fl_value_new_uint8_list(processed_data, processed_bytes);
-    GError* error = nullptr;
-    fl_event_channel_send(g_tap_channel_instance->event_channel, audio_data, nullptr, &error);
-    if (error) {
-      g_warning("[AudioTap] Failed to send audio data: %s", error->message);
-      g_error_free(error);
-    }
+    AudioData* audio = new AudioData();
+    audio->data = (uint8_t*)g_malloc(processed_bytes);
+    memcpy(audio->data, processed_data, processed_bytes);
+    audio->size = processed_bytes;
+    g_idle_add(send_audio_idle, audio);
   }
 
   // Consume the data
@@ -287,7 +272,6 @@ static void pulse_audio_cleanup() {
   }
 
   // Reset suppression state
-  g_last_tts_time_ms = 0;
   g_suppress_diag_count = 0;
 }
 
@@ -337,7 +321,6 @@ static FlMethodResponse* start_capture() {
   }
 
   // Reset suppression state on capture start
-  g_last_tts_time_ms = 0;
   g_suppress_diag_count = 0;
 
   g_is_capturing = TRUE;
@@ -360,6 +343,20 @@ static FlMethodResponse* stop_capture() {
   g_is_capturing = FALSE;
   g_debug("[AudioTap] Audio capture stopped");
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+}
+
+static gboolean notify_playback_complete_idle(gpointer user_data) {
+  if (g_tap_channel_instance && g_tap_channel_instance->channel) {
+    fl_method_channel_invoke_method(g_tap_channel_instance->channel,
+                                    "onPlaybackComplete", nullptr,
+                                    nullptr, nullptr, nullptr);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void stream_underflow_cb(pa_stream* s, void* userdata) {
+  g_debug("[AudioTap] Playback stream underflow - playback complete");
+  g_idle_add(notify_playback_complete_idle, nullptr);
 }
 
 // Playback stream write callback
@@ -405,6 +402,7 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
 
     pa_stream_set_state_callback(g_playback_stream, stream_state_cb, nullptr);
     pa_stream_set_write_callback(g_playback_stream, stream_write_cb, nullptr);
+    pa_stream_set_underflow_callback(g_playback_stream, stream_underflow_cb, nullptr);
 
     // Connect to default sink (speaker)
     pa_buffer_attr buffer_attr;
@@ -471,10 +469,7 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
         "WRITE_ERROR", "Failed to write audio data", nullptr));
   }
 
-  // Record TTS playback time for echo suppression
-  g_last_tts_time_ms = get_time_ms();
-  g_debug("[AudioTap] Wrote %zu bytes to playback stream, suppression window=%dms",
-          length, (int)kTTSSuppressionMs);
+  g_debug("[AudioTap] Wrote %zu bytes to playback stream", length);
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 
@@ -487,7 +482,7 @@ static FlMethodResponse* stop_audio_playback() {
   pa_stream_disconnect(g_playback_stream);
   pa_stream_unref(g_playback_stream);
   g_playback_stream = nullptr;
-  g_debug("[AudioTap] Playback stopped, suppression window active for %dms", (int)kTTSSuppressionMs);
+  g_debug("[AudioTap] Playback stopped");
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 

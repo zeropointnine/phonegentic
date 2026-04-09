@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -58,6 +59,7 @@ class WhisperRealtimeService {
   bool _connected = false;
   bool _muted = false;
   bool _vadActive = false;
+  bool _isTtsPlaying = false;
 
   final _transcriptionController =
       StreamController<TranscriptionEvent>.broadcast();
@@ -88,6 +90,14 @@ class WhisperRealtimeService {
 
   bool get muted => _muted;
   set muted(bool value) => _muted = value;
+
+  bool get isTtsPlaying => _isTtsPlaying;
+  set isTtsPlaying(bool value) {
+    if (_isTtsPlaying != value) {
+      _isTtsPlaying = value;
+      debugPrint('[WhisperRealtimeService] _isTtsPlaying = $_isTtsPlaying');
+    }
+  }
 
   /// Query native layer for speaker info including voiceprint identity.
   /// Returns a map with keys: "source" (host/remote/unknown),
@@ -850,6 +860,11 @@ class WhisperRealtimeService {
 
     _audioSub = _audioTapChannel.receiveBroadcastStream().listen((data) {
       if (data is Uint8List) {
+        if (_isTtsPlaying && Platform.isLinux) {
+          // On Linux, drop mic audio while TTS is playing to prevent the agent from
+          // hearing its own voice. macOS handles this internally to preserve remote audio in calls.
+          return;
+        }
         sendAudio(data);
       }
     });
@@ -857,6 +872,7 @@ class WhisperRealtimeService {
 
   Future<void> playResponseAudio(Uint8List pcm16Data) async {
     if (pcm16Data.isEmpty) return;
+    isTtsPlaying = true;
     await _methodChannel.invokeMethod('playAudioResponse', pcm16Data);
   }
 
