@@ -347,16 +347,7 @@ class _MuteButtonWithPolicy extends StatelessWidget {
     );
   }
 
-  String get _policyHint {
-    switch (agent.globalMutePolicy) {
-      case AgentMutePolicy.autoToggle:
-        return 'Auto';
-      case AgentMutePolicy.stayMuted:
-        return 'Muted';
-      case AgentMutePolicy.stayUnmuted:
-        return 'On';
-    }
-  }
+  String get _muteLabel => agent.muted ? 'Muted' : 'Mute';
 
   @override
   Widget build(BuildContext context) {
@@ -389,7 +380,7 @@ class _MuteButtonWithPolicy extends StatelessWidget {
               ),
               const SizedBox(width: 3),
               Text(
-                _policyHint,
+                _muteLabel,
                 style: TextStyle(
                   fontSize: 9,
                   fontWeight: FontWeight.w600,

@@ -362,6 +362,9 @@ class AgentService extends ChangeNotifier {
 
   void _setWhisperMode(bool enabled) {
     _whisperMode = enabled;
+    if (_splitPipeline) {
+      _ttsMuted = enabled;
+    }
     if (_active) {
       if (enabled) _whisper.stopResponseAudio();
       _whisper.setModalities(enabled ? ['text'] : ['text', 'audio']);
@@ -1520,7 +1523,7 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
-      _tts?.endGeneration();
+      if (!_ttsMuted) _tts?.endGeneration();
 
       if (_streamingMessageId != null) {
         final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
@@ -1552,8 +1555,9 @@ class AgentService extends ChangeNotifier {
             _callPhase == CallPhase.settling) &&
         _callPhase != CallPhase.idle;
 
-    // Pipe text delta to ElevenLabs TTS, stripping bracketed stage directions
-    if (_tts != null && event.text.isNotEmpty && !suppressTts) {
+    // Pipe text delta to ElevenLabs TTS, stripping bracketed stage directions.
+    // Skip entirely when muted (text-only mode) to avoid burning TTS credits.
+    if (_tts != null && !_ttsMuted && event.text.isNotEmpty && !suppressTts) {
       if (_streamingMessageId == null) {
         _ttsBracketDepth = 0;
         _tts!.startGeneration();
@@ -2725,18 +2729,21 @@ class AgentService extends ChangeNotifier {
         if (!_speaking) _statusText = 'Listening';
         changed = true;
       }
-      if (_splitPipeline) {
-        if (_ttsMuted) {
-          _ttsMuted = false;
-          changed = true;
-        }
-      } else {
-        if (_whisperMode) {
-          _whisperMode = false;
-          if (_active) {
-            _whisper.setModalities(['text', 'audio']);
+      // Respect text-only job function even with stayUnmuted policy.
+      if (!_bootContext.textOnly) {
+        if (_splitPipeline) {
+          if (_ttsMuted) {
+            _ttsMuted = false;
+            changed = true;
           }
-          changed = true;
+        } else {
+          if (_whisperMode) {
+            _whisperMode = false;
+            if (_active) {
+              _whisper.setModalities(['text', 'audio']);
+            }
+            changed = true;
+          }
         }
       }
       if (changed) notifyListeners();
@@ -2753,18 +2760,21 @@ class AgentService extends ChangeNotifier {
         if (!_speaking) _statusText = 'Listening';
         changed = true;
       }
-      if (_splitPipeline) {
-        if (_ttsMuted) {
-          _ttsMuted = false;
-          changed = true;
-        }
-      } else {
-        if (_whisperMode) {
-          _whisperMode = false;
-          if (_active) {
-            _whisper.setModalities(['text', 'audio']);
+      // Don't auto-unmute TTS when the job function is text-only.
+      if (!_bootContext.textOnly) {
+        if (_splitPipeline) {
+          if (_ttsMuted) {
+            _ttsMuted = false;
+            changed = true;
           }
-          changed = true;
+        } else {
+          if (_whisperMode) {
+            _whisperMode = false;
+            if (_active) {
+              _whisper.setModalities(['text', 'audio']);
+            }
+            changed = true;
+          }
         }
       }
       if (changed) notifyListeners();
