@@ -424,6 +424,41 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
           "CONNECT_ERROR", "Failed to connect playback stream", nullptr));
     }
 
+    // Wait for playback stream to become ready before writing data.
+    // pa_stream_connect_playback() is asynchronous — the stream must
+    // transition to PA_STREAM_READY before pa_stream_write() can succeed.
+    // Without this wait, the first audio chunk fails with "Bad state".
+    pa_stream_state_t stream_state;
+    int wait_iterations = 0;
+    while (wait_iterations < 100) {
+      stream_state = pa_stream_get_state(g_playback_stream);
+      if (stream_state == PA_STREAM_READY) {
+        break;
+      }
+      if (!PA_STREAM_IS_GOOD(stream_state)) {
+        g_warning("[AudioTap] Playback stream connection failed: %s",
+                  pa_strerror(pa_context_errno(g_context)));
+        pa_stream_unref(g_playback_stream);
+        g_playback_stream = nullptr;
+        return FL_METHOD_RESPONSE(fl_method_error_response_new(
+            "CONNECT_ERROR", "Playback stream failed to become ready", nullptr));
+      }
+      // Sleep briefly — the dedicated mainloop thread processes state
+      // transitions. We must NOT call pa_mainloop_iterate() here because
+      // the mainloop thread is already iterating it (pa_mainloop is not
+      // thread-safe).
+      g_usleep(10000);  // 10ms
+      wait_iterations++;
+    }
+
+    if (pa_stream_get_state(g_playback_stream) != PA_STREAM_READY) {
+      g_warning("[AudioTap] Playback stream timed out waiting for READY state");
+      pa_stream_unref(g_playback_stream);
+      g_playback_stream = nullptr;
+      return FL_METHOD_RESPONSE(fl_method_error_response_new(
+          "CONNECT_ERROR", "Playback stream timed out", nullptr));
+    }
+
     g_debug("[AudioTap] Playback stream created and connected");
   }
 
