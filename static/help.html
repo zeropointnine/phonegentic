@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Unsubscribe from SMS — Phonegentic AI</title>
-  <meta name="description" content="Request removal from Phonegentic AI SMS marketing lists. You can also text STOP to our number.">
+  <title>Help &amp; Support — Phonegentic AI</title>
+  <meta name="description" content="Get help with Phonegentic AI. Send us a message and we'll get back to you.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -19,6 +19,7 @@
       --text-dim: #9a917f;
       --border: rgba(212, 168, 83, 0.12);
       --radius: 12px;
+      --error: #e07a6e;
       --ok: #7bc96f;
     }
     html { scroll-behavior: smooth; }
@@ -83,7 +84,7 @@
     label:first-of-type { margin-top: 0; }
     .hint { font-weight: 400; color: var(--text-dim); font-size: 0.78rem; }
     input[type="text"],
-    input[type="tel"],
+    input[type="email"],
     textarea {
       width: 100%;
       padding: 12px 14px;
@@ -95,7 +96,7 @@
       border-radius: 8px;
       transition: border-color 0.2s;
     }
-    textarea { min-height: 88px; resize: vertical; }
+    textarea { min-height: 140px; resize: vertical; }
     input:focus, textarea:focus {
       outline: none;
       border-color: rgba(212, 168, 83, 0.45);
@@ -177,40 +178,33 @@
 <nav>
   <div class="inner">
     <a href="index.html" class="nav-brand">Phonegentic AI</a>
-    <span class="nav-meta">SMS opt-out</span>
+    <span class="nav-meta">Help &amp; Support</span>
   </div>
 </nav>
 
 <main>
   <div class="container">
-    <h1>Unsubscribe from SMS</h1>
+    <h1>Get help</h1>
     <p class="sub">
-      Submit the mobile number you used to opt in. We will process your request and remove it from our <strong>Phonegentic AI</strong> SMS marketing list.
-      You can also text <strong>STOP</strong> to our messaging number at any time (standard rates may apply).
+      Have a question, issue, or feedback? Send us a message below and we'll get back to you as soon as we can.
+      You can also open an issue on <a href="https://github.com/reduxdj/phonegentic/issues" target="_blank" rel="noopener">GitHub</a>.
     </p>
 
     <div id="thanksBanner" class="banner ok" role="status" hidden>
-      Your opt-out request was received. If you texted STOP, you should also receive an unsubscribe confirmation by SMS.
+      Thank you — your message was received. We'll follow up if a reply is needed.
     </div>
     <div id="formError" class="banner err" role="alert" hidden></div>
 
     <div class="card">
-      <form id="smsOptOut" method="post" action="/api/sms-opt-out" novalidate>
-        <label for="phone">Mobile number <span class="hint">(we add + and country code if you omit them)</span></label>
-        <input
-          type="tel"
-          id="phone"
-          name="phone"
-          autocomplete="tel"
-          inputmode="tel"
-          placeholder="4155331352 or +14155331352"
-          maxlength="22"
-          aria-describedby="phoneHelp"
-        >
-        <p id="phoneHelp" class="fineprint" style="margin-top:8px;margin-bottom:0;">US/Canada: 10 digits is fine (we add +1). Or include + and country code.</p>
+      <form id="helpForm" method="post" action="/api/help" novalidate>
+        <label for="name">Name <span class="hint">(optional)</span></label>
+        <input type="text" id="name" name="name" maxlength="256" autocomplete="name" placeholder="Jane Doe">
 
-        <label for="note">Note <span class="hint">(optional)</span></label>
-        <textarea id="note" name="note" maxlength="2000" placeholder="Optional context for our records"></textarea>
+        <label for="email">Email <span class="hint">(optional — include if you'd like a reply)</span></label>
+        <input type="email" id="email" name="email" maxlength="256" autocomplete="email" placeholder="you@example.com">
+
+        <label for="message">Message</label>
+        <textarea id="message" name="message" maxlength="5000" placeholder="Describe your question, issue, or feedback…" required></textarea>
 
         <div class="hp-wrap" aria-hidden="true">
           <label for="website">Website</label>
@@ -218,11 +212,12 @@
         </div>
 
         <div class="submit-row">
-          <button type="submit" formnovalidate>Submit opt-out request</button>
+          <button type="submit" formnovalidate>Send message</button>
         </div>
 
         <p class="fineprint">
-          This form is only for marketing SMS. For product support, see our <a href="privacy.html">Privacy Policy</a> and <a href="https://github.com/reduxdj/phonegentic" target="_blank" rel="noopener">GitHub</a>.
+          We read every message. For open-source bugs, consider filing a
+          <a href="https://github.com/reduxdj/phonegentic/issues" target="_blank" rel="noopener">GitHub issue</a> directly.
         </p>
       </form>
     </div>
@@ -235,7 +230,7 @@
     <div class="footer-links">
       <a href="index.html">Home</a>
       <a href="sms-opt-in.html">SMS subscribe</a>
-      <a href="help.html">Help</a>
+      <a href="sms-opt-out.html">SMS unsubscribe</a>
       <a href="privacy.html">Privacy</a>
       <a href="terms.html">Terms</a>
       <a href="https://github.com/reduxdj/phonegentic" target="_blank" rel="noopener">GitHub</a>
@@ -245,27 +240,6 @@
 
 <script>
   (function () {
-    if (new URLSearchParams(location.search).get('thanks') === '1') {
-      var b = document.getElementById('thanksBanner');
-      b.hidden = false;
-      try { history.replaceState({}, '', 'sms-opt-out.html'); } catch (e) {}
-    }
-
-    /** Normalize common US/CA and +prefixed input to E.164 (+ and 7–15 digits). */
-    function phoneToE164(raw) {
-      var s = String(raw || '').trim();
-      var digits = s.replace(/\D/g, '');
-      if (s.indexOf('+') === 0) {
-        var rest = digits;
-        if (rest.length >= 7 && rest.length <= 15) return '+' + rest;
-        return null;
-      }
-      if (digits.length === 10) return '+1' + digits;
-      if (digits.length === 11 && digits.charAt(0) === '1') return '+' + digits;
-      if (digits.length >= 7 && digits.length <= 15) return '+' + digits;
-      return null;
-    }
-
     function hideFormError() {
       var err = document.getElementById('formError');
       err.hidden = true;
@@ -284,34 +258,32 @@
       var b = document.getElementById('thanksBanner');
       b.hidden = false;
       b.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      try { history.replaceState({}, '', 'sms-opt-out.html'); } catch (e2) {}
+      try { history.replaceState({}, '', 'help.html'); } catch (e2) {}
     }
 
-    var form = document.getElementById('smsOptOut');
+    if (new URLSearchParams(location.search).get('thanks') === '1') {
+      showThanks();
+    }
+
+    var form = document.getElementById('helpForm');
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       hideFormError();
-      var input = document.getElementById('phone');
-      var raw = String(input.value || '').trim();
-      if (!raw) {
-        alert('Enter your mobile number.');
-        input.focus();
-        return;
-      }
-      var e164 = phoneToE164(raw);
-      if (!e164) {
-        alert('Please enter a valid mobile number (e.g. 4155331352, 5551234567, or +14155331352).');
-        input.focus();
-        return;
-      }
-      input.value = e164;
 
-      var btn = form.querySelector('button[type="submit"]');
-      var noteEl = document.getElementById('note');
+      var msgEl = document.getElementById('message');
+      var msg = String(msgEl.value || '').trim();
+      if (!msg) {
+        showFormError('Please enter a message.');
+        msgEl.focus();
+        return;
+      }
+
       var hp = document.getElementById('website');
+      var btn = form.querySelector('button[type="submit"]');
       var params = new URLSearchParams();
-      params.set('phone', e164);
-      params.set('note', String(noteEl.value || '').trim());
+      params.set('name', String(document.getElementById('name').value || '').trim());
+      params.set('email', String(document.getElementById('email').value || '').trim());
+      params.set('message', msg);
       params.set('website', String(hp.value || ''));
 
       btn.disabled = true;
@@ -329,7 +301,7 @@
             return;
           }
           return res.text().then(function (t) {
-            showFormError((t && t.trim()) || 'Something went wrong. Please try again or text STOP.');
+            showFormError((t && t.trim()) || 'Something went wrong. Please try again.');
           });
         })
         .catch(function () {

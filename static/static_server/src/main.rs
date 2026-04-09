@@ -30,25 +30,38 @@ const BIND_ADDR: &str = "0.0.0.0:3000";
 const MAX_FIELD_LEN: usize = 256;
 const MAX_NOTE_LEN: usize = 2000;
 const DEFAULT_SMS_LOG: &str = "/var/log/sms_submissions.log";
+const DEFAULT_HELP_LOG: &str = "/var/log/help_submissions.log";
+const MAX_MESSAGE_LEN: usize = 5000;
 
 fn sms_log_path() -> String {
     std::env::var("SMS_LOG_FILE").unwrap_or_else(|_| DEFAULT_SMS_LOG.to_string())
 }
 
-fn log_sms_event(event_type: &str, body: &str) {
+fn help_log_path() -> String {
+    std::env::var("HELP_LOG_FILE").unwrap_or_else(|_| DEFAULT_HELP_LOG.to_string())
+}
+
+fn log_event(log_path: &str, event_type: &str, body: &str) {
     let ts = Utc::now().to_rfc3339();
-    let path = sms_log_path();
     let entry = format!("[{}] {}\n{}\n---\n", ts, event_type, body);
-    match OpenOptions::new().create(true).append(true).open(&path) {
+    match OpenOptions::new().create(true).append(true).open(log_path) {
         Ok(mut f) => {
             if let Err(e) = f.write_all(entry.as_bytes()) {
-                tracing::error!("failed to write SMS log {}: {}", path, e);
+                tracing::error!("failed to write log {}: {}", log_path, e);
             } else {
-                tracing::info!("SMS event logged to {}", path);
+                tracing::info!("event logged to {}", log_path);
             }
         }
-        Err(e) => tracing::error!("failed to open SMS log {}: {}", path, e),
+        Err(e) => tracing::error!("failed to open log {}: {}", log_path, e),
     }
+}
+
+fn log_sms_event(event_type: &str, body: &str) {
+    log_event(&sms_log_path(), event_type, body);
+}
+
+fn log_help_event(event_type: &str, body: &str) {
+    log_event(&help_log_path(), event_type, body);
 }
 
 /// Try sendmail; if it fails, log to file. Always returns Ok for the caller.
@@ -97,6 +110,7 @@ fn router(web_root: String) -> Router {
         .route("/api/health", get(health_handler))
         .route("/api/sms-opt-in", post(sms_opt_in_handler))
         .route("/api/sms-opt-out", post(sms_opt_out_dispatch))
+        .route("/api/help", post(help_handler))
         .nest_service("/images", ServeDir::new(images_dir))
         .route("/web_hooks/telnyx", post(telnyx_webhook_handler))
         .route("/web_hooks/telnyx_fail", post(telnyx_fail_handler))
@@ -137,6 +151,26 @@ fn sms_opt_out_notify_email() -> Option<String> {
         .or_else(sms_opt_in_notify_email)
 }
 
+/// Help form: `HELP_NOTIFY_EMAIL`, then `SMS_NOTIFY_EMAIL` as shared fallback.
+fn help_notify_email() -> Option<String> {
+    env_email("HELP_NOTIFY_EMAIL").or_else(|| env_email("SMS_NOTIFY_EMAIL"))
+}
+
+fn notify_or_log_help(to: Option<&str>, from: &str, subject: &str, body: &str) {
+    if let Some(addr) = to {
+        match sendmail_notify(addr, from, subject, body) {
+            Ok(()) => {
+                tracing::info!("sendmail succeeded for {}", subject);
+                return;
+            }
+            Err(e) => tracing::warn!("sendmail failed ({}), falling back to file log", e),
+        }
+    } else {
+        tracing::warn!("no help email configured, logging to file");
+    }
+    log_help_event(subject, body);
+}
+
 fn mail_from() -> String {
     std::env::var("SMS_OPTIN_MAIL_FROM")
         .or_else(|_| std::env::var("SMS_MAIL_FROM"))
@@ -169,6 +203,17 @@ struct SmsOptOutJson {
     phone: String,
     #[serde(default)]
     note: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HelpForm {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    email: String,
+    message: String,
+    #[serde(default)]
+    website: String,
 }
 
 #[derive(Serialize)]
@@ -487,4 +532,56 @@ async fn finish_sms_opt_out(phone: String, note: String, mode: OptOutFinishMode)
     } else {
         Redirect::to("/sms-opt-out.html?thanks=1").into_response()
     }
+}
+
+async fn help_handler(headers: HeaderMap, Form(form): Form<HelpForm>) -> Response {
+    let ajax = headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.contains("urlencoded"))
+        .unwrap_or(false);
+    let thanks = Redirect::to("/help.html?thanks=1");
+
+    if !form.website.trim().is_empty() {
+        tracing::warn!("help form honeypot triggered");
+        if ajax {
+            return (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response();
+        }
+        return thanks.into_response();
+    }
+
+    let message = trim_limit(form.message, MAX_MESSAGE_LEN);
+    if message.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Please enter a message.").into_response();
+    }
+
+    let name = trim_limit(form.name, MAX_FIELD_LEN);
+    let email = trim_limit(form.email, MAX_FIELD_LEN);
+
+    let notify_to = help_notify_email();
+
+    let body = format!(
+        "Help / support request (web form)\n\
+         \n\
+         Name: {}\n\
+         Email: {}\n\
+         \n\
+         Message:\n{}\n\
+         \n\
+         ---\n\
+         Submitted via https://phonegentic.ai/help.html\n",
+        if name.is_empty() { "(not provided)" } else { &name },
+        if email.is_empty() { "(not provided)" } else { &email },
+        message,
+    );
+
+    notify_or_log_help(
+        notify_to.as_deref(),
+        &mail_from(),
+        "Phonegentic help request",
+        &body,
+    );
+
+    tracing::info!("help request processed");
+    (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()
 }
