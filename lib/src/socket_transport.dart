@@ -286,6 +286,7 @@ class SocketTransport {
 
     // Text message.
     else {
+      SIP_LOGGER.logger.dHeader('← ${SIP_LOGGER.Log.removeLastCrLf(data.toString())}\r\n-----');
       logger.d('received text message:\n\n$data\n');
     }
 

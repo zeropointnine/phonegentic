@@ -138,12 +138,16 @@ class MyApp extends StatelessWidget {
             return sync;
           },
         ),
-        ChangeNotifierProvider<ConferenceService>(
+        ChangeNotifierProxyProvider<AgentService, ConferenceService>(
           create: (ctx) {
             final seed = ctx.read<ConferenceConfigSeed>();
             return ConferenceService()
               ..sipHelper = _helper
               ..applyConfig(seed.config);
+          },
+          update: (_, agent, conf) {
+            agent.conferenceService = conf;
+            return conf!;
           },
         ),
       ],

@@ -1,4 +1,4 @@
-import 'package:phonegentic/src/test_credentials_local.dart';
+import 'package:phonegentic/src/test_credentials.dart';
 import 'package:phonegentic/src/user_state/sip_user.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
 import 'package:flutter/material.dart';
