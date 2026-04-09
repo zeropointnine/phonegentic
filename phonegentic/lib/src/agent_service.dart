@@ -3228,6 +3228,9 @@ class AgentService extends ChangeNotifier {
   /// — prevents false triggers from hold music, DTMF, conference tones, etc.
   Future<dynamic> _handleNativeTapCall(MethodCall call) async {
     switch (call.method) {
+      case 'onPlaybackComplete':
+        _whisper.isTtsPlaying = false;
+        break;
       case 'onBeepDetected':
         if (!_ivrHeard || !_inBeepWindow || _voicemailPromptSent) {
           debugPrint(

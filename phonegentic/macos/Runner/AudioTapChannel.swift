@@ -36,6 +36,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
 
     private var isPlayingResponse = false
     private var playbackEndTimer: Timer?
+    private var callModePlaybackTimer: Timer?
     private var outputSuppressedUntil: TimeInterval = 0
     private var diagCounter: UInt64 = 0
     private var playDiagCounter: UInt64 = 0
@@ -325,6 +326,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         isPlayingResponse = false
         outputSuppressedUntil = 0
         playbackEndTimer?.invalidate()
+        callModePlaybackTimer?.invalidate()
         dominantHistory.removeAll()
         dominantSpeaker = "unknown"
 
@@ -363,6 +365,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         isPlayingResponse = false
         outputSuppressedUntil = 0
         playbackEndTimer?.invalidate()
+        callModePlaybackTimer?.invalidate()
         dominantHistory.removeAll()
         dominantSpeaker = "unknown"
 
@@ -455,6 +458,13 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             // can strip mic audio from the event sink during TTS playback.
             WebRTCAudioProcessor.shared.feedTTS(pcm16Data: data)
             lastCallModeTTSTime = Date().timeIntervalSince1970
+            
+            callModePlaybackTimer?.invalidate()
+            callModePlaybackTimer = Timer.scheduledTimer(
+                withTimeInterval: AudioTapChannel.callModeTTSSuppression, repeats: false
+            ) { [weak self] _ in
+                self?.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+            }
         } else {
             // In direct mode TTS plays through speakers. Block mic audio
             // while playing to prevent the agent hearing its own echo.
@@ -518,16 +528,14 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             self.bufferLock.lock()
             self.inputBuffer.removeAll(keepingCapacity: true)
             self.bufferLock.unlock()
-            // In call mode TTS goes through ring buffers (no speaker echo),
-            // so we only need a brief pause. In direct mode TTS plays through
-            // speakers and the mic picks up the echo — allow a longer window
-            // but keep it short since input_audio_buffer.clear already tells
-            // OpenAI to discard accumulated echo audio.
-            let suppressionSeconds: TimeInterval = self.inCallMode ? 0.3 : 1.0
+            
+            // In direct mode TTS plays through speakers and the mic picks up the echo 
+            // — allow a 1.0s window for room reverberation to settle.
+            let suppressionSeconds: TimeInterval = 1.0
             self.outputSuppressedUntil = Date().timeIntervalSince1970 + suppressionSeconds
             self.isPlayingResponse = false
-            NSLog("[AudioTap] Playback ended — suppressed %.1fs (callMode=%@)",
-                  suppressionSeconds, self.inCallMode ? "YES" : "NO")
+            self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+            NSLog("[AudioTap] Playback ended, notified Flutter, suppressed %.1fs", suppressionSeconds)
         }
     }
 
