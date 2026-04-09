@@ -6,12 +6,14 @@
 #endif
 
 #include "audio_device_channel.h"
+#include "audio_tap_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   AudioDeviceChannel* audio_device_channel;
+  AudioTapChannel* audio_tap_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -79,6 +81,9 @@ static void my_application_activate(GApplication* application) {
   FlEngine* engine = fl_view_get_engine(view);
   FlBinaryMessenger* messenger = fl_engine_get_binary_messenger(engine);
   self->audio_device_channel = audio_device_channel_new(messenger);
+
+  // Register audio tap channel
+  self->audio_tap_channel = audio_tap_channel_new(messenger);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
