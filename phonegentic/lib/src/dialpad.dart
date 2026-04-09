@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
-import 'package:phonegentic/src/test_credentials_local.dart';
+import 'package:phonegentic/src/test_credentials.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
 import 'package:flutter/foundation.dart';

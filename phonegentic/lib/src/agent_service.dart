@@ -19,6 +19,7 @@ import 'chrome/gmail_service.dart';
 import 'chrome/google_calendar_config.dart';
 import 'chrome/google_calendar_service.dart';
 import 'chrome/google_search_service.dart';
+import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
@@ -77,6 +78,7 @@ class AgentService extends ChangeNotifier {
   GoogleCalendarService? googleCalendarService;
   GoogleSearchService? googleSearchService;
   JobFunctionService? _jobFunctionService;
+  ConferenceService? conferenceService;
   SIPUAHelper? sipHelper;
 
   set jobFunctionService(JobFunctionService? svc) {
@@ -1679,6 +1681,21 @@ class AgentService extends ChangeNotifier {
         case 'google_search':
           result = await _handleGoogleSearch(args);
           break;
+        case 'transfer_call':
+          result = _handleTransferCall(args);
+          break;
+        case 'hold_call':
+          result = _handleHoldCall(args);
+          break;
+        case 'mute_call':
+          result = _handleMuteCall(args);
+          break;
+        case 'add_conference_participant':
+          result = await _handleAddConferenceParticipant(args);
+          break;
+        case 'merge_conference':
+          result = await _handleMergeConference(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -1762,6 +1779,21 @@ class AgentService extends ChangeNotifier {
           break;
         case 'google_search':
           result = await _handleGoogleSearch(req.arguments);
+          break;
+        case 'transfer_call':
+          result = _handleTransferCall(req.arguments);
+          break;
+        case 'hold_call':
+          result = _handleHoldCall(req.arguments);
+          break;
+        case 'mute_call':
+          result = _handleMuteCall(req.arguments);
+          break;
+        case 'add_conference_participant':
+          result = await _handleAddConferenceParticipant(req.arguments);
+          break;
+        case 'merge_conference':
+          result = await _handleMergeConference(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -1974,6 +2006,102 @@ class AgentService extends ChangeNotifier {
     if (active == null) return 'No active call for DTMF.';
     active.sendDTMF(tones);
     return 'Sent DTMF: $tones';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Call control tool handlers (transfer, hold, mute, conference)
+  // ---------------------------------------------------------------------------
+
+  String _handleTransferCall(Map<String, dynamic> args) {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final target = args['target'] as String?;
+    if (target == null || target.isEmpty) return 'No transfer target provided.';
+    final active = sipHelper!.activeCall;
+    if (active == null) return 'No active call to transfer.';
+    final normalized = target.contains('@') ? target : ensureE164(target);
+    active.refer(normalized);
+    return 'Transferring call to $normalized.';
+  }
+
+  String _handleHoldCall(Map<String, dynamic> args) {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final action = args['action'] as String?;
+    if (action == null) return 'No action provided (hold or resume).';
+    final active = sipHelper!.activeCall;
+    if (active == null) return 'No active call.';
+    if (action == 'hold') {
+      active.hold();
+      return 'Call placed on hold.';
+    } else if (action == 'resume') {
+      active.unhold();
+      return 'Call resumed.';
+    }
+    return 'Unknown action "$action". Use "hold" or "resume".';
+  }
+
+  String _handleMuteCall(Map<String, dynamic> args) {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final muted = args['muted'] as bool?;
+    if (muted == null) return 'Missing "muted" parameter.';
+    final active = sipHelper!.activeCall;
+    if (active == null) return 'No active call.';
+    if (muted) {
+      active.mute(true, false);
+      return 'Microphone muted.';
+    } else {
+      active.unmute(true, false);
+      return 'Microphone unmuted.';
+    }
+  }
+
+  Future<String> _handleAddConferenceParticipant(
+      Map<String, dynamic> args) async {
+    if (sipHelper == null) return 'SIP helper not available.';
+    final number = args['number'] as String?;
+    if (number == null || number.isEmpty) return 'No number provided.';
+    final active = sipHelper!.activeCall;
+    if (active == null) return 'No active call to conference with.';
+
+    if (active.state != CallStateEnum.HOLD) {
+      active.hold();
+    }
+
+    final cleaned = ensureE164(number.contains('@') ? number : number);
+    try {
+      final stream = await navigator.mediaDevices
+          .getUserMedia(<String, dynamic>{'audio': true, 'video': false});
+      final success =
+          await sipHelper!.call(cleaned, voiceOnly: true, mediaStream: stream);
+      if (success) {
+        return 'Dialing $cleaned as conference participant. '
+            'Use merge_conference once connected to bridge all parties.';
+      }
+      return 'Failed to initiate call to $cleaned.';
+    } catch (e) {
+      return 'Error adding participant: $e';
+    }
+  }
+
+  Future<String> _handleMergeConference(Map<String, dynamic> args) async {
+    if (conferenceService == null) return 'Conference service not available.';
+    final conf = conferenceService!;
+    if (conf.legCount < 2) {
+      return 'Need at least 2 call legs to merge. '
+          'Use add_conference_participant first.';
+    }
+    if (!conf.canMerge) {
+      return 'Cannot merge right now. '
+          '${conf.mergeError ?? "Ensure all legs are connected."}';
+    }
+    try {
+      await conf.merge();
+      if (conf.mergeError != null) {
+        return 'Merge failed: ${conf.mergeError}';
+      }
+      return 'Conference merged successfully with ${conf.legCount} participants.';
+    } catch (e) {
+      return 'Merge error: $e';
+    }
   }
 
   Future<String> _handleSearchContacts(Map<String, dynamic> args) async {

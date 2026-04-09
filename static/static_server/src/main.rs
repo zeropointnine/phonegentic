@@ -2,10 +2,11 @@
 //!
 //! Serves `WEB_ROOT` (default `/var/html`) at http://0.0.0.0:3000
 //!
-//! SMS form handling:
-//!   Tries `sendmail` first; if it fails (not installed, port 25 blocked, etc.),
-//!   appends the submission to `SMS_LOG_FILE` (default `/var/log/sms_submissions.log`).
-//!   The forms always succeed for the end-user.
+//! Email delivery:
+//!   When `SENDGRID_API_KEY` is set, notifications are sent via the Twilio SendGrid
+//!   v3 Mail Send API. Otherwise falls back to local `sendmail`.
+//!   If both fail (or neither is configured), submissions are appended to a log file
+//!   (`SMS_LOG_FILE` / `HELP_LOG_FILE`) so nothing is ever lost.
 
 use axum::body::Bytes;
 use axum::extract::Form;
@@ -64,9 +65,18 @@ fn log_help_event(event_type: &str, body: &str) {
     log_event(&help_log_path(), event_type, body);
 }
 
-/// Try sendmail; if it fails, log to file. Always returns Ok for the caller.
-fn notify_or_log(to: Option<&str>, from: &str, subject: &str, body: &str) {
+/// Try SendGrid (if `SENDGRID_API_KEY` is set), then sendmail, then log to file.
+async fn notify_or_log(to: Option<&str>, from: &str, subject: &str, body: &str) {
     if let Some(addr) = to {
+        if let Some(key) = sendgrid_api_key() {
+            match sendgrid_notify(&key, addr, from, subject, body).await {
+                Ok(()) => {
+                    tracing::info!("SendGrid succeeded for {}", subject);
+                    return;
+                }
+                Err(e) => tracing::warn!("SendGrid failed ({}), trying sendmail", e),
+            }
+        }
         match sendmail_notify(addr, from, subject, body) {
             Ok(()) => {
                 tracing::info!("sendmail succeeded for {}", subject);
@@ -156,8 +166,17 @@ fn help_notify_email() -> Option<String> {
     env_email("HELP_NOTIFY_EMAIL").or_else(|| env_email("SMS_NOTIFY_EMAIL"))
 }
 
-fn notify_or_log_help(to: Option<&str>, from: &str, subject: &str, body: &str) {
+async fn notify_or_log_help(to: Option<&str>, from: &str, subject: &str, body: &str) {
     if let Some(addr) = to {
+        if let Some(key) = sendgrid_api_key() {
+            match sendgrid_notify(&key, addr, from, subject, body).await {
+                Ok(()) => {
+                    tracing::info!("SendGrid succeeded for {}", subject);
+                    return;
+                }
+                Err(e) => tracing::warn!("SendGrid failed ({}), trying sendmail", e),
+            }
+        }
         match sendmail_notify(addr, from, subject, body) {
             Ok(()) => {
                 tracing::info!("sendmail succeeded for {}", subject);
@@ -295,6 +314,64 @@ fn normalize_e164(s: &str) -> Option<String> {
     Some(e164)
 }
 
+fn sendgrid_api_key() -> Option<String> {
+    env_email("SENDGRID_API_KEY")
+}
+
+/// Parse a "Display Name <addr>" or bare "addr" into (name, email).
+fn parse_from_field(from: &str) -> (&str, &str) {
+    if let Some(open) = from.find('<') {
+        let name = from[..open].trim();
+        let email = from[open + 1..].trim_end_matches('>').trim();
+        (name, email)
+    } else {
+        ("", from.trim())
+    }
+}
+
+async fn sendgrid_notify(
+    api_key: &str,
+    to: &str,
+    from: &str,
+    subject: &str,
+    body: &str,
+) -> Result<(), String> {
+    let (from_name, from_email) = parse_from_field(from);
+
+    let mut from_obj = serde_json::json!({ "email": from_email });
+    if !from_name.is_empty() {
+        from_obj["name"] = serde_json::json!(from_name);
+    }
+
+    let payload = serde_json::json!({
+        "personalizations": [{
+            "to": [{ "email": to }]
+        }],
+        "from": from_obj,
+        "subject": subject,
+        "content": [{
+            "type": "text/plain",
+            "value": body
+        }]
+    });
+
+    let resp = reqwest::Client::new()
+        .post("https://api.sendgrid.com/v3/mail/send")
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("SendGrid request failed: {}", e))?;
+
+    let status = resp.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        let text = resp.text().await.unwrap_or_default();
+        Err(format!("SendGrid HTTP {}: {}", status.as_u16(), text))
+    }
+}
+
 fn sendmail_notify(to: &str, from: &str, subject: &str, body: &str) -> std::io::Result<()> {
     let mut child = Command::new("sendmail")
         .args(["-t", "-i"])
@@ -392,7 +469,8 @@ async fn sms_opt_in_handler(headers: HeaderMap, Form(form): Form<SmsOptInForm>) 
         &mail_from(),
         "Phonegentic SMS marketing opt-in",
         &body,
-    );
+    )
+    .await;
 
     tracing::info!(phone = %phone, "SMS opt-in processed");
     if ajax {
@@ -523,7 +601,8 @@ async fn finish_sms_opt_out(phone: String, note: String, mode: OptOutFinishMode)
         &mail_from(),
         "Phonegentic SMS marketing opt-out",
         &body,
-    );
+    )
+    .await;
 
     tracing::info!(phone = %phone, ?mode, "SMS opt-out processed");
 
@@ -580,7 +659,8 @@ async fn help_handler(headers: HeaderMap, Form(form): Form<HelpForm>) -> Respons
         &mail_from(),
         "Phonegentic help request",
         &body,
-    );
+    )
+    .await;
 
     tracing::info!("help request processed");
     (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response()

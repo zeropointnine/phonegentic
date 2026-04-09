@@ -541,6 +541,91 @@ class WhisperRealtimeService {
           'required': ['voice_id'],
         },
       },
+      {
+        'type': 'function',
+        'name': 'transfer_call',
+        'description':
+            'Blind-transfer the active call to another number or SIP URI. '
+                'The current call will be redirected and then disconnected on '
+                'our side once the transfer is accepted.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'target': {
+              'type': 'string',
+              'description':
+                  'Phone number or SIP URI to transfer the call to '
+                      '(e.g. "+18005551234" or "sip:agent@example.com")',
+            },
+          },
+          'required': ['target'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'hold_call',
+        'description':
+            'Put the active call on hold, or resume a held call. '
+                'Toggling hold is useful before adding a conference participant.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'action': {
+              'type': 'string',
+              'enum': ['hold', 'resume'],
+              'description': 'Whether to hold or resume the call.',
+            },
+          },
+          'required': ['action'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'mute_call',
+        'description':
+            'Mute or unmute the microphone on the active call.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'muted': {
+              'type': 'boolean',
+              'description': 'True to mute the microphone, false to unmute.',
+            },
+          },
+          'required': ['muted'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'add_conference_participant',
+        'description':
+            'Add a new participant to the call by dialing a second number. '
+                'The current call is automatically placed on hold while the '
+                'new leg connects. Use merge_conference afterwards to bridge '
+                'all participants together.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'number': {
+              'type': 'string',
+              'description':
+                  'Phone number or SIP URI of the participant to add.',
+            },
+          },
+          'required': ['number'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'merge_conference',
+        'description':
+            'Merge all active call legs into a single conference call. '
+                'Requires at least two call legs (use add_conference_participant first).',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
+        },
+      },
       ..._extraTools,
     ];
 
