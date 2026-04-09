@@ -342,17 +342,30 @@ Other compatible SIP servers and providers:
 
 ### Option A: Edit `test_credentials.dart` (auto-register on launch)
 
-Open [`phonegentic/lib/src/test_credentials.dart`](phonegentic/lib/src/test_credentials.dart) and replace the placeholder values:
+When launch for the first time this file is created, making it convenient so clean rebuilds while debugging don't blast away your credentials
 
 ```dart
-static String telnyxUsername = 'YOUR_SIP_USERNAME';
-static String telnyxPassword = 'YOUR_SIP_PASSWORD';
-```
+import 'package:phonegentic/src/user_state/sip_user.dart';
+import 'package:sip_ua/sip_ua.dart';
 
-Then point `sipUser` to your provider getter:
-
-```dart
-static SipUser get sipUser => _telnyx;
+class TestCredentials {
+  static SipUser get sipUser => _sipUser;
+  static String username = '';
+  static String password = '';
+  static String hostname = ''
+  /// Edify staging (WebSocket)
+  static SipUser get _sipUser => SipUser(
+        host: hostname,
+        wsUrl: 'wss://$hostname:19306/ws',
+        selectedTransport: TransportType.WS,
+        wsExtraHeaders: {},
+        sipUri: '$username@$hostname',
+        port: '15066',
+        displayName: '',
+        password: username,
+        authUser: password,
+      );
+}
 ```
 
 ### Option B: Configure at runtime
