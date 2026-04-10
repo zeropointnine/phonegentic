@@ -1706,6 +1706,8 @@ class _AgentBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final String? agentName = context.read<JobFunctionService>().selected?.agentName;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -1714,7 +1716,7 @@ class _AgentBubble extends StatelessWidget {
           Container(
             width: 24,
             height: 24,
-            margin: const EdgeInsets.only(top: 2),
+            margin: const EdgeInsets.only(top: 8),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(7),
               color: AppColors.bg,
@@ -1727,18 +1729,6 @@ class _AgentBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text('AI', style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textTertiary,
-                    )),
-                    const SizedBox(width: 6),
-                    Text(_formatTime(message.timestamp), style: TextStyle(
-                      fontSize: 10, color: AppColors.textTertiary.withValues(alpha: 0.7),
-                    )),
-                  ],
-                ),
-                const SizedBox(height: 4),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
@@ -1751,24 +1741,44 @@ class _AgentBubble extends StatelessWidget {
                     ),
                     border: Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Flexible(
-                        child: Text(
-                          message.text,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textSecondary,
-                            height: 1.45,
+                      Row(
+                        children: [
+                          Text(
+                            agentName != null ? 'AI ($agentName)' : 'AI',
+                            style: TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textTertiary,
+                            ),
                           ),
-                        ),
+                          const SizedBox(width: 6),
+                          Text(_formatTime(message.timestamp), style: TextStyle(
+                            fontSize: 10, color: AppColors.textTertiary.withValues(alpha: 0.7),
+                          )),
+                        ],
                       ),
-                      if (message.isStreaming) ...[
-                        const SizedBox(width: 4),
-                        _StreamingCursor(),
-                      ],
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              message.text,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: AppColors.textSecondary,
+                                height: 1.45,
+                              ),
+                            ),
+                          ),
+                          if (message.isStreaming) ...[
+                            const SizedBox(width: 4),
+                            _StreamingCursor(),
+                          ],
+                        ],
+                      ),
                     ],
                   ),
                 ),

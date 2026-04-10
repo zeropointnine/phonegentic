@@ -321,63 +321,94 @@ class _WeekViewState extends State<_WeekView> {
         widget.focusDate.subtract(Duration(days: widget.focusDate.weekday % 7));
     final now = DateTime.now();
 
-    return SingleChildScrollView(
-      controller: _scrollController,
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Time gutter
-          Container(
-            width: 44,
-            decoration: BoxDecoration(
-              border: Border(
-                right: BorderSide(
-                    color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+    return Column(
+      children: [
+        // Fixed day-of-week header
+        Row(
+          children: [
+            Container(
+              width: 44,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                border: Border(
+                  right: BorderSide(
+                      color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+                  bottom: BorderSide(
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                ),
               ),
             ),
-            child: Column(
+            for (var d = 0; d < 7; d++)
+              Expanded(
+                child: _DayHeader(
+                  day: weekStart.add(Duration(days: d)),
+                  isToday: _isSameDay(weekStart.add(Duration(days: d)), now),
+                  onAddEvent: widget.onAddEvent,
+                  showRightBorder: d < 6,
+                ),
+              ),
+          ],
+        ),
+        // Scrollable time grid
+        Expanded(
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(height: 40),
-                for (var h = _startHour; h <= _endHour; h++)
-                  SizedBox(
-                    height: _hourHeight,
-                    child: Align(
-                      alignment: Alignment.topRight,
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 6, top: 0),
-                        child: Text(
-                          _formatHour(h),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.accent,
-                            fontWeight: FontWeight.w600,
+                Container(
+                  width: 44,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      right: BorderSide(
+                          color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      for (var h = _startHour; h <= _endHour; h++)
+                        SizedBox(
+                          height: _hourHeight,
+                          child: Align(
+                            alignment: Alignment.topRight,
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 6, top: 0),
+                              child: Text(
+                                _formatHour(h),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.accent,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                    ],
+                  ),
+                ),
+                for (var d = 0; d < 7; d++)
+                  Expanded(
+                    child: _DayColumn(
+                      day: weekStart.add(Duration(days: d)),
+                      events: _eventsForDay(weekStart.add(Duration(days: d))),
+                      startHour: _startHour,
+                      endHour: _endHour,
+                      hourHeight: _hourHeight,
+                      isToday: _isSameDay(weekStart.add(Duration(days: d)), now),
+                      now: now,
+                      onEventTap: widget.onEventTap,
+                      onAddEvent: widget.onAddEvent,
+                      showRightBorder: d < 6,
                     ),
                   ),
               ],
             ),
           ),
-          // Day columns
-          for (var d = 0; d < 7; d++)
-            Expanded(
-              child: _DayColumn(
-                day: weekStart.add(Duration(days: d)),
-                events: _eventsForDay(weekStart.add(Duration(days: d))),
-                startHour: _startHour,
-                endHour: _endHour,
-                hourHeight: _hourHeight,
-                isToday: _isSameDay(weekStart.add(Duration(days: d)), now),
-                now: now,
-                onEventTap: widget.onEventTap,
-                onAddEvent: widget.onAddEvent,
-                showRightBorder: d < 6,
-              ),
-            ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -398,7 +429,137 @@ class _WeekViewState extends State<_WeekView> {
   }
 }
 
-class _DayColumn extends StatefulWidget {
+// Fixed day-of-week header cell (does not scroll)
+class _DayHeader extends StatefulWidget {
+  final DateTime day;
+  final bool isToday;
+  final ValueChanged<DateTime> onAddEvent;
+  final bool showRightBorder;
+
+  const _DayHeader({
+    required this.day,
+    required this.isToday,
+    required this.onAddEvent,
+    this.showRightBorder = false,
+  });
+
+  @override
+  State<_DayHeader> createState() => _DayHeaderState();
+}
+
+class _DayHeaderState extends State<_DayHeader> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final String dayLabel = DateFormat.E().format(widget.day).substring(0, 2);
+    final String dayNum = widget.day.day.toString();
+
+    return Container(
+      decoration: widget.showRightBorder
+          ? BoxDecoration(
+              border: Border(
+                right: BorderSide(
+                    color: AppColors.border.withValues(alpha: 0.35), width: 0.5),
+              ),
+            )
+          : null,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => widget.onAddEvent(widget.day),
+          child: Container(
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border(
+                bottom: BorderSide(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              ),
+            ),
+            child: Stack(
+              children: [
+                Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        dayLabel,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: widget.isToday
+                              ? AppColors.accent
+                              : AppColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Container(
+                        width: 22,
+                        height: 22,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: widget.isToday
+                              ? AppColors.accent
+                              : Colors.transparent,
+                        ),
+                        child: Center(
+                          child: Text(
+                            dayNum,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: widget.isToday
+                                  ? AppColors.onAccent
+                                  : AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_isHovered)
+                  Positioned(
+                    right: 2,
+                    top: 2,
+                    child: AnimatedOpacity(
+                      opacity: _isHovered ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 150),
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.accent,
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.accent.withValues(alpha: 0.4),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.add_rounded,
+                          size: 12,
+                          color: AppColors.onAccent,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Scrollable day column (time grid + events only, no header)
+class _DayColumn extends StatelessWidget {
   final DateTime day;
   final List<CalendarEvent> events;
   final int startHour;
@@ -424,20 +585,11 @@ class _DayColumn extends StatefulWidget {
   });
 
   @override
-  State<_DayColumn> createState() => _DayColumnState();
-}
-
-class _DayColumnState extends State<_DayColumn> {
-  bool _isHovered = false;
-
-  @override
   Widget build(BuildContext context) {
-    final totalHeight = (widget.endHour - widget.startHour + 1) * widget.hourHeight;
-    final dayLabel = DateFormat.E().format(widget.day).substring(0, 2);
-    final dayNum = widget.day.day.toString();
+    final double totalHeight = (endHour - startHour + 1) * hourHeight;
 
     return Container(
-      decoration: widget.showRightBorder
+      decoration: showRightBorder
           ? BoxDecoration(
               border: Border(
                 right: BorderSide(
@@ -445,138 +597,40 @@ class _DayColumnState extends State<_DayColumn> {
               ),
             )
           : null,
-      child: Column(
-      children: [
-        // Day header with hover (+)
-        MouseRegion(
-          onEnter: (_) => setState(() => _isHovered = true),
-          onExit: (_) => setState(() => _isHovered = false),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => widget.onAddEvent(widget.day),
-            child: Container(
-              height: 40,
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                border: Border(
-                  bottom: BorderSide(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-                ),
-              ),
-              child: Stack(
-                children: [
-                  Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          dayLabel,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: widget.isToday
-                                ? AppColors.accent
-                                : AppColors.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 1),
-                        Container(
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: widget.isToday
-                                ? AppColors.accent
-                                : Colors.transparent,
-                          ),
-                          child: Center(
-                            child: Text(
-                              dayNum,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: widget.isToday
-                                    ? AppColors.onAccent
-                                    : AppColors.textSecondary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Hover (+) button
-                  if (_isHovered)
-                    Positioned(
-                      right: 2,
-                      top: 2,
-                      child: AnimatedOpacity(
-                        opacity: _isHovered ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 150),
-                        child: Container(
-                          width: 18,
-                          height: 18,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.accent,
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.accent.withValues(alpha: 0.4),
-                                blurRadius: 4,
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            Icons.add_rounded,
-                            size: 12,
-                            color: AppColors.onAccent,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+      child: SizedBox(
+        height: totalHeight,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: () => onAddEvent(day),
               ),
             ),
-          ),
-        ),
-        // Time grid + events
-        SizedBox(
-          height: totalHeight,
-          child: Stack(
-            children: [
-              // Tap-to-add on empty grid space
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTap: () => widget.onAddEvent(widget.day),
+            for (var h = startHour; h <= endHour; h++)
+              Positioned(
+                top: (h - startHour) * hourHeight,
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5),
                 ),
               ),
-              for (var h = widget.startHour; h <= widget.endHour; h++)
-                Positioned(
-                  top: (h - widget.startHour) * widget.hourHeight,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    height: 0.5,
-                    color: AppColors.border.withValues(alpha: 0.5),
-                  ),
-                ),
-              if (widget.isToday) _buildNowLine(),
-              for (final event in widget.events) _buildEvent(event),
-            ],
-          ),
+            if (isToday) _buildNowLine(),
+            for (final event in events) _buildEvent(event),
+          ],
         ),
-      ],
       ),
     );
   }
 
   Widget _buildNowLine() {
-    final minutesFromStart =
-        (widget.now.hour - widget.startHour) * 60 + widget.now.minute;
-    final top = minutesFromStart * widget.hourHeight / 60;
+    final int minutesFromStart =
+        (now.hour - startHour) * 60 + now.minute;
+    final double top = minutesFromStart * hourHeight / 60;
     if (top < 0 ||
-        top > (widget.endHour - widget.startHour + 1) * widget.hourHeight) {
+        top > (endHour - startHour + 1) * hourHeight) {
       return const SizedBox.shrink();
     }
     return Positioned(
@@ -599,14 +653,14 @@ class _DayColumnState extends State<_DayColumn> {
   }
 
   Widget _buildEvent(CalendarEvent event) {
-    final localStart = event.startTime.toLocal();
-    final localEnd = event.endTime.toLocal();
-    final startMin =
-        (localStart.hour - widget.startHour) * 60 + localStart.minute;
-    final endMin = (localEnd.hour - widget.startHour) * 60 + localEnd.minute;
-    final top = startMin * widget.hourHeight / 60;
-    final height =
-        ((endMin - startMin).clamp(15, 9999)) * widget.hourHeight / 60;
+    final DateTime localStart = event.startTime.toLocal();
+    final DateTime localEnd = event.endTime.toLocal();
+    final int startMin =
+        (localStart.hour - startHour) * 60 + localStart.minute;
+    final int endMin = (localEnd.hour - startHour) * 60 + localEnd.minute;
+    final double top = startMin * hourHeight / 60;
+    final double height =
+        ((endMin - startMin).clamp(15, 9999)) * hourHeight / 60;
 
     return Positioned(
       top: top.clamp(0, double.infinity),
@@ -615,7 +669,7 @@ class _DayColumnState extends State<_DayColumn> {
       height: height,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => widget.onEventTap(event),
+        onTap: () => onEventTap(event),
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 1),
           padding: const EdgeInsets.all(3),

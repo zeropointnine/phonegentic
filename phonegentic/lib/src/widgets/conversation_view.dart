@@ -35,15 +35,22 @@ class _ConversationViewState extends State<ConversationView> {
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      }
+      // Wait a second frame so the list has fully laid out.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scrollCtrl.hasClients) return;
+        final double target = _scrollCtrl.position.maxScrollExtent;
+        if (animate) {
+          _scrollCtrl.animateTo(
+            target,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        } else {
+          _scrollCtrl.jumpTo(target);
+        }
+      });
     });
   }
 
@@ -93,8 +100,9 @@ class _ConversationViewState extends State<ConversationView> {
         final messages = messaging.activeMessages;
 
         if (messages.length != _lastCount) {
+          final bool isInitial = _lastCount == 0;
           _lastCount = messages.length;
-          _scrollToBottom();
+          _scrollToBottom(animate: !isInitial);
         }
 
         return DropTarget(
@@ -367,12 +375,12 @@ class _ConversationViewState extends State<ConversationView> {
           if (_attachmentUrls.isNotEmpty)
             _buildAttachmentPreview(),
           Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           GestureDetector(
             onTap: _pickAttachment,
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 6, right: 2),
+              padding: const EdgeInsets.only(right: 2),
               child: Icon(
                 Icons.add_photo_alternate_outlined,
                 size: 22,
@@ -386,7 +394,7 @@ class _ConversationViewState extends State<ConversationView> {
           GestureDetector(
             onTap: () => setState(() => _showEmoji = !_showEmoji),
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 6, right: 4),
+              padding: const EdgeInsets.only(right: 4),
               child: Icon(
                 _showEmoji
                     ? Icons.keyboard_rounded
