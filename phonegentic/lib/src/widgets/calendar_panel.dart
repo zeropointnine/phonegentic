@@ -1589,7 +1589,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                           ...jfService.items.map((jf) {
                             final id = (jf as dynamic).id as int?;
                             final name =
-                                (jf as dynamic).name as String;
+                                (jf as dynamic).title as String;
                             return DropdownMenuItem<int?>(
                               value: id,
                               child: Text(name),
@@ -2205,7 +2205,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                           ...jfService.items.map((jf) {
                             final id = (jf as dynamic).id as int?;
                             final name =
-                                (jf as dynamic).name as String;
+                                (jf as dynamic).title as String;
                             return DropdownMenuItem<int?>(
                               value: id,
                               child: Text(name),
