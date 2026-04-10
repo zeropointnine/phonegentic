@@ -1241,7 +1241,7 @@ class _CallButtonState extends State<_CallButton>
       vsync: this,
       duration: const Duration(milliseconds: 2000),
     )..repeat(reverse: true);
-    _glowAnim = Tween<double>(begin: 0.25, end: 0.55).animate(
+    _glowAnim = Tween<double>(begin: 0.25, end: 0.35).animate(
       CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
     );
   }
@@ -1290,15 +1290,9 @@ class _CallButtonState extends State<_CallButton>
                     BoxShadow(
                       color: AppColors.phosphor
                           .withValues(alpha: _hovered ? 0.6 : _glowAnim.value),
-                      blurRadius: _hovered ? 28 : 20,
+                      blurRadius: _hovered ? 6 : 4,
                       spreadRadius: _hovered ? 4 : 2,
                     ),
-                    if (_hovered)
-                      BoxShadow(
-                        color: AppColors.hotSignal.withValues(alpha: 0.3),
-                        blurRadius: 40,
-                        spreadRadius: 6,
-                      ),
                   ],
                 ),
                 child: Icon(Icons.phone, size: 30, color: AppColors.crtBlack),
