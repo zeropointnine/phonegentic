@@ -74,3 +74,9 @@
 
 .flutter-plugins-dependencies
 lib/src/test_credentials_local.dart
+
+# On-device ML models (downloaded via scripts/download_models.sh)
+models/
+*.safetensors
+*.mlmodelc
+*.mlpackage

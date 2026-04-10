@@ -23,3 +23,10 @@ example/lib/generated_plugin_registrant.dart
 # Credentials
 **/test_credentials.dart
 **/test_credentials_local.dart
+
+# On-device ML models (downloaded via scripts/download_models.sh)
+**/models/kokoro/
+**/models/whisperkit/
+*.safetensors
+*.mlmodelc
+*.mlpackage

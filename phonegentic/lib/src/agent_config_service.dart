@@ -111,24 +111,32 @@ class TextAgentConfig {
   }
 }
 
-enum TtsProvider { none, elevenlabs }
+enum TtsProvider { none, elevenlabs, kokoro }
 
 class TtsConfig {
   final TtsProvider provider;
   final String elevenLabsApiKey;
   final String elevenLabsVoiceId;
   final String elevenLabsModelId;
+  final String kokoroVoiceStyle;
 
   const TtsConfig({
     this.provider = TtsProvider.none,
     this.elevenLabsApiKey = '',
     this.elevenLabsVoiceId = '',
     this.elevenLabsModelId = 'eleven_flash_v2_5',
+    this.kokoroVoiceStyle = 'af_heart',
   });
 
   bool get isConfigured {
-    if (provider == TtsProvider.none) return false;
-    return elevenLabsApiKey.isNotEmpty && elevenLabsVoiceId.isNotEmpty;
+    switch (provider) {
+      case TtsProvider.none:
+        return false;
+      case TtsProvider.elevenlabs:
+        return elevenLabsApiKey.isNotEmpty && elevenLabsVoiceId.isNotEmpty;
+      case TtsProvider.kokoro:
+        return true;
+    }
   }
 
   TtsConfig copyWith({
@@ -136,12 +144,36 @@ class TtsConfig {
     String? elevenLabsApiKey,
     String? elevenLabsVoiceId,
     String? elevenLabsModelId,
+    String? kokoroVoiceStyle,
   }) {
     return TtsConfig(
       provider: provider ?? this.provider,
       elevenLabsApiKey: elevenLabsApiKey ?? this.elevenLabsApiKey,
       elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
       elevenLabsModelId: elevenLabsModelId ?? this.elevenLabsModelId,
+      kokoroVoiceStyle: kokoroVoiceStyle ?? this.kokoroVoiceStyle,
+    );
+  }
+}
+
+enum SttProvider { openaiRealtime, whisperKit }
+
+class SttConfig {
+  final SttProvider provider;
+  final String whisperKitModelSize;
+
+  const SttConfig({
+    this.provider = SttProvider.openaiRealtime,
+    this.whisperKitModelSize = 'base',
+  });
+
+  SttConfig copyWith({
+    SttProvider? provider,
+    String? whisperKitModelSize,
+  }) {
+    return SttConfig(
+      provider: provider ?? this.provider,
+      whisperKitModelSize: whisperKitModelSize ?? this.whisperKitModelSize,
     );
   }
 }
@@ -248,9 +280,10 @@ class AgentConfigService {
 
   static Future<TtsConfig> loadTtsConfig() async {
     final prefs = await SharedPreferences.getInstance();
+    final providerIdx = prefs.getInt('${_prefix}tts_provider') ?? 0;
     return TtsConfig(
       provider: TtsProvider
-          .values[prefs.getInt('${_prefix}tts_provider') ?? 0],
+          .values[providerIdx.clamp(0, TtsProvider.values.length - 1)],
       elevenLabsApiKey:
           prefs.getString('${_prefix}tts_elevenlabs_key') ?? '',
       elevenLabsVoiceId:
@@ -258,6 +291,8 @@ class AgentConfigService {
       elevenLabsModelId:
           prefs.getString('${_prefix}tts_elevenlabs_model') ??
               'eleven_flash_v2_5',
+      kokoroVoiceStyle:
+          prefs.getString('${_prefix}tts_kokoro_voice') ?? 'af_heart',
     );
   }
 
@@ -270,6 +305,28 @@ class AgentConfigService {
         '${_prefix}tts_elevenlabs_voice_id', config.elevenLabsVoiceId);
     await prefs.setString(
         '${_prefix}tts_elevenlabs_model', config.elevenLabsModelId);
+    await prefs.setString(
+        '${_prefix}tts_kokoro_voice', config.kokoroVoiceStyle);
+  }
+
+  // -- STT config (on-device WhisperKit) -------------------------------------
+
+  static Future<SttConfig> loadSttConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final providerIdx = prefs.getInt('${_prefix}stt_provider') ?? 0;
+    return SttConfig(
+      provider: SttProvider
+          .values[providerIdx.clamp(0, SttProvider.values.length - 1)],
+      whisperKitModelSize:
+          prefs.getString('${_prefix}stt_whisperkit_model') ?? 'base',
+    );
+  }
+
+  static Future<void> saveSttConfig(SttConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('${_prefix}stt_provider', config.provider.index);
+    await prefs.setString(
+        '${_prefix}stt_whisperkit_model', config.whisperKitModelSize);
   }
 
   static Future<CallRecordingConfig> loadCallRecordingConfig() async {

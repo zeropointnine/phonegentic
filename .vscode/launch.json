@@ -5,12 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "dart-sip-ua",
+            "name": "phonegentic",
+            "cwd": "phonegentic",
             "request": "launch",
-            "type": "dart"
+            "type": "dart",
+            "args": [
+                "--dart-define=ENABLE_ON_DEVICE_MODELS=true"
+            ]
         },
         {
-            "name": "phonegentic",
+            "name": "phonegentic (lite, no on-device models)",
             "cwd": "phonegentic",
             "request": "launch",
             "type": "dart"
@@ -20,14 +24,20 @@
             "cwd": "phonegentic",
             "request": "launch",
             "type": "dart",
-            "flutterMode": "profile"
+            "flutterMode": "profile",
+            "args": [
+                "--dart-define=ENABLE_ON_DEVICE_MODELS=true"
+            ]
         },
         {
             "name": "phonegentic (release mode)",
             "cwd": "phonegentic",
             "request": "launch",
             "type": "dart",
-            "flutterMode": "release"
+            "flutterMode": "release",
+            "args": [
+                "--dart-define=ENABLE_ON_DEVICE_MODELS=true"
+            ]
         }
     ]
 }

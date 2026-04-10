@@ -30,10 +30,15 @@
 		8C22601088434A6BB1FE95FC /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B56D1DAD0955A41B5C16AD2D /* Pods_Runner.framework */; };
 		A1B2C3D400000002ADC00001 /* AudioDeviceChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000001ADC00001 /* AudioDeviceChannel.swift */; };
 		B2C3D4E500000002ATC00002 /* AudioTapChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */; };
+		CD1CE2D52F88D88D00F1B019 /* models in Resources */ = {isa = PBXBuildFile; fileRef = CD1CE2D42F88D88D00F1B019 /* models */; };
 		D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */; };
 		E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */; };
 		E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E5F6A7B800000004FLA00002 /* FluidAudio */; };
 		E8C4A047BF41B4A2D0635957 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */; };
+		F1A2B3C400000002KTC00001 /* KokoroTtsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */; };
+		F1A2B3C400000002WKC00001 /* WhisperKitChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */; };
+		F1A2B3C400000003KSW00001 /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = F1A2B3C400000004KSW00002 /* KokoroSwift */; };
+		F1A2B3C400000003WKT00001 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = F1A2B3C400000004WKT00002 /* WhisperKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,11 +98,14 @@
 		B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTapChannel.swift; sourceTree = "<group>"; };
 		B56D1DAD0955A41B5C16AD2D /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C3D4E5F600000001BRH00001 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
+		CD1CE2D42F88D88D00F1B019 /* models */ = {isa = PBXFileReference; lastKnownFileType = folder; name = models; path = ../models; sourceTree = "<group>"; };
 		D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCAudioProcessor.swift; sourceTree = "<group>"; };
 		E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerIdentifier.swift; sourceTree = "<group>"; };
 		E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC906358CFE0C48974F10E54 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		ECBD98B4B52730466C82DC36 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroTtsChannel.swift; sourceTree = "<group>"; };
+		F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitChannel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +123,8 @@
 			files = (
 				8C22601088434A6BB1FE95FC /* Pods_Runner.framework in Frameworks */,
 				E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */,
+				F1A2B3C400000003KSW00001 /* KokoroSwift in Frameworks */,
+				F1A2B3C400000003WKT00001 /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +153,7 @@
 		33CC10E42044A3C60003C045 = {
 			isa = PBXGroup;
 			children = (
+				CD1CE2D42F88D88D00F1B019 /* models */,
 				33FAB671232836740065AC1E /* Runner */,
 				33CEB47122A05771004F2AC0 /* Flutter */,
 				331C80D6294CF71000263BE5 /* RunnerTests */,
@@ -190,6 +201,8 @@
 				33CC11122044BFA00003C045 /* MainFlutterWindow.swift */,
 				A1B2C3D400000001ADC00001 /* AudioDeviceChannel.swift */,
 				B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */,
+				F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */,
+				F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */,
 				D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */,
 				E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */,
 				C3D4E5F600000001BRH00001 /* Runner-Bridging-Header.h */,
@@ -265,6 +278,8 @@
 			name = Runner;
 			packageProductDependencies = (
 				E5F6A7B800000004FLA00002 /* FluidAudio */,
+				F1A2B3C400000004KSW00002 /* KokoroSwift */,
+				F1A2B3C400000004WKT00002 /* WhisperKit */,
 			);
 			productName = Runner;
 			productReference = 33CC10ED2044A3C60003C045 /* Phonegentic AI.app */;
@@ -312,6 +327,8 @@
 			mainGroup = 33CC10E42044A3C60003C045;
 			packageReferences = (
 				E5F6A7B800000005FLA00003 /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				CD1CE2D22F88D45900F1B019 /* XCRemoteSwiftPackageReference "kokoro-ios" */,
+				CD1CE2D32F88D49800F1B019 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			productRefGroup = 33CC10EE2044A3C60003C045 /* Products */;
 			projectDirPath = "";
@@ -336,6 +353,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CD1CE2D52F88D88D00F1B019 /* models in Resources */,
 				33CC10F32044A3C60003C045 /* Assets.xcassets in Resources */,
 				33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */,
 			);
@@ -463,6 +481,8 @@
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 				A1B2C3D400000002ADC00001 /* AudioDeviceChannel.swift in Sources */,
 				B2C3D4E500000002ATC00002 /* AudioTapChannel.swift in Sources */,
+				F1A2B3C400000002KTC00001 /* KokoroTtsChannel.swift in Sources */,
+				F1A2B3C400000002WKC00001 /* WhisperKitChannel.swift in Sources */,
 				D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */,
 				E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */,
 			);
@@ -582,7 +602,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -679,7 +699,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -729,7 +749,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -857,6 +877,22 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		CD1CE2D22F88D45900F1B019 /* XCRemoteSwiftPackageReference "kokoro-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/mlalma/kokoro-ios.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.11;
+			};
+		};
+		CD1CE2D32F88D49800F1B019 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		E5F6A7B800000005FLA00003 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
@@ -872,6 +908,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E5F6A7B800000005FLA00003 /* XCRemoteSwiftPackageReference "FluidAudio" */;
 			productName = FluidAudio;
+		};
+		F1A2B3C400000004KSW00002 /* KokoroSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CD1CE2D22F88D45900F1B019 /* XCRemoteSwiftPackageReference "kokoro-ios" */;
+			productName = KokoroSwift;
+		};
+		F1A2B3C400000004WKT00002 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CD1CE2D32F88D49800F1B019 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
