@@ -72,6 +72,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     receivedMsg = '';
     _bindEventListeners();
     _loadSettings();
+    HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoRegister());
   }
 
@@ -88,6 +89,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _focusNode.dispose();
     _textController?.dispose();
     super.dispose();
@@ -100,44 +102,56 @@ class _MyDialPadWidget extends State<DialPadWidget>
     setState(() {});
   }
 
-  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+  bool _handleGlobalKeyEvent(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    if (_activeCall != null) return false;
+
+    final FocusNode? primary = FocusManager.instance.primaryFocus;
+    if (primary != null && primary.context != null) {
+      if (primary.context!
+              .findAncestorWidgetOfExactType<EditableText>() !=
+          null) {
+        return false;
+      }
+    }
+
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
-      final text = _textController!.text;
+      final String text = _textController!.text;
       if (text.isNotEmpty) {
         setState(() {
           _textController!.text = text.substring(0, text.length - 1);
         });
-        return KeyEventResult.handled;
+        return true;
       }
-      return KeyEventResult.ignored;
+      return false;
     }
-    final character = event.character;
-    if (character == null || character.isEmpty) return KeyEventResult.ignored;
 
-    const dialChars = '0123456789*#+';
+    final String? character = event.character;
+    if (character == null || character.isEmpty) return false;
+
+    const String dialChars = '0123456789*#+';
     if (dialChars.contains(character)) {
       setState(() {
         _textController!.text += character;
       });
-      return KeyEventResult.handled;
+      return true;
     }
 
-    // Letters → redirect focus to the agent panel text input.
     if (RegExp(r'^[a-zA-Z]$').hasMatch(character)) {
-      final agentFocus = AgentPanel.inputFocusNode;
-      final agentCtrl = AgentPanel.inputController;
+      final FocusNode? agentFocus = AgentPanel.inputFocusNode;
+      final TextEditingController? agentCtrl = AgentPanel.inputController;
       if (agentFocus != null && agentCtrl != null) {
         agentCtrl.text += character;
         agentCtrl.selection = TextSelection.collapsed(
           offset: agentCtrl.text.length,
         );
         agentFocus.requestFocus();
-        return KeyEventResult.handled;
+        return true;
       }
     }
 
-    return KeyEventResult.ignored;
+    return false;
   }
 
   void _handleMute() {
@@ -290,7 +304,6 @@ class _MyDialPadWidget extends State<DialPadWidget>
                           : Focus(
                               autofocus: true,
                               focusNode: _focusNode,
-                              onKeyEvent: _handleKeyEvent,
                               child: _buildPhoneSection(context),
                             ),
                     ),
