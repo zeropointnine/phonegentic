@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -58,6 +57,8 @@ class WhisperRealtimeService {
   bool muted = false;
   bool _vadActive = false;
   bool _isTtsPlaying = false;
+  DateTime _ttsSuppressedUntil = DateTime(0);
+  static const int _ttsEchoCooldownMs = 1500;
 
   final _transcriptionController =
       StreamController<TranscriptionEvent>.broadcast();
@@ -90,6 +91,10 @@ class WhisperRealtimeService {
   set isTtsPlaying(bool value) {
     if (_isTtsPlaying != value) {
       _isTtsPlaying = value;
+      if (!value) {
+        _ttsSuppressedUntil =
+            DateTime.now().add(const Duration(milliseconds: _ttsEchoCooldownMs));
+      }
       debugPrint('[WhisperRealtimeService] _isTtsPlaying = $_isTtsPlaying');
     }
   }
@@ -723,10 +728,13 @@ class WhisperRealtimeService {
     _send({'type': 'response.create'});
   }
 
+  bool get _ttsSuppressed =>
+      _isTtsPlaying || DateTime.now().isBefore(_ttsSuppressedUntil);
+
   int _audioSendCount = 0;
   void sendAudio(Uint8List pcm16Mono24kHz) {
     _emitAudioLevel(pcm16Mono24kHz);
-    if (muted || !_connected || _ws == null) return;
+    if (muted || !_connected || _ws == null || _ttsSuppressed) return;
     _audioSendCount++;
     if (_audioSendCount == 1 || _audioSendCount == 50 || _audioSendCount % 500 == 0) {
       debugPrint('[Whisper] sendAudio #$_audioSendCount: ${pcm16Mono24kHz.length} bytes '
@@ -940,11 +948,6 @@ class WhisperRealtimeService {
 
     _audioSub = _audioTapChannel.receiveBroadcastStream().listen((data) {
       if (data is Uint8List) {
-        if (_isTtsPlaying && Platform.isLinux) {
-          // On Linux, drop mic audio while TTS is playing to prevent the agent from
-          // hearing its own voice. macOS handles this internally to preserve remote audio in calls.
-          return;
-        }
         sendAudio(data);
       }
     });
@@ -975,6 +978,8 @@ class WhisperRealtimeService {
     await stopResponseAudio();
     _connected = false;
     muted = false;
+    _isTtsPlaying = false;
+    _ttsSuppressedUntil = DateTime(0);
     await _ws?.sink.close();
     _ws = null;
   }
