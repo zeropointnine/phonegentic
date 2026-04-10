@@ -31,25 +31,12 @@ class AgentPanel extends StatefulWidget {
 class _AgentPanelState extends State<AgentPanel> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  int _lastMessageCount = 0;
 
   @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        );
-      }
-    });
   }
 
   void _send(AgentService agent) {
@@ -98,11 +85,6 @@ class _AgentPanelState extends State<AgentPanel> {
   Widget build(BuildContext context) {
     return Consumer<AgentService>(
       builder: (context, agent, _) {
-        if (agent.messages.length != _lastMessageCount) {
-          _lastMessageCount = agent.messages.length;
-          _scrollToBottom();
-        }
-
         return Container(
           decoration: BoxDecoration(
             color: AppColors.card,
@@ -1558,11 +1540,13 @@ class _MessageList extends StatelessWidget {
 
     return ListView.builder(
       controller: scrollController,
+      reverse: true,
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       itemCount: messages.length,
       itemBuilder: (context, index) {
-        final msg = messages[index];
-        final isLast = index == messages.length - 1;
+        final msgIdx = messages.length - 1 - index;
+        final msg = messages[msgIdx];
+        final isLast = msgIdx == messages.length - 1;
         return _MessageBubble(
           message: msg,
           showActions: isLast && msg.actions.isNotEmpty,

@@ -24,7 +24,6 @@ class _ConversationViewState extends State<ConversationView> {
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _composeFocus = FocusNode();
   bool _showEmoji = false;
-  int _lastCount = 0;
   List<String> _attachmentUrls = [];
 
   @override
@@ -33,25 +32,6 @@ class _ConversationViewState extends State<ConversationView> {
     _scrollCtrl.dispose();
     _composeFocus.dispose();
     super.dispose();
-  }
-
-  void _scrollToBottom({bool animate = true}) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // Wait a second frame so the list has fully laid out.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scrollCtrl.hasClients) return;
-        final double target = _scrollCtrl.position.maxScrollExtent;
-        if (animate) {
-          _scrollCtrl.animateTo(
-            target,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        } else {
-          _scrollCtrl.jumpTo(target);
-        }
-      });
-    });
   }
 
   void _send(MessagingService messaging) {
@@ -98,12 +78,6 @@ class _ConversationViewState extends State<ConversationView> {
       builder: (context, messaging, _) {
         final convo = messaging.selectedConversation;
         final messages = messaging.activeMessages;
-
-        if (messages.length != _lastCount) {
-          final bool isInitial = _lastCount == 0;
-          _lastCount = messages.length;
-          _scrollToBottom(animate: !isInitial);
-        }
 
         return DropTarget(
           onDragEntered: (_) => setState(() => _isDragging = true),
@@ -263,19 +237,21 @@ class _ConversationViewState extends State<ConversationView> {
   Widget _buildMessageList(List<SmsMessage> messages) {
     return ListView.builder(
       controller: _scrollCtrl,
+      reverse: true,
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       itemCount: messages.length,
       itemBuilder: (context, i) {
-        final msg = messages[i];
-        final showDate = i == 0 ||
-            _shouldShowDate(messages[i - 1].createdAt, msg.createdAt);
+        final msgIdx = messages.length - 1 - i;
+        final msg = messages[msgIdx];
+        final showDate = msgIdx == 0 ||
+            _shouldShowDate(messages[msgIdx - 1].createdAt, msg.createdAt);
         return Column(
           children: [
             if (showDate) _buildDateSeparator(msg.createdAt),
             _MessageBubble(
               message: msg,
-              showTail: i == messages.length - 1 ||
-                  messages[i + 1].direction != msg.direction,
+              showTail: msgIdx == messages.length - 1 ||
+                  messages[msgIdx + 1].direction != msg.direction,
               onDelete: msg.localId != null
                   ? () => context
                       .read<MessagingService>()
