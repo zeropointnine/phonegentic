@@ -82,11 +82,14 @@ class _QuickAddOverlayState extends State<QuickAddOverlay> {
                     ),
                   ),
                   const Spacer(),
-                  GestureDetector(
-                    onTap: () =>
-                        context.read<ContactService>().closeQuickAdd(),
-                    child: Icon(Icons.close_rounded,
-                        size: 18, color: AppColors.textTertiary),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () =>
+                          context.read<ContactService>().closeQuickAdd(),
+                      child: Icon(Icons.close_rounded,
+                          size: 18, color: AppColors.textTertiary),
+                    ),
                   ),
                 ],
               ),
@@ -125,23 +128,26 @@ class _QuickAddOverlayState extends State<QuickAddOverlay> {
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
-                child: GestureDetector(
-                  onTap: _save,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: _saving
-                          ? AppColors.accent.withValues(alpha: 0.5)
-                          : AppColors.accent,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Center(
-                      child: Text(
-                        _saving ? 'Saving...' : 'Add Contact',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.crtBlack,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _save,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        color: _saving
+                            ? AppColors.accent.withValues(alpha: 0.5)
+                            : AppColors.accent,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Center(
+                        child: Text(
+                          _saving ? 'Saving...' : 'Add Contact',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.crtBlack,
+                          ),
                         ),
                       ),
                     ),

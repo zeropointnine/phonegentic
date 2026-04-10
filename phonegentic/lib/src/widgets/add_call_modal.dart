@@ -589,17 +589,20 @@ class _AddCallModalState extends State<AddCallModal> {
         SizedBox(
           width: 56,
           child: text.isNotEmpty
-              ? GestureDetector(
-                  onTap: _handleBackspace,
-                  onLongPress: () {
-                    _controller.clear();
-                    HapticFeedback.mediumImpact();
-                  },
-                  child: SizedBox(
-                    width: 56,
-                    height: 56,
-                    child: Icon(Icons.backspace_outlined,
-                        size: 22, color: AppColors.textTertiary),
+              ? MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _handleBackspace,
+                    onLongPress: () {
+                      _controller.clear();
+                      HapticFeedback.mediumImpact();
+                    },
+                    child: SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: Icon(Icons.backspace_outlined,
+                          size: 22, color: AppColors.textTertiary),
+                    ),
                   ),
                 )
               : const SizedBox.shrink(),

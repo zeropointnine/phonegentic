@@ -165,18 +165,21 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
             ),
           ),
           const Spacer(),
-          GestureDetector(
-            onTap: _loadDevices,
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: _loadDevices,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                ),
+                child: Icon(Icons.refresh_rounded,
+                    size: 16, color: AppColors.textSecondary),
               ),
-              child: Icon(Icons.refresh_rounded,
-                  size: 16, color: AppColors.textSecondary),
             ),
           ),
         ],
@@ -361,6 +364,7 @@ class _DeviceTileState extends State<_DeviceTile> {
     final accent = AppColors.accent;
 
     return MouseRegion(
+      cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
       child: GestureDetector(

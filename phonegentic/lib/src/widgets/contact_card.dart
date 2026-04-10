@@ -81,59 +81,62 @@ class _ContactCardState extends State<ContactCard> {
       value = rawValue;
     }
 
-    return GestureDetector(
-      onTap: isEditing ? null : () => _startEditing(field, value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-                color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: isEditing ? null : () => _startEditing(field, value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
+            ),
           ),
-        ),
-        child: Row(
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 16, color: AppColors.textTertiary),
-              const SizedBox(width: 12),
-            ],
-            SizedBox(
-              width: 70,
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textTertiary,
-                  fontWeight: FontWeight.w500,
+          child: Row(
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: AppColors.textTertiary),
+                const SizedBox(width: 12),
+              ],
+              SizedBox(
+                width: 70,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textTertiary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: isEditing
-                  ? TextField(
-                      controller: _editController,
-                      autofocus: true,
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textPrimary),
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
+              Expanded(
+                child: isEditing
+                    ? TextField(
+                        controller: _editController,
+                        autofocus: true,
+                        style: TextStyle(
+                            fontSize: 13, color: AppColors.textPrimary),
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        onSubmitted: (_) => _finishEditing(),
+                        onTapOutside: (_) => _finishEditing(),
+                      )
+                    : Text(
+                        value.isEmpty ? 'Add $label' : value,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: value.isEmpty
+                              ? AppColors.textTertiary.withValues(alpha: 0.5)
+                              : AppColors.textPrimary,
+                        ),
                       ),
-                      onSubmitted: (_) => _finishEditing(),
-                      onTapOutside: (_) => _finishEditing(),
-                    )
-                  : Text(
-                      value.isEmpty ? 'Add $label' : value,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: value.isEmpty
-                            ? AppColors.textTertiary.withValues(alpha: 0.5)
-                            : AppColors.textPrimary,
-                      ),
-                    ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -170,38 +173,41 @@ class _ContactCardState extends State<ContactCard> {
           ),
           const SizedBox(height: 12),
           // Name
-          GestureDetector(
-            onTap: () =>
-                _startEditing('display_name', _rawDisplayName),
-            child: _editingField == 'display_name'
-                ? Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 40),
-                    child: TextField(
-                      controller: _editController,
-                      autofocus: true,
-                      textAlign: TextAlign.center,
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () =>
+                  _startEditing('display_name', _rawDisplayName),
+              child: _editingField == 'display_name'
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: TextField(
+                        controller: _editController,
+                        autofocus: true,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                        ),
+                        onSubmitted: (_) => _finishEditing(),
+                        onTapOutside: (_) => _finishEditing(),
+                      ),
+                    )
+                  : Text(
+                      _displayName(demo),
                       style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
+                        letterSpacing: -0.3,
                       ),
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isDense: true,
-                      ),
-                      onSubmitted: (_) => _finishEditing(),
-                      onTapOutside: (_) => _finishEditing(),
                     ),
-                  )
-                : Text(
-                    _displayName(demo),
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
+            ),
           ),
           const SizedBox(height: 20),
           // Action buttons
@@ -272,32 +278,35 @@ class _CardAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: color.withValues(alpha: 0.12),
-              border:
-                  Border.all(color: color.withValues(alpha: 0.25), width: 0.5),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: color.withValues(alpha: 0.12),
+                border:
+                    Border.all(color: color.withValues(alpha: 0.25), width: 0.5),
+              ),
+              child: Icon(icon, size: 20, color: color),
             ),
-            child: Icon(icon, size: 20, color: color),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: color,
-              fontWeight: FontWeight.w500,
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

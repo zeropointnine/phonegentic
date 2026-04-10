@@ -65,12 +65,15 @@ class _ContactListPanelState extends State<ContactListPanel> {
       child: Row(
         children: [
           if (service.selectedContact != null)
-            GestureDetector(
-              onTap: () => service.selectContact(null),
-              child: Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Icon(Icons.arrow_back_rounded,
-                    size: 18, color: AppColors.accent),
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => service.selectContact(null),
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(Icons.arrow_back_rounded,
+                      size: 18, color: AppColors.accent),
+                ),
               ),
             ),
           Icon(Icons.contacts_rounded, size: 18, color: AppColors.accent),
@@ -88,36 +91,42 @@ class _ContactListPanelState extends State<ContactListPanel> {
           if (service.selectedContact == null) ...[
             _ImportButton(),
             const SizedBox(width: 6),
-            GestureDetector(
-              onTap: service.openQuickAdd,
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: service.openQuickAdd,
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: AppColors.accent.withValues(alpha: 0.12),
+                    border: Border.all(
+                        color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
+                  ),
+                  child: Icon(Icons.add_rounded,
+                      size: 16, color: AppColors.accent),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: service.closeContacts,
               child: Container(
                 width: 30,
                 height: 30,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: AppColors.accent.withValues(alpha: 0.12),
+                  color: AppColors.card,
                   border: Border.all(
-                      color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
-                child: Icon(Icons.add_rounded,
-                    size: 16, color: AppColors.accent),
+                child: Icon(Icons.close_rounded,
+                    size: 16, color: AppColors.textSecondary),
               ),
-            ),
-          ],
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: service.closeContacts,
-            child: Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: AppColors.card,
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-              ),
-              child: Icon(Icons.close_rounded,
-                  size: 16, color: AppColors.textSecondary),
             ),
           ),
         ],
@@ -284,69 +293,72 @@ class _ContactTile extends StatelessWidget {
     final initial =
         cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(9),
-                color: AppColors.accent.withValues(alpha: 0.12),
-                border: Border.all(
-                    color: AppColors.accent.withValues(alpha: 0.25), width: 0.5),
-              ),
-              child: Center(
-                child: Text(
-                  initial,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(9),
+                  color: AppColors.accent.withValues(alpha: 0.12),
+                  border: Border.all(
+                      color: AppColors.accent.withValues(alpha: 0.25), width: 0.5),
+                ),
+                child: Center(
+                  child: Text(
+                    initial,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.accent,
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                  if (phone.isNotEmpty) ...[
-                    const SizedBox(height: 2),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      phone,
+                      name,
                       style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textTertiary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.2,
                       ),
                     ),
+                    if (phone.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        phone,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textTertiary,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            Icon(Icons.chevron_right_rounded,
-                size: 18, color: AppColors.textTertiary.withValues(alpha: 0.5)),
-          ],
+              Icon(Icons.chevron_right_rounded,
+                  size: 18, color: AppColors.textTertiary.withValues(alpha: 0.5)),
+            ],
+          ),
         ),
       ),
     );
@@ -359,27 +371,30 @@ class _ImportButton extends StatelessWidget {
     final service = context.watch<ContactService>();
     return Tooltip(
       message: 'Import from macOS Contacts',
-      child: GestureDetector(
-        onTap: service.isImporting ? null : () => _handleImport(context),
-        child: Container(
-          width: 30,
-          height: 30,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: AppColors.accent.withValues(alpha: 0.12),
-            border: Border.all(
-                color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: service.isImporting ? null : () => _handleImport(context),
+          child: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: AppColors.accent.withValues(alpha: 0.12),
+              border: Border.all(
+                  color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
+            ),
+            child: service.isImporting
+                ? Padding(
+                    padding: const EdgeInsets.all(7),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.accent,
+                    ),
+                  )
+                : Icon(Icons.import_contacts_rounded,
+                    size: 16, color: AppColors.accent),
           ),
-          child: service.isImporting
-              ? Padding(
-                  padding: const EdgeInsets.all(7),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.accent,
-                  ),
-                )
-              : Icon(Icons.import_contacts_rounded,
-                  size: 16, color: AppColors.accent),
         ),
       ),
     );

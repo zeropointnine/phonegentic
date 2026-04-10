@@ -1,0 +1,66 @@
+---
+description: Flutter UI conventions — interactive elements, hover states, cursors, and linting
+globs: "**/*.dart"
+alwaysApply: false
+---
+
+# Flutter UI Conventions
+
+## Interactive Elements Must Show Hand Cursor
+
+Every tappable widget (`GestureDetector`, custom button) MUST be wrapped in
+`MouseRegion(cursor: SystemMouseCursors.click, ...)` so the pointer changes on
+hover. This applies to buttons, chips, toggles, icons, rows, and any other
+element with an `onTap` / `onPressed`.
+
+```dart
+// ❌ BAD — no cursor change on hover
+GestureDetector(
+  onTap: _doSomething,
+  child: Container(child: Text('Click me')),
+)
+
+// ✅ GOOD
+MouseRegion(
+  cursor: SystemMouseCursors.click,
+  child: GestureDetector(
+    onTap: _doSomething,
+    child: Container(child: Text('Click me')),
+  ),
+)
+```
+
+**Exception:** Full-screen scrims / barriers used only to dismiss overlays do
+NOT need the click cursor (they are dismissal zones, not buttons).
+
+If a `MouseRegion` already exists for hover tracking (`onEnter`/`onExit`), add
+`cursor: SystemMouseCursors.click` to that same region instead of nesting
+another.
+
+## Color Opacity
+
+Use `.withValues(alpha: 0.5)` instead of the deprecated `.withOpacity(0.5)`.
+
+## Linting
+
+The project uses `analysis_options.yaml` at the repo root (not inside
+`phonegentic/`). Key rules to respect:
+
+- `always_specify_types` — annotate all local variables, parameters, return types.
+- `prefer_single_quotes` — use `'` unless the string contains a single quote.
+- `sort_constructors_first` — constructors before fields/methods.
+- `use_super_parameters` — prefer `{super.key}` over `Key? key) : super(key: key)`.
+- `unnecessary_getters_setters` — expose fields directly when no logic is needed.
+
+Run `flutter analyze` from `phonegentic/` before considering any change done.
+
+## Where to Find Config
+
+| What | Path |
+|------|------|
+| Lint rules | `/analysis_options.yaml` |
+| App entry point | `/phonegentic/lib/main.dart` |
+| Widget files | `/phonegentic/lib/src/widgets/` |
+| Services | `/phonegentic/lib/src/` |
+| Theme / colors | `/phonegentic/lib/src/theme_provider.dart` |
+| SIP library | `/lib/src/` |

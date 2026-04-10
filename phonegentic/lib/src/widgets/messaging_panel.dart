@@ -90,37 +90,46 @@ class _MessagingPanelState extends State<MessagingPanel> {
             ),
           ),
           const Spacer(),
-          GestureDetector(
-            onTap: () => messaging.syncNow(),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(Icons.refresh_rounded,
-                  size: 18, color: AppColors.textTertiary),
-            ),
-          ),
-          GestureDetector(
-            onTap: () => setState(() => _showNewMessage = !_showNewMessage),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: _showNewMessage
-                    ? AppColors.accent.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(6),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => messaging.syncNow(),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(Icons.refresh_rounded,
+                    size: 18, color: AppColors.textTertiary),
               ),
-              child: Icon(Icons.edit_rounded,
-                  size: 18,
-                  color: _showNewMessage
-                      ? AppColors.accent
-                      : AppColors.textTertiary),
             ),
           ),
-          GestureDetector(
-            onTap: () => messaging.close(),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Icon(Icons.close_rounded,
-                  size: 18, color: AppColors.textTertiary),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => setState(() => _showNewMessage = !_showNewMessage),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: _showNewMessage
+                      ? AppColors.accent.withValues(alpha: 0.12)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(Icons.edit_rounded,
+                    size: 18,
+                    color: _showNewMessage
+                        ? AppColors.accent
+                        : AppColors.textTertiary),
+              ),
+            ),
+          ),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => messaging.close(),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Icon(Icons.close_rounded,
+                    size: 18, color: AppColors.textTertiary),
+              ),
             ),
           ),
         ],
@@ -186,29 +195,32 @@ class _MessagingPanelState extends State<MessagingPanel> {
             ),
           ),
           const SizedBox(width: 6),
-          GestureDetector(
-            onTap: () {
-              final num = _newNumberCtrl.text.trim();
-              if (num.isEmpty) return;
-              messaging.selectConversation(num);
-              setState(() {
-                _showNewMessage = false;
-                _newNumberCtrl.clear();
-              });
-            },
-            child: Container(
-              height: 34,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: AppColors.accent,
-                borderRadius: BorderRadius.circular(8),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () {
+                final num = _newNumberCtrl.text.trim();
+                if (num.isEmpty) return;
+                messaging.selectConversation(num);
+                setState(() {
+                  _showNewMessage = false;
+                  _newNumberCtrl.clear();
+                });
+              },
+              child: Container(
+                height: 34,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.accent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.center,
+                child: Text('Open',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.onAccent)),
               ),
-              alignment: Alignment.center,
-              child: Text('Open',
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.onAccent)),
             ),
           ),
         ],

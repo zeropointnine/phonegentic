@@ -999,10 +999,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     bool active = false,
     int badge = 0,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Stack(
-        clipBehavior: Clip.none,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Stack(
+          clipBehavior: Clip.none,
         children: [
           Container(
             width: 32,
@@ -1048,6 +1050,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               ),
             ),
         ],
+      ),
       ),
     );
   }
@@ -1468,23 +1471,26 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          onTap: onTap,
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: color,
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.35),
-                  blurRadius: 16,
-                  spreadRadius: 1,
-                ),
-              ],
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: onTap,
+            child: Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color,
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.35),
+                    blurRadius: 16,
+                    spreadRadius: 1,
+                  ),
+                ],
+              ),
+              child: Icon(icon, size: 28, color: AppColors.onAccent),
             ),
-            child: Icon(icon, size: 28, color: AppColors.onAccent),
           ),
         ),
         if (label.isNotEmpty) ...[

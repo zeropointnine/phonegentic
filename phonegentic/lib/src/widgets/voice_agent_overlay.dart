@@ -81,21 +81,24 @@ class _VoiceAgentIndicator extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           // Mute button
-          GestureDetector(
-            onTap: agent.active ? agent.toggleMute : null,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: agent.muted
-                    ? AppColors.red.withValues(alpha: 0.15)
-                    : AppColors.card,
-              ),
-              child: Icon(
-                agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                size: 14,
-                color: agent.muted ? AppColors.red : AppColors.textSecondary,
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: agent.active ? agent.toggleMute : null,
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: agent.muted
+                      ? AppColors.red.withValues(alpha: 0.15)
+                      : AppColors.card,
+                ),
+                child: Icon(
+                  agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                  size: 14,
+                  color: agent.muted ? AppColors.red : AppColors.textSecondary,
+                ),
               ),
             ),
           ),
