@@ -106,47 +106,45 @@ class _ChromeLaunchDialogState extends State<_ChromeLaunchDialog> {
             style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 12),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () {
-                widget.onCopy();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Copied to clipboard'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+          HoverButton(
+            onTap: () {
+              widget.onCopy();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Copied to clipboard'),
+                  duration: Duration(seconds: 2),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.launchCommand,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textSecondary,
-                          fontFamily: 'Courier',
-                          height: 1.4,
-                        ),
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
+              );
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.launchCommand,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'Courier',
+                        height: 1.4,
                       ),
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(width: 8),
-                    Icon(Icons.copy_rounded,
-                        size: 14, color: AppColors.textTertiary),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.copy_rounded,
+                      size: 14, color: AppColors.textTertiary),
+                ],
               ),
             ),
           ),
@@ -1002,35 +1000,33 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
       child: Row(
         children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: _testingConnection ? null : _testConnection,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: _testingConnection
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppColors.accent,
-                        ),
-                      )
-                    : Text(
-                        'Test Connection',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.accent,
-                        ),
-                      ),
+          HoverButton(
+            onTap: _testingConnection ? null : _testConnection,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
               ),
+              child: _testingConnection
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
             ),
           ),
           if (_connectionStatus != null) ...[
@@ -1362,35 +1358,33 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
       child: Row(
         children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: _testingTwilioMsg ? null : _testTwilioMsgConnection,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: _testingTwilioMsg
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppColors.accent,
-                        ),
-                      )
-                    : Text(
-                        'Test Connection',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.accent,
-                        ),
-                      ),
+          HoverButton(
+            onTap: _testingTwilioMsg ? null : _testTwilioMsgConnection,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
               ),
+              child: _testingTwilioMsg
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
             ),
           ),
           if (_twilioMsgStatus != null) ...[
@@ -1418,35 +1412,33 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
       child: Row(
         children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: _testingTelnyxMsg ? null : _testTelnyxMsgConnection,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: _testingTelnyxMsg
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppColors.accent,
-                        ),
-                      )
-                    : Text(
-                        'Test Connection',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.accent,
-                        ),
-                      ),
+          HoverButton(
+            onTap: _testingTelnyxMsg ? null : _testTelnyxMsgConnection,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
               ),
+              child: _testingTelnyxMsg
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
             ),
           ),
           if (_telnyxMsgStatus != null) ...[
@@ -1594,45 +1586,43 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
           ),
           const SizedBox(height: 6),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () {
-                onCopy();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Copied to clipboard'),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(6),
+          HoverButton(
+            onTap: () {
+              onCopy();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Copied to clipboard'),
+                  duration: Duration(seconds: 2),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        launchCommand,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textSecondary,
-                          fontFamily: 'Courier',
-                          height: 1.4,
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
+              );
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      launchCommand,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'Courier',
+                        height: 1.4,
                       ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(width: 8),
-                    Icon(Icons.copy_rounded,
-                        size: 14, color: AppColors.textTertiary),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(Icons.copy_rounded,
+                      size: 14, color: AppColors.textTertiary),
+                ],
               ),
             ),
           ),
@@ -1651,35 +1641,33 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
       child: Row(
         children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: isLoading ? null : onTest,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: isLoading
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppColors.accent,
-                        ),
-                      )
-                    : Text(
-                        'Test Connection',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.accent,
-                        ),
-                      ),
+          HoverButton(
+            onTap: isLoading ? null : onTest,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
               ),
+              child: isLoading
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Test Connection',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
             ),
           ),
           if (connected != null) ...[
@@ -1729,35 +1717,33 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             ),
           ),
           const SizedBox(width: 8),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: svc.loading ? null : _lookupFlight,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: svc.loading
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppColors.accent,
-                        ),
-                      )
-                    : Text(
-                        'Look Up',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.accent,
-                        ),
-                      ),
+          HoverButton(
+            onTap: svc.loading ? null : _lookupFlight,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
               ),
+              child: svc.loading
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Look Up',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -1883,35 +1869,33 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             ),
           ),
           const SizedBox(width: 8),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: svc.loading ? null : _searchRoute,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: svc.loading
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: AppColors.accent,
-                        ),
-                      )
-                    : Text(
-                        'Search',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.accent,
-                        ),
-                      ),
+          HoverButton(
+            onTap: svc.loading ? null : _searchRoute,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(6),
               ),
+              child: svc.loading
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppColors.accent,
+                      ),
+                    )
+                  : Text(
+                      'Search',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accent,
+                      ),
+                    ),
             ),
           ),
         ],

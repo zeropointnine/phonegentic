@@ -81,6 +81,70 @@ class AppColors {
       _isMiami ? const Color(0xFFFFAB91) : const Color(0xFFE8960F);
 }
 
+/// Drop-in tappable wrapper with cursor change + visible hover feedback.
+///
+/// Replaces the `MouseRegion(cursor: click, child: GestureDetector(...))` pattern
+/// with a single widget that also lights up on hover.
+class HoverButton extends StatefulWidget {
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+  final Widget child;
+  final BorderRadius borderRadius;
+  final Color? hoverColor;
+  final EdgeInsets padding;
+  final String? tooltip;
+
+  const HoverButton({
+    super.key,
+    this.onTap,
+    this.onLongPress,
+    required this.child,
+    this.borderRadius = const BorderRadius.all(Radius.circular(8)),
+    this.hoverColor,
+    this.padding = EdgeInsets.zero,
+    this.tooltip,
+  });
+
+  @override
+  State<HoverButton> createState() => _HoverButtonState();
+}
+
+class _HoverButtonState extends State<HoverButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color tint = widget.hoverColor ??
+        AppColors.accent.withValues(alpha: 0.10);
+
+    Widget result = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: widget.padding,
+          foregroundDecoration: BoxDecoration(
+            borderRadius: widget.borderRadius,
+            color: _hovered ? tint : Colors.transparent,
+          ),
+          child: widget.child,
+        ),
+      ),
+    );
+
+    if (widget.tooltip != null) {
+      result = Tooltip(message: widget.tooltip!, child: result);
+    }
+
+    return result;
+  }
+}
+
 class ThemeProvider extends ChangeNotifier {
   static const _prefKey = 'app_theme';
 

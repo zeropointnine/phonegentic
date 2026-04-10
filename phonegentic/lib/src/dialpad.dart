@@ -550,48 +550,46 @@ class _MyDialPadWidget extends State<DialPadWidget>
               ),
               _buildConferenceBadge(),
               const Spacer(),
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  onTap: _hasSipError ? _handleReconnect : null,
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: _statusColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: _statusColor.withValues(alpha: 0.25),
-                          width: 0.5),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                              shape: BoxShape.circle, color: _statusColor),
+              HoverButton(
+                onTap: _hasSipError ? _handleReconnect : null,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _statusColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: _statusColor.withValues(alpha: 0.25),
+                        width: 0.5),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle, color: _statusColor),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _statusText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: _statusColor,
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _statusText,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: _statusColor,
-                          ),
+                      ),
+                      if (_hasSipError) ...[
+                        const SizedBox(width: 5),
+                        Icon(
+                          Icons.refresh_rounded,
+                          size: 13,
+                          color: _statusColor,
                         ),
-                        if (_hasSipError) ...[
-                          const SizedBox(width: 5),
-                          Icon(
-                            Icons.refresh_rounded,
-                            size: 13,
-                            color: _statusColor,
-                          ),
-                        ],
                       ],
-                    ),
+                    ],
                   ),
                 ),
               ),
@@ -619,166 +617,151 @@ class _MyDialPadWidget extends State<DialPadWidget>
   Widget _buildMessagesButton(BuildContext context) {
     final messaging = context.read<MessagingService>();
     final unread = messaging.unreadCount;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => messaging.toggleOpen(),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
+    return HoverButton(
+      onTap: () => messaging.toggleOpen(),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: messaging.isOpen
+                  ? AppColors.accent.withValues(alpha: 0.12)
+                  : AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
                 color: messaging.isOpen
-                    ? AppColors.accent.withValues(alpha: 0.12)
-                    : AppColors.card,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: messaging.isOpen
-                      ? AppColors.accent.withValues(alpha: 0.4)
-                      : AppColors.border.withValues(alpha: 0.5),
-                  width: 0.5,
-                ),
-              ),
-              child: Icon(
-                Icons.chat_bubble_outline_rounded,
-                size: 16,
-                color: messaging.isOpen
-                    ? AppColors.accent
-                    : AppColors.textSecondary,
+                    ? AppColors.accent.withValues(alpha: 0.4)
+                    : AppColors.border.withValues(alpha: 0.5),
+                width: 0.5,
               ),
             ),
-            if (unread > 0)
-              Positioned(
-                top: -4,
-                right: -4,
-                child: Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    color: AppColors.red,
-                    shape: BoxShape.circle,
+            child: Icon(
+              Icons.chat_bubble_outline_rounded,
+              size: 16,
+              color: messaging.isOpen
+                  ? AppColors.accent
+                  : AppColors.textSecondary,
+            ),
+          ),
+          if (unread > 0)
+            Positioned(
+              top: -4,
+              right: -4,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: AppColors.red,
+                  shape: BoxShape.circle,
+                ),
+                constraints:
+                    const BoxConstraints(minWidth: 16, minHeight: 16),
+                child: Text(
+                  unread > 99 ? '99+' : '$unread',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onAccent,
                   ),
-                  constraints:
-                      const BoxConstraints(minWidth: 16, minHeight: 16),
-                  child: Text(
-                    unread > 99 ? '99+' : '$unread',
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.onAccent,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+                  textAlign: TextAlign.center,
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
 
   Widget _buildTearSheetButton(BuildContext context) {
     final tearSheet = context.read<TearSheetService>();
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () {
-          if (tearSheet.isActive) {
-            tearSheet.dismissSheet();
-          } else {
-            tearSheet.openEditor();
-          }
-        },
-        child: Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
+    return HoverButton(
+      onTap: () {
+        if (tearSheet.isActive) {
+          tearSheet.dismissSheet();
+        } else {
+          tearSheet.openEditor();
+        }
+      },
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: tearSheet.isActive
+              ? AppColors.accent.withValues(alpha: 0.12)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
             color: tearSheet.isActive
-                ? AppColors.accent.withValues(alpha: 0.12)
-                : AppColors.card,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: tearSheet.isActive
-                  ? AppColors.accent.withValues(alpha: 0.4)
-                  : AppColors.border.withValues(alpha: 0.5),
-              width: 0.5,
-            ),
+                ? AppColors.accent.withValues(alpha: 0.4)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
           ),
-          child: Icon(
-            Icons.receipt_long_rounded,
-            size: 16,
-            color:
-                tearSheet.isActive ? AppColors.accent : AppColors.textSecondary,
-          ),
+        ),
+        child: Icon(
+          Icons.receipt_long_rounded,
+          size: 16,
+          color:
+              tearSheet.isActive ? AppColors.accent : AppColors.textSecondary,
         ),
       ),
     );
   }
 
   Widget _buildContactsButton(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () {
-          context.read<ContactService>().toggleContacts();
-        },
-        child: Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-          ),
-          child: Icon(Icons.contacts_rounded,
-              size: 16, color: AppColors.textSecondary),
+    return HoverButton(
+      onTap: () {
+        context.read<ContactService>().toggleContacts();
+      },
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
+        child: Icon(Icons.contacts_rounded,
+            size: 16, color: AppColors.textSecondary),
       ),
     );
   }
 
   Widget _buildCallHistoryButton(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () {
-          context.read<CallHistoryService>().toggleHistory();
-        },
-        child: Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-          ),
-          child: Icon(Icons.history_rounded,
-              size: 16, color: AppColors.textSecondary),
+    return HoverButton(
+      onTap: () {
+        context.read<CallHistoryService>().toggleHistory();
+      },
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
+        child: Icon(Icons.history_rounded,
+            size: 16, color: AppColors.textSecondary),
       ),
     );
   }
 
   Widget _buildAudioDeviceButton(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => showAudioDeviceSheet(context),
-        child: Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-          ),
-          child: Icon(Icons.headphones_rounded,
-              size: 16, color: AppColors.textSecondary),
+    return HoverButton(
+      onTap: () => showAudioDeviceSheet(context),
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
+        child: Icon(Icons.headphones_rounded,
+            size: 16, color: AppColors.textSecondary),
       ),
     );
   }
@@ -1060,16 +1043,13 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   onPressed: _handleSpeaker,
                 )
               : (text.isNotEmpty
-                  ? MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: _handleBackspace,
-                        child: SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: Icon(Icons.backspace_outlined,
-                              size: 22, color: AppColors.textTertiary),
-                        ),
+                  ? HoverButton(
+                      onTap: _handleBackspace,
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: Icon(Icons.backspace_outlined,
+                            size: 22, color: AppColors.textTertiary),
                       ),
                     )
                   : const SizedBox.shrink()),

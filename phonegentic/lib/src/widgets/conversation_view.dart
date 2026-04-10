@@ -176,21 +176,18 @@ class _ConversationViewState extends State<ConversationView> {
       padding: const EdgeInsets.fromLTRB(90, 18, 16, 10),
       child: Row(
         children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => messaging.deselectConversation(),
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
-                ),
-                child: Icon(Icons.arrow_back_ios_new_rounded,
-                    size: 14, color: AppColors.textSecondary),
+          HoverButton(
+            onTap: () => messaging.deselectConversation(),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border:
+                    Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
               ),
+              child: Icon(Icons.arrow_back_ios_new_rounded,
+                  size: 14, color: AppColors.textSecondary),
             ),
           ),
           const SizedBox(width: 10),
@@ -237,15 +234,12 @@ class _ConversationViewState extends State<ConversationView> {
               ],
             ),
           ),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => messaging.close(),
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Icon(Icons.close_rounded,
-                    size: 18, color: AppColors.textTertiary),
-              ),
+          HoverButton(
+            onTap: () => messaging.close(),
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Icon(Icons.close_rounded,
+                  size: 18, color: AppColors.textTertiary),
             ),
           ),
         ],
@@ -331,11 +325,9 @@ class _ConversationViewState extends State<ConversationView> {
   // ---------------------------------------------------------------------------
 
   Widget _buildErrorBanner(MessagingService messaging) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: messaging.clearError,
-        child: Container(
+    return HoverButton(
+      onTap: messaging.clearError,
+      child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
@@ -362,7 +354,6 @@ class _ConversationViewState extends State<ConversationView> {
             ],
           ),
         ),
-      ),
     );
   }
 
@@ -386,36 +377,30 @@ class _ConversationViewState extends State<ConversationView> {
           Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: _pickAttachment,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 2),
-                child: Icon(
-                  Icons.add_photo_alternate_outlined,
-                  size: 22,
-                  color: _attachmentUrls.isNotEmpty
-                      ? AppColors.accent
-                      : AppColors.textTertiary,
-                ),
+          HoverButton(
+            onTap: _pickAttachment,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(
+                Icons.add_photo_alternate_outlined,
+                size: 22,
+                color: _attachmentUrls.isNotEmpty
+                    ? AppColors.accent
+                    : AppColors.textTertiary,
               ),
             ),
           ),
           // Emoji toggle
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => setState(() => _showEmoji = !_showEmoji),
-              child: Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Icon(
-                  _showEmoji
-                      ? Icons.keyboard_rounded
-                      : Icons.emoji_emotions_outlined,
-                  size: 22,
-                  color: _showEmoji ? AppColors.accent : AppColors.textTertiary,
-                ),
+          HoverButton(
+            onTap: () => setState(() => _showEmoji = !_showEmoji),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(
+                _showEmoji
+                    ? Icons.keyboard_rounded
+                    : Icons.emoji_emotions_outlined,
+                size: 22,
+                color: _showEmoji ? AppColors.accent : AppColors.textTertiary,
               ),
             ),
           ),
@@ -459,28 +444,25 @@ class _ConversationViewState extends State<ConversationView> {
             ),
           ),
           const SizedBox(width: 6),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
-                  ? () => _send(messaging)
-                  : null,
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
-                      ? AppColors.accent
-                      : AppColors.card,
-                ),
-                child: Icon(
-                  Icons.arrow_upward_rounded,
-                  size: 18,
-                  color: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
-                      ? AppColors.onAccent
-                      : AppColors.textTertiary,
-                ),
+          HoverButton(
+            onTap: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
+                ? () => _send(messaging)
+                : null,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
+                    ? AppColors.accent
+                    : AppColors.card,
+              ),
+              child: Icon(
+                Icons.arrow_upward_rounded,
+                size: 18,
+                color: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
+                    ? AppColors.onAccent
+                    : AppColors.textTertiary,
               ),
             ),
           ),
@@ -519,20 +501,17 @@ class _ConversationViewState extends State<ConversationView> {
               Positioned(
                 top: -4,
                 right: -4,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: () => setState(
-                        () => _attachmentUrls.removeAt(i)),
-                    child: Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: AppColors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(Icons.close, size: 12, color: AppColors.onAccent),
+                child: HoverButton(
+                  onTap: () => setState(
+                      () => _attachmentUrls.removeAt(i)),
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: AppColors.red,
+                      shape: BoxShape.circle,
                     ),
+                    child: Icon(Icons.close, size: 12, color: AppColors.onAccent),
                   ),
                 ),
               ),

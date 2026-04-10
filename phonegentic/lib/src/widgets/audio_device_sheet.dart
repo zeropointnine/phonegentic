@@ -165,21 +165,19 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
             ),
           ),
           const Spacer(),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: _loadDevices,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-                ),
-                child: Icon(Icons.refresh_rounded,
-                    size: 16, color: AppColors.textSecondary),
+          HoverButton(
+            onTap: _loadDevices,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
+              child: Icon(Icons.refresh_rounded,
+                  size: 16, color: AppColors.textSecondary),
             ),
           ),
         ],

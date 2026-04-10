@@ -377,20 +377,18 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
               ),
             ),
           ),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: service.closeEditor,
-              child: Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(7),
-                  color: AppColors.card,
-                ),
-                child: Icon(Icons.close_rounded,
-                    size: 14, color: AppColors.textTertiary),
+          HoverButton(
+            onTap: service.closeEditor,
+            borderRadius: BorderRadius.circular(7),
+            child: Container(
+              width: 26,
+              height: 26,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(7),
+                color: AppColors.card,
               ),
+              child: Icon(Icons.close_rounded,
+                  size: 14, color: AppColors.textTertiary),
             ),
           ),
         ],
@@ -445,88 +443,86 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   }
 
   Widget _buildWhisperToggle() {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => setState(() => _whisperByDefault = !_whisperByDefault),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
+    return HoverButton(
+      onTap: () => setState(() => _whisperByDefault = !_whisperByDefault),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: _whisperByDefault
+              ? AppColors.burntAmber.withValues(alpha: 0.08)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
             color: _whisperByDefault
-                ? AppColors.burntAmber.withValues(alpha: 0.08)
-                : AppColors.card,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: _whisperByDefault
-                  ? AppColors.burntAmber.withValues(alpha: 0.3)
-                  : AppColors.border.withValues(alpha: 0.5),
-              width: 0.5,
-            ),
+                ? AppColors.burntAmber.withValues(alpha: 0.3)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
           ),
-          child: Row(
-            children: [
-              Icon(
-                _whisperByDefault
-                    ? Icons.hearing_disabled_rounded
-                    : Icons.record_voice_over_rounded,
-                size: 16,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              _whisperByDefault
+                  ? Icons.hearing_disabled_rounded
+                  : Icons.record_voice_over_rounded,
+              size: 16,
+              color: _whisperByDefault
+                  ? AppColors.burntAmber
+                  : AppColors.textTertiary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Text-Only Mode',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _whisperByDefault
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    'Agent responds via text, never speaks aloud',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 36,
+              height: 20,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
                 color: _whisperByDefault
                     ? AppColors.burntAmber
-                    : AppColors.textTertiary,
+                    : AppColors.border.withValues(alpha: 0.4),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Text-Only Mode',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: _whisperByDefault
-                            ? AppColors.textPrimary
-                            : AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      'Agent responds via text, never speaks aloud',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: AppColors.textTertiary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                width: 36,
-                height: 20,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: _whisperByDefault
-                      ? AppColors.burntAmber
-                      : AppColors.border.withValues(alpha: 0.4),
-                ),
-                child: AnimatedAlign(
-                  duration: const Duration(milliseconds: 150),
-                  alignment: _whisperByDefault
-                      ? Alignment.centerRight
-                      : Alignment.centerLeft,
-                  child: Container(
-                    width: 16,
-                    height: 16,
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.onAccent,
-                    ),
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 150),
+                alignment: _whisperByDefault
+                    ? Alignment.centerRight
+                    : Alignment.centerLeft,
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.onAccent,
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -562,50 +558,46 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
 
   Widget _mutePolicyTile(int? value, String label) {
     final selected = _mutePolicyOverride == value;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => setState(() => _mutePolicyOverride = value),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            children: [
-              Container(
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: selected ? AppColors.accent : AppColors.border,
-                    width: selected ? 4.5 : 1.5,
-                  ),
-                  color: selected ? AppColors.accent : Colors.transparent,
+    return HoverButton(
+      onTap: () => setState(() => _mutePolicyOverride = value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.border,
+                  width: selected ? 4.5 : 1.5,
                 ),
-                child: selected
-                    ? Center(
-                        child: Container(
-                          width: 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.onAccent,
-                          ),
+                color: selected ? AppColors.accent : Colors.transparent,
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.onAccent,
                         ),
-                      )
-                    : null,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: selected ? AppColors.textPrimary : AppColors.textSecondary,
               ),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: selected ? AppColors.textPrimary : AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -703,22 +695,19 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
           children: [
             _buildSectionLabel('Speaker Roles'),
             const Spacer(),
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: _addSpeaker,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.add_rounded, size: 12, color: AppColors.accent),
-                    const SizedBox(width: 2),
-                    Text('Add',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.accent,
-                            fontWeight: FontWeight.w500)),
-                  ],
-                ),
+            HoverButton(
+              onTap: _addSpeaker,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_rounded, size: 12, color: AppColors.accent),
+                  const SizedBox(width: 2),
+                  Text('Add',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.accent,
+                          fontWeight: FontWeight.w500)),
+                ],
               ),
             ),
           ],
@@ -789,13 +778,10 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
           ),
           const SizedBox(width: 4),
           if (_speakers.length > 1)
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () => _removeSpeaker(index),
-                child: Icon(Icons.remove_circle_outline_rounded,
-                    size: 16, color: AppColors.textTertiary),
-              ),
+            HoverButton(
+              onTap: () => _removeSpeaker(index),
+              child: Icon(Icons.remove_circle_outline_rounded,
+                  size: 16, color: AppColors.textTertiary),
             ),
         ],
       ),
@@ -810,22 +796,19 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
           children: [
             _buildSectionLabel('Guardrails'),
             const Spacer(),
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: _addGuardrail,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.add_rounded, size: 12, color: AppColors.accent),
-                    const SizedBox(width: 2),
-                    Text('Add',
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.accent,
-                            fontWeight: FontWeight.w500)),
-                  ],
-                ),
+            HoverButton(
+              onTap: _addGuardrail,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_rounded, size: 12, color: AppColors.accent),
+                  const SizedBox(width: 2),
+                  Text('Add',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.accent,
+                          fontWeight: FontWeight.w500)),
+                ],
               ),
             ),
           ],
@@ -880,13 +863,10 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
             ),
           ),
           const SizedBox(width: 4),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => _removeGuardrail(index),
-              child: Icon(Icons.remove_circle_outline_rounded,
-                  size: 16, color: AppColors.textTertiary),
-            ),
+          HoverButton(
+            onTap: () => _removeGuardrail(index),
+            child: Icon(Icons.remove_circle_outline_rounded,
+                size: 16, color: AppColors.textTertiary),
           ),
         ],
       ),
@@ -904,71 +884,64 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       child: Row(
         children: [
           if (_isEditing)
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: _delete,
-                child: Text(
-                  'Delete',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.red,
-                  ),
+            HoverButton(
+              onTap: _delete,
+              child: Text(
+                'Delete',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.red,
                 ),
               ),
             ),
           const Spacer(),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: context.read<JobFunctionService>().closeEditor,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: AppColors.card,
-                  border: Border.all(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-                ),
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textSecondary,
-                  ),
+          HoverButton(
+            onTap: context.read<JobFunctionService>().closeEditor,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: AppColors.card,
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              ),
+              child: Text(
+                'Cancel',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textSecondary,
                 ),
               ),
             ),
           ),
           const SizedBox(width: 8),
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: canSave ? _save : null,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
+          HoverButton(
+            onTap: canSave ? _save : null,
+            borderRadius: BorderRadius.circular(10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 9),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: canSave
+                    ? (_saving
+                        ? AppColors.accent.withValues(alpha: 0.5)
+                        : AppColors.accent)
+                    : AppColors.accent.withValues(alpha: 0.3),
+              ),
+              child: Text(
+                _saving ? 'Saving...' : 'Save',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
                   color: canSave
-                      ? (_saving
-                          ? AppColors.accent.withValues(alpha: 0.5)
-                          : AppColors.accent)
-                      : AppColors.accent.withValues(alpha: 0.3),
-                ),
-                child: Text(
-                  _saving ? 'Saving...' : 'Save',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: canSave
-                        ? AppColors.crtBlack
-                        : AppColors.crtBlack.withValues(alpha: 0.5),
-                  ),
+                      ? AppColors.crtBlack
+                      : AppColors.crtBlack.withValues(alpha: 0.5),
                 ),
               ),
             ),

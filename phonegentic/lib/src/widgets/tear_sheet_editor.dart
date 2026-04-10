@@ -101,14 +101,11 @@ class _TearSheetEditorState extends State<TearSheetEditor> {
                     ),
                   ),
                   const Spacer(),
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: () =>
-                          context.read<TearSheetService>().closeEditor(),
-                      child: Icon(Icons.close_rounded,
-                          size: 18, color: AppColors.textTertiary),
-                    ),
+                  HoverButton(
+                    onTap: () =>
+                        context.read<TearSheetService>().closeEditor(),
+                    child: Icon(Icons.close_rounded,
+                        size: 18, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -159,13 +156,10 @@ class _TearSheetEditorState extends State<TearSheetEditor> {
                                   strokeWidth: 2),
                             ),
                           )
-                        : MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: GestureDetector(
-                              onTap: _send,
-                              child: Icon(Icons.send_rounded,
-                                  size: 18, color: AppColors.accent),
-                            ),
+                        : HoverButton(
+                            onTap: _send,
+                            child: Icon(Icons.send_rounded,
+                                size: 18, color: AppColors.accent),
                           ),
                   ),
                 ),
@@ -207,25 +201,23 @@ class _SuggestionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: AppColors.accent.withValues(alpha: 0.08),
-            border: Border.all(
-                color: AppColors.accent.withValues(alpha: 0.2), width: 0.5),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.accent,
-              fontWeight: FontWeight.w500,
-            ),
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          color: AppColors.accent.withValues(alpha: 0.08),
+          border: Border.all(
+              color: AppColors.accent.withValues(alpha: 0.2), width: 0.5),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: AppColors.accent,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),

@@ -339,80 +339,76 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     String subtitle,
   ) {
     final selected = _mutePolicy == value;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => _updateMutePolicy(value),
-        behavior: HitTestBehavior.opaque,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: selected
-                      ? AppColors.accent.withValues(alpha: 0.12)
-                      : AppColors.card,
-                ),
-                child: Icon(icon,
-                    size: 17,
-                    color:
-                        selected ? AppColors.accent : AppColors.textTertiary),
+    return HoverButton(
+      onTap: () => _updateMutePolicy(value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: selected
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: selected
-                            ? AppColors.textPrimary
-                            : AppColors.textSecondary,
-                        letterSpacing: -0.2,
-                      ),
+              child: Icon(icon,
+                  size: 17,
+                  color:
+                      selected ? AppColors.accent : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                      letterSpacing: -0.2,
                     ),
-                    const SizedBox(height: 1),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                          fontSize: 10, color: AppColors.textTertiary),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: selected ? AppColors.accent : AppColors.border,
-                    width: selected ? 5 : 1.5,
                   ),
-                  color: selected ? AppColors.accent : Colors.transparent,
-                ),
-                child: selected
-                    ? Center(
-                        child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.onAccent,
-                          ),
-                        ),
-                      )
-                    : null,
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                        fontSize: 10, color: AppColors.textTertiary),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            Container(
+              width: 18,
+              height: 18,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.border,
+                  width: selected ? 5 : 1.5,
+                ),
+                color: selected ? AppColors.accent : Colors.transparent,
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.onAccent,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+          ],
         ),
       ),
     );
@@ -607,24 +603,22 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   Widget _providerChip(String label, TextAgentProvider provider) {
     final selected = _text.provider == provider;
     return Expanded(
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: () => _updateText(_text.copyWith(provider: provider)),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            decoration: BoxDecoration(
-              color: selected ? AppColors.accent : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Center(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: selected ? AppColors.onAccent : AppColors.textTertiary,
-                ),
+      child: HoverButton(
+        onTap: () => _updateText(_text.copyWith(provider: provider)),
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.accent : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: selected ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),

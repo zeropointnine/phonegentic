@@ -351,50 +351,46 @@ class _MuteButtonWithPolicy extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: agent.active ? agent.toggleMute : null,
-        onLongPress: () => _showPolicyMenu(context),
-        child: Tooltip(
-          message: agent.muted
-              ? 'Unmute (hold for policy)'
-              : 'Mute (hold for policy)',
-          child: Container(
-            height: 30,
-            constraints: const BoxConstraints(minWidth: 30),
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: agent.muted
-                  ? AppColors.red.withValues(alpha: 0.12)
-                  : AppColors.card,
-              border: Border.all(
-                  color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+    return HoverButton(
+      onTap: agent.active ? agent.toggleMute : null,
+      onLongPress: () => _showPolicyMenu(context),
+      tooltip: agent.muted
+          ? 'Unmute (hold for policy)'
+          : 'Mute (hold for policy)',
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        height: 30,
+        constraints: const BoxConstraints(minWidth: 30),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          color: agent.muted
+              ? AppColors.red.withValues(alpha: 0.12)
+              : AppColors.card,
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
+              size: 14,
+              color: agent.muted ? AppColors.red : AppColors.textSecondary,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  agent.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                  size: 14,
-                  color: agent.muted ? AppColors.red : AppColors.textSecondary,
-                ),
-                const SizedBox(width: 3),
-                Text(
-                  _muteLabel,
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    color: agent.muted
-                        ? AppColors.red.withValues(alpha: 0.7)
-                        : AppColors.textTertiary,
-                    letterSpacing: -0.2,
-                  ),
-                ),
-              ],
+            const SizedBox(width: 3),
+            Text(
+              _muteLabel,
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                color: agent.muted
+                    ? AppColors.red.withValues(alpha: 0.7)
+                    : AppColors.textTertiary,
+                letterSpacing: -0.2,
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -766,32 +762,26 @@ class _JobFunctionDropdown extends StatelessWidget {
                             ),
                           ),
                         ),
-                        MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            onTap: () {
-                              Navigator.of(context).pop();
-                              service.openEditor(jf);
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 8),
-                              child: Icon(Icons.edit_rounded,
-                                  size: 13, color: AppColors.textTertiary),
-                            ),
+                        HoverButton(
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            service.openEditor(jf);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Icon(Icons.edit_rounded,
+                                size: 13, color: AppColors.textTertiary),
                           ),
                         ),
-                        MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            onTap: () {
-                              Navigator.of(context).pop();
-                              _confirmDelete(context, jf);
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.only(left: 6),
-                              child: Icon(Icons.delete_outline_rounded,
-                                  size: 13, color: AppColors.textTertiary),
-                            ),
+                        HoverButton(
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            _confirmDelete(context, jf);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: Icon(Icons.delete_outline_rounded,
+                                size: 13, color: AppColors.textTertiary),
                           ),
                         ),
                       ],
@@ -802,28 +792,24 @@ class _JobFunctionDropdown extends StatelessWidget {
                 value: -1,
                 enabled: false,
                 height: 36,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      service.openEditor();
-                    },
-                    child: Row(
-                      children: [
-                        Icon(Icons.add_rounded, size: 14, color: AppColors.accent),
-                        const SizedBox(width: 8),
-                        Text(
-                          'New Job Function',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.accent,
-                          ),
+                child: HoverButton(
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    service.openEditor();
+                  },
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_rounded, size: 14, color: AppColors.accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        'New Job Function',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.accent,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -851,22 +837,20 @@ class _JobFunctionDropdown extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: () => service.openEditor(),
-            child: Container(
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                color: AppColors.card,
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
-              ),
-              child: Icon(Icons.add_rounded,
-                  size: 12, color: AppColors.textTertiary),
+        HoverButton(
+          onTap: () => service.openEditor(),
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              color: AppColors.card,
+              border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
             ),
+            child: Icon(Icons.add_rounded,
+                size: 12, color: AppColors.textTertiary),
           ),
         ),
       ],
@@ -1000,32 +984,30 @@ class _CallInfoBar extends StatelessWidget {
             ),
           ),
           if (phase.isSettling)
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: agent.confirmPartyConnected,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    color: AppColors.green.withValues(alpha: 0.15),
-                    border: Border.all(color: AppColors.green.withValues(alpha: 0.3), width: 0.5),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.person_add_alt_1_rounded, size: 12, color: AppColors.green),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Party On',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.green,
-                        ),
+            HoverButton(
+              onTap: agent.confirmPartyConnected,
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: AppColors.green.withValues(alpha: 0.15),
+                  border: Border.all(color: AppColors.green.withValues(alpha: 0.3), width: 0.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.person_add_alt_1_rounded, size: 12, color: AppColors.green),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Party On',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.green,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1191,107 +1173,102 @@ class _CallLegRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = _stateColor;
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 6, 10, 6),
-          decoration: BoxDecoration(
-            color: isFocused
-                ? AppColors.accent.withValues(alpha: 0.06)
-                : Colors.transparent,
-            border: isFocused
-                ? Border(
-                    left: BorderSide(color: AppColors.accent, width: 2))
-                : null,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 24,
-                height: 24,
+    return HoverButton(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 6, 10, 6),
+        decoration: BoxDecoration(
+          color: isFocused
+              ? AppColors.accent.withValues(alpha: 0.06)
+              : Colors.transparent,
+          border: isFocused
+              ? Border(
+                  left: BorderSide(color: AppColors.accent, width: 2))
+              : null,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                color: color.withValues(alpha: 0.12),
+              ),
+              child: Icon(
+                leg.state == LegState.held
+                    ? Icons.pause_rounded
+                    : Icons.phone_in_talk_rounded,
+                size: 12,
+                color: color,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _displayName,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 4,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _stateLabel,
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: color,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            HoverButton(
+              onTap: onHold,
+              borderRadius: BorderRadius.circular(7),
+              child: Container(
+                width: 28,
+                height: 28,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(7),
+                  color: leg.state == LegState.held
+                      ? AppColors.accent.withValues(alpha: 0.15)
+                      : AppColors.surface,
+                  border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.4),
+                    width: 0.5,
+                  ),
                 ),
                 child: Icon(
                   leg.state == LegState.held
-                      ? Icons.pause_rounded
-                      : Icons.phone_in_talk_rounded,
-                  size: 12,
-                  color: color,
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
+                  size: 14,
+                  color: leg.state == LegState.held
+                      ? AppColors.accent
+                      : AppColors.textTertiary,
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _displayName,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Container(
-                          width: 4,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: color,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _stateLabel,
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: color,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  onTap: onHold,
-                  child: Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(7),
-                      color: leg.state == LegState.held
-                          ? AppColors.accent.withValues(alpha: 0.15)
-                          : AppColors.surface,
-                      border: Border.all(
-                        color: AppColors.border.withValues(alpha: 0.4),
-                        width: 0.5,
-                      ),
-                    ),
-                    child: Icon(
-                      leg.state == LegState.held
-                          ? Icons.play_arrow_rounded
-                          : Icons.pause_rounded,
-                      size: 14,
-                      color: leg.state == LegState.held
-                          ? AppColors.accent
-                          : AppColors.textTertiary,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1329,45 +1306,43 @@ class _MergeConnector extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           // Merge button
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: canMerge ? () => onMerge() : null,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
+          HoverButton(
+            onTap: canMerge ? () => onMerge() : null,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: canMerge
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.surface,
+                border: Border.all(
                   color: canMerge
-                      ? AppColors.accent.withValues(alpha: 0.12)
-                      : AppColors.surface,
-                  border: Border.all(
-                    color: canMerge
-                        ? AppColors.accent.withValues(alpha: 0.4)
-                        : AppColors.border.withValues(alpha: 0.3),
-                    width: 0.5,
-                  ),
+                      ? AppColors.accent.withValues(alpha: 0.4)
+                      : AppColors.border.withValues(alpha: 0.3),
+                  width: 0.5,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.merge_type_rounded,
-                        size: 12,
-                        color: canMerge
-                            ? AppColors.accent
-                            : AppColors.textTertiary),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Merge',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: canMerge
-                            ? AppColors.accent
-                            : AppColors.textTertiary,
-                      ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.merge_type_rounded,
+                      size: 12,
+                      color: canMerge
+                          ? AppColors.accent
+                          : AppColors.textTertiary),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Merge',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: canMerge
+                          ? AppColors.accent
+                          : AppColors.textTertiary,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1537,23 +1512,19 @@ class _HeaderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: Tooltip(
-        message: tooltip,
-        child: GestureDetector(
-          onTap: onTap,
-          child: Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: bgColor,
-              border: Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
-            ),
-            child: Icon(icon, size: 14, color: color),
-          ),
+    return HoverButton(
+      onTap: onTap,
+      tooltip: tooltip,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          color: bgColor,
+          border: Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
+        child: Icon(icon, size: 14, color: color),
       ),
     );
   }
@@ -2063,24 +2034,22 @@ class _ActionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: AppColors.card,
-            border: Border.all(color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 11,
-              color: AppColors.accent,
-              fontWeight: FontWeight.w500,
-            ),
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: AppColors.card,
+          border: Border.all(color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: AppColors.accent,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),
@@ -2220,78 +2189,72 @@ class _InputBarState extends State<_InputBar> {
           if (widget.hasActiveCall)
             Padding(
               padding: const EdgeInsets.only(bottom: 0),
-              child: Tooltip(
-                message: widget.onToggleWhisper == null
+              child: HoverButton(
+                onTap: widget.onToggleWhisper,
+                tooltip: widget.onToggleWhisper == null
                     ? 'Whisper locked (split pipeline)'
                     : w
                         ? 'Exit Whisper'
                         : 'Whisper Mode',
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: widget.onToggleWhisper,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        color: widget.onToggleWhisper == null
-                            ? AppColors.card.withValues(alpha: 0.5)
-                            : w
-                                ? AppColors.burntAmber.withValues(alpha: 0.15)
-                                : AppColors.card,
-                        border: Border.all(
-                          color: widget.onToggleWhisper == null
-                              ? AppColors.border.withValues(alpha: 0.2)
-                              : w
-                                  ? AppColors.burntAmber.withValues(alpha: 0.4)
-                                  : AppColors.border.withValues(alpha: 0.5),
-                          width: 0.5,
-                        ),
-                      ),
-                      child: Icon(
-                        w
-                            ? Icons.voice_over_off_rounded
-                            : Icons.record_voice_over_rounded,
-                        size: 15,
-                        color: widget.onToggleWhisper == null
-                            ? AppColors.textTertiary.withValues(alpha: 0.4)
-                            : w
-                                ? AppColors.burntAmber
-                                : AppColors.textTertiary,
-                      ),
+                borderRadius: BorderRadius.circular(10),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: widget.onToggleWhisper == null
+                        ? AppColors.card.withValues(alpha: 0.5)
+                        : w
+                            ? AppColors.burntAmber.withValues(alpha: 0.15)
+                            : AppColors.card,
+                    border: Border.all(
+                      color: widget.onToggleWhisper == null
+                          ? AppColors.border.withValues(alpha: 0.2)
+                          : w
+                              ? AppColors.burntAmber.withValues(alpha: 0.4)
+                              : AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5,
                     ),
+                  ),
+                  child: Icon(
+                    w
+                        ? Icons.voice_over_off_rounded
+                        : Icons.record_voice_over_rounded,
+                    size: 15,
+                    color: widget.onToggleWhisper == null
+                        ? AppColors.textTertiary.withValues(alpha: 0.4)
+                        : w
+                            ? AppColors.burntAmber
+                            : AppColors.textTertiary,
                   ),
                 ),
               ),
             ),
           const SizedBox(width: 4),
           // Send button — long press for one-shot whisper
-          MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: _hasText ? widget.onSend : null,
-              onLongPress: (_hasText && widget.hasActiveCall && !w)
-                  ? widget.onWhisperSend
-                  : null,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: _hasText ? accentColor : AppColors.card,
-                  border: Border.all(
-                    color: _hasText ? accentColor : AppColors.border.withValues(alpha: 0.5),
-                    width: 0.5,
-                  ),
+          HoverButton(
+            onTap: _hasText ? widget.onSend : null,
+            onLongPress: (_hasText && widget.hasActiveCall && !w)
+                ? widget.onWhisperSend
+                : null,
+            borderRadius: BorderRadius.circular(10),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: _hasText ? accentColor : AppColors.card,
+                border: Border.all(
+                  color: _hasText ? accentColor : AppColors.border.withValues(alpha: 0.5),
+                  width: 0.5,
                 ),
-                child: Icon(
-                  Icons.arrow_upward_rounded,
-                  size: 16,
-                  color: _hasText ? AppColors.onAccent : AppColors.textTertiary,
-                ),
+              ),
+              child: Icon(
+                Icons.arrow_upward_rounded,
+                size: 16,
+                color: _hasText ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),

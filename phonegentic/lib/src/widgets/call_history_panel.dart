@@ -126,7 +126,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
             ),
           if (service.searchResults.isNotEmpty) ...[
             const SizedBox(width: 6),
-            MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+            HoverButton(
               onTap: () {
                 final tearSheet =
                     context.read<TearSheetService>();
@@ -138,6 +138,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                 );
                 service.closeHistory();
               },
+              borderRadius: BorderRadius.circular(8),
               child: Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 8, vertical: 5),
@@ -165,11 +166,12 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                   ],
                 ),
               ),
-            )),
+            ),
           ],
           const SizedBox(width: 8),
-          MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+          HoverButton(
             onTap: service.closeHistory,
+            borderRadius: BorderRadius.circular(8),
             child: Container(
               width: 30,
               height: 30,
@@ -182,7 +184,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
               child: Icon(Icons.close_rounded,
                   size: 16, color: AppColors.textSecondary),
             ),
-          )),
+          ),
         ],
       ),
     );
@@ -225,41 +227,39 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
             ),
           ),
           const SizedBox(width: 6),
-          MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+          HoverButton(
             onTap: _runSearch,
-            child: Tooltip(
-              message: 'Search locally',
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: AppColors.accent,
-                ),
-                child: Icon(Icons.search_rounded,
-                    size: 16, color: AppColors.crtBlack),
+            tooltip: 'Search locally',
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: AppColors.accent,
               ),
+              child: Icon(Icons.search_rounded,
+                  size: 16, color: AppColors.crtBlack),
             ),
-          )),
+          ),
           const SizedBox(width: 4),
-          MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+          HoverButton(
             onTap: _askAgent,
-            child: Tooltip(
-              message: 'Ask AI agent',
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: AppColors.card,
-                  border: Border.all(
-                      color: AppColors.accent.withValues(alpha: 0.4), width: 0.5),
-                ),
-                child: Icon(Icons.auto_awesome,
-                    size: 16, color: AppColors.accent),
+            tooltip: 'Ask AI agent',
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: AppColors.card,
+                border: Border.all(
+                    color: AppColors.accent.withValues(alpha: 0.4), width: 0.5),
               ),
+              child: Icon(Icons.auto_awesome,
+                  size: 16, color: AppColors.accent),
             ),
-          )),
+          ),
         ],
       ),
     );
@@ -483,7 +483,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               ],
             ),
           ),
-          MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+          HoverButton(
             onTap: () => _redial(context),
             child: Container(
               width: 34,
@@ -497,7 +497,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               child:
                   Icon(Icons.phone_rounded, size: 16, color: AppColors.accent),
             ),
-          )),
+          ),
         ],
       ),
     );
@@ -621,8 +621,9 @@ class _CallRecordTileState extends State<_CallRecordTile> {
   @override
   Widget build(BuildContext context) {
     final demo = context.watch<DemoModeService>();
-    return MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+    return HoverButton(
       onTap: widget.onTap,
+      borderRadius: BorderRadius.circular(10),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -738,7 +739,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                   ),
                 ),
                 // Redial + Timestamp
-                MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+                HoverButton(
                   onTap: () => _redial(context),
                   child: Container(
                     width: 26,
@@ -752,7 +753,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                     child: Icon(Icons.phone_rounded,
                         size: 13, color: AppColors.accent),
                   ),
-                )),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   _timeLabel,
@@ -785,7 +786,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
           ],
         ),
       ),
-    ));
+    );
   }
 }
 
@@ -869,7 +870,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
       ),
       child: Row(
         children: [
-          MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+          HoverButton(
             onTap: () {
               if (_playing) {
                 _player.pause();
@@ -892,7 +893,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
                 color: AppColors.crtBlack,
               ),
             ),
-          )),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: ClipRRect(
@@ -916,8 +917,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
             ),
           ),
           const SizedBox(width: 4),
-          MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          HoverButton(
             onTap: _downloadRecording,
             child: Padding(
               padding: const EdgeInsets.all(4),
@@ -927,7 +927,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
                 color: AppColors.textSecondary,
               ),
             ),
-          )),
+          ),
         ],
       ),
     );

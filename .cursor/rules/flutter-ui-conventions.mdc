@@ -6,36 +6,42 @@ alwaysApply: false
 
 # Flutter UI Conventions
 
-## Interactive Elements Must Show Hand Cursor
+## Interactive Elements — Use `HoverButton`
 
-Every tappable widget (`GestureDetector`, custom button) MUST be wrapped in
-`MouseRegion(cursor: SystemMouseCursors.click, ...)` so the pointer changes on
-hover. This applies to buttons, chips, toggles, icons, rows, and any other
-element with an `onTap` / `onPressed`.
+Every tappable element (button, chip, toggle, icon, row) should use the
+`HoverButton` widget from `theme_provider.dart`. It provides:
+- Hand cursor on hover
+- Subtle accent-tinted background highlight (animated 120 ms)
+- `onTap`, `onLongPress`, `tooltip`, `borderRadius`, `padding`
 
 ```dart
-// ❌ BAD — no cursor change on hover
+// ✅ PREFERRED — single widget, visual hover + cursor
+HoverButton(
+  onTap: _doSomething,
+  borderRadius: BorderRadius.circular(8),
+  child: Container(/* your button visuals */),
+)
+
+// ✅ With tooltip
+HoverButton(
+  onTap: _doSomething,
+  tooltip: 'Refresh',
+  child: Icon(Icons.refresh),
+)
+
+// ❌ BAD — no hover feedback
 GestureDetector(
   onTap: _doSomething,
   child: Container(child: Text('Click me')),
 )
-
-// ✅ GOOD
-MouseRegion(
-  cursor: SystemMouseCursors.click,
-  child: GestureDetector(
-    onTap: _doSomething,
-    child: Container(child: Text('Click me')),
-  ),
-)
 ```
 
 **Exception:** Full-screen scrims / barriers used only to dismiss overlays do
-NOT need the click cursor (they are dismissal zones, not buttons).
+NOT need hover feedback (they are dismissal zones, not buttons).
 
-If a `MouseRegion` already exists for hover tracking (`onEnter`/`onExit`), add
-`cursor: SystemMouseCursors.click` to that same region instead of nesting
-another.
+If a custom hover visual is needed (e.g. a colored border change), use
+`MouseRegion(cursor: SystemMouseCursors.click, ...)` with `onEnter`/`onExit`
+and `setState` directly. Always include `cursor: SystemMouseCursors.click`.
 
 ## Color Opacity
 
@@ -43,7 +49,7 @@ Use `.withValues(alpha: 0.5)` instead of the deprecated `.withOpacity(0.5)`.
 
 ## Linting
 
-The project uses `analysis_options.yaml` at the repo root (not inside
+The project uses `analysis_options.yaml` at the **repo root** (not inside
 `phonegentic/`). Key rules to respect:
 
 - `always_specify_types` — annotate all local variables, parameters, return types.
@@ -59,8 +65,8 @@ Run `flutter analyze` from `phonegentic/` before considering any change done.
 | What | Path |
 |------|------|
 | Lint rules | `/analysis_options.yaml` |
+| Theme / colors / `HoverButton` | `/phonegentic/lib/src/theme_provider.dart` |
 | App entry point | `/phonegentic/lib/main.dart` |
 | Widget files | `/phonegentic/lib/src/widgets/` |
 | Services | `/phonegentic/lib/src/` |
-| Theme / colors | `/phonegentic/lib/src/theme_provider.dart` |
 | SIP library | `/lib/src/` |

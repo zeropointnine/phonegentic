@@ -101,24 +101,22 @@ class _TearSheetStripContent extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   // Close / dismiss
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: service.dismissSheet,
-                      child: Container(
-                        width: 26,
-                        height: 26,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(7),
-                          color: AppColors.card,
-                          border: Border.all(
-                            color: AppColors.border.withValues(alpha: 0.5),
-                            width: 0.5,
-                          ),
+                  HoverButton(
+                    onTap: service.dismissSheet,
+                    borderRadius: BorderRadius.circular(7),
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(7),
+                        color: AppColors.card,
+                        border: Border.all(
+                          color: AppColors.border.withValues(alpha: 0.5),
+                          width: 0.5,
                         ),
-                        child: Icon(Icons.close_rounded,
-                            size: 14, color: AppColors.textTertiary),
                       ),
+                      child: Icon(Icons.close_rounded,
+                          size: 14, color: AppColors.textTertiary),
                     ),
                   ),
                 ],
@@ -168,32 +166,30 @@ class _PillButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: color.withValues(alpha: 0.12),
-            border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: color,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

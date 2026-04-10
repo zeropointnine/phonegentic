@@ -46,27 +46,25 @@ class _EmojiPickerWidgetState extends State<EmojiPickerWidget> {
               itemCount: _categories.length,
               itemBuilder: (_, i) {
                 final selected = i == _categoryIndex;
-                return MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: () => setState(() {
-                      _categoryIndex = i;
-                      _searchCtrl.clear();
-                    }),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 1),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? AppColors.accent.withValues(alpha: 0.15)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: Text(
-                        _categories[i].icon,
-                        style: const TextStyle(fontSize: 14),
-                      ),
+                return HoverButton(
+                  onTap: () => setState(() {
+                    _categoryIndex = i;
+                    _searchCtrl.clear();
+                  }),
+                  borderRadius: BorderRadius.circular(5),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppColors.accent.withValues(alpha: 0.15)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: Text(
+                      _categories[i].icon,
+                      style: const TextStyle(fontSize: 14),
                     ),
                   ),
                 );
@@ -84,19 +82,17 @@ class _EmojiPickerWidgetState extends State<EmojiPickerWidget> {
               ),
               itemCount: activeEmojis.length,
               itemBuilder: (_, i) {
-                return MouseRegion(
-                  cursor: SystemMouseCursors.click,
-                  child: GestureDetector(
-                    onTap: () => widget.onSelected(activeEmojis[i]),
-                    child: Container(
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        activeEmojis[i],
-                        style: const TextStyle(fontSize: 20),
-                      ),
+                return HoverButton(
+                  onTap: () => widget.onSelected(activeEmojis[i]),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      activeEmojis[i],
+                      style: const TextStyle(fontSize: 20),
                     ),
                   ),
                 );

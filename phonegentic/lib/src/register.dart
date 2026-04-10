@@ -718,24 +718,22 @@ class _MyRegisterWidget extends State<RegisterWidget>
   Widget _transportChip(String label, TransportType type) {
     final selected = _selectedTransport == type;
     return Expanded(
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: () => setState(() => _selectedTransport = type),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? AppColors.accent : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: selected ? AppColors.onAccent : AppColors.textTertiary,
-                ),
+      child: HoverButton(
+        onTap: () => setState(() => _selectedTransport = type),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.accent : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: selected ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
           ),
