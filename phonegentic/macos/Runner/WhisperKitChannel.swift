@@ -1,0 +1,275 @@
+import Cocoa
+import FlutterMacOS
+
+#if canImport(WhisperKit)
+import WhisperKit
+#endif
+
+/// MethodChannel + EventChannel bridge for WhisperKit on-device STT.
+///
+/// Channel names:
+///   - MethodChannel:  com.agentic_ai/whisperkit_stt
+///   - EventChannel:   com.agentic_ai/whisperkit_transcripts
+///
+/// Methods:
+///   - initialize(modelSize:) → loads WhisperKit model from app bundle
+///   - isModelAvailable(modelSize:) → checks if model files exist
+///   - startTranscription → begins real-time transcription
+///   - feedAudio(audio:) → feed PCM16 audio data for transcription
+///   - stopTranscription → stops transcription
+///   - dispose → releases model resources
+class WhisperKitChannel: NSObject, FlutterStreamHandler {
+    private let methodChannel: FlutterMethodChannel
+    private let transcriptEventChannel: FlutterEventChannel
+    private var transcriptEventSink: FlutterEventSink?
+
+    #if canImport(WhisperKit)
+    private var whisperKit: WhisperKit?
+    #endif
+
+    private var isInitialized = false
+    private var isTranscribing = false
+    private let processingQueue = DispatchQueue(label: "com.agentic_ai.whisperkit_stt", qos: .userInitiated)
+
+    // Audio buffer for accumulating PCM chunks before transcription
+    private var audioBuffer = Data()
+    private let bufferLock = NSLock()
+    private var transcriptionTimer: Timer?
+    private static let transcriptionIntervalMs = 500
+
+    init(messenger: FlutterBinaryMessenger) {
+        methodChannel = FlutterMethodChannel(
+            name: "com.agentic_ai/whisperkit_stt",
+            binaryMessenger: messenger
+        )
+        transcriptEventChannel = FlutterEventChannel(
+            name: "com.agentic_ai/whisperkit_transcripts",
+            binaryMessenger: messenger
+        )
+
+        super.init()
+
+        transcriptEventChannel.setStreamHandler(self)
+        methodChannel.setMethodCallHandler { [weak self] call, result in
+            self?.handle(call, result: result)
+        }
+    }
+
+    // MARK: - FlutterStreamHandler
+
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        transcriptEventSink = events
+        return nil
+    }
+
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        transcriptEventSink = nil
+        return nil
+    }
+
+    // MARK: - Method handling
+
+    private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        switch call.method {
+        case "initialize":
+            let args = call.arguments as? [String: Any] ?? [:]
+            handleInitialize(modelSize: args["modelSize"] as? String ?? "base", result: result)
+        case "isModelAvailable":
+            let args = call.arguments as? [String: Any] ?? [:]
+            handleIsModelAvailable(modelSize: args["modelSize"] as? String ?? "base", result: result)
+        case "startTranscription":
+            handleStartTranscription(result: result)
+        case "feedAudio":
+            let args = call.arguments as? [String: Any] ?? [:]
+            if let audioData = args["audio"] as? FlutterStandardTypedData {
+                handleFeedAudio(audio: audioData.data, result: result)
+            } else {
+                result(FlutterError(code: "BAD_ARGS", message: "Missing audio data", details: nil))
+            }
+        case "stopTranscription":
+            handleStopTranscription(result: result)
+        case "dispose":
+            handleDispose(result: result)
+        default:
+            result(FlutterMethodNotImplemented)
+        }
+    }
+
+    private func modelDirectoryName(for modelSize: String) -> String {
+        return "openai_whisper-\(modelSize)"
+    }
+
+    private func handleIsModelAvailable(modelSize: String, result: @escaping FlutterResult) {
+        let dirName = modelDirectoryName(for: modelSize)
+        let bundle = Bundle.main
+        let modelPath = bundle.bundlePath + "/Contents/Resources/models/whisperkit/\(dirName)"
+        let exists = FileManager.default.fileExists(atPath: modelPath)
+        result(exists)
+    }
+
+    private func handleInitialize(modelSize: String, result: @escaping FlutterResult) {
+        #if canImport(WhisperKit)
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            let dirName = self.modelDirectoryName(for: modelSize)
+            let bundle = Bundle.main
+            let modelPath = bundle.bundlePath + "/Contents/Resources/models/whisperkit/\(dirName)"
+
+            NSLog("[WhisperKit] Loading model from: \(modelPath)")
+
+            Task {
+                do {
+                    let kit = try await WhisperKit(
+                        modelFolder: modelPath,
+                        computeOptions: ModelComputeOptions(
+                            audioEncoderCompute: .cpuAndNeuralEngine,
+                            textDecoderCompute: .cpuAndNeuralEngine
+                        )
+                    )
+                    self.whisperKit = kit
+                    self.isInitialized = true
+
+                    DispatchQueue.main.async {
+                        NSLog("[WhisperKit] Initialized with model: \(modelSize)")
+                        result(true)
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        NSLog("[WhisperKit] Init failed: \(error)")
+                        result(false)
+                    }
+                }
+            }
+        }
+        #else
+        NSLog("[WhisperKit] WhisperKit not available in this build")
+        result(false)
+        #endif
+    }
+
+    private func handleStartTranscription(result: @escaping FlutterResult) {
+        guard isInitialized else {
+            result(FlutterError(code: "NOT_INIT", message: "WhisperKit not initialized", details: nil))
+            return
+        }
+
+        isTranscribing = true
+        bufferLock.lock()
+        audioBuffer = Data()
+        bufferLock.unlock()
+
+        // Periodically transcribe accumulated audio
+        transcriptionTimer = Timer.scheduledTimer(
+            withTimeInterval: Double(WhisperKitChannel.transcriptionIntervalMs) / 1000.0,
+            repeats: true
+        ) { [weak self] _ in
+            self?.processBufferedAudio()
+        }
+
+        NSLog("[WhisperKit] Transcription started")
+        result(nil)
+    }
+
+    private func handleFeedAudio(audio: Data, result: @escaping FlutterResult) {
+        guard isTranscribing else {
+            result(nil)
+            return
+        }
+
+        bufferLock.lock()
+        audioBuffer.append(audio)
+        bufferLock.unlock()
+
+        result(nil)
+    }
+
+    private func processBufferedAudio() {
+        #if canImport(WhisperKit)
+        guard let kit = whisperKit, isTranscribing else { return }
+
+        bufferLock.lock()
+        guard audioBuffer.count > 0 else {
+            bufferLock.unlock()
+            return
+        }
+        let audioData = audioBuffer
+        audioBuffer = Data()
+        bufferLock.unlock()
+
+        // Convert PCM16 to float samples
+        let floatSamples = pcm16ToFloat(audioData)
+
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+            Task {
+                do {
+                    let results = try await kit.transcribe(audioArray: floatSamples)
+                    let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if !text.isEmpty {
+                        DispatchQueue.main.async {
+                            self.transcriptEventSink?([
+                                "text": text,
+                                "isFinal": true,
+                                "language": "en"
+                            ])
+                        }
+                    }
+                } catch {
+                    NSLog("[WhisperKit] Transcription error: \(error)")
+                }
+            }
+        }
+        #endif
+    }
+
+    private func pcm16ToFloat(_ data: Data) -> [Float] {
+        let sampleCount = data.count / 2
+        var floats = [Float](repeating: 0, count: sampleCount)
+        data.withUnsafeBytes { buffer in
+            let int16Ptr = buffer.bindMemory(to: Int16.self)
+            for i in 0..<sampleCount {
+                floats[i] = Float(int16Ptr[i]) / Float(Int16.max)
+            }
+        }
+        return floats
+    }
+
+    private func handleStopTranscription(result: @escaping FlutterResult) {
+        isTranscribing = false
+        transcriptionTimer?.invalidate()
+        transcriptionTimer = nil
+
+        bufferLock.lock()
+        audioBuffer = Data()
+        bufferLock.unlock()
+
+        NSLog("[WhisperKit] Transcription stopped")
+        result(nil)
+    }
+
+    private func handleDispose(result: @escaping FlutterResult) {
+        isTranscribing = false
+        transcriptionTimer?.invalidate()
+        transcriptionTimer = nil
+
+        #if canImport(WhisperKit)
+        whisperKit = nil
+        #endif
+
+        isInitialized = false
+        NSLog("[WhisperKit] Disposed")
+        result(nil)
+    }
+
+    func cleanup() {
+        isTranscribing = false
+        transcriptionTimer?.invalidate()
+        transcriptionTimer = nil
+        #if canImport(WhisperKit)
+        whisperKit = nil
+        #endif
+        isInitialized = false
+    }
+}

@@ -31,6 +31,7 @@ import 'models/agent_context.dart';
 import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
 import 'elevenlabs_tts_service.dart';
+import 'kokoro_tts_service.dart';
 import 'text_agent_service.dart';
 import 'whisper_realtime_service.dart';
 
@@ -155,6 +156,7 @@ class AgentService extends ChangeNotifier {
   bool get _splitPipeline => _textAgent != null;
 
   ElevenLabsTtsService? _tts;
+  KokoroTtsService? _kokoroTts;
   TtsConfig? _ttsConfig;
   bool _ttsMuted = false;
   StreamSubscription<Uint8List>? _ttsAudioSub;
@@ -574,14 +576,21 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] TTS config: '
         'provider=${tc?.provider.name} '
         'configured=${tc?.isConfigured}');
+    if (tc == null || !tc.isConfigured) return;
 
-    // Allow TTS init with just an API key — the voice can come from the
-    // job function via updateVoiceId() even if no default voice is set.
-    final hasApiKey = tc != null &&
-        tc.provider == TtsProvider.elevenlabs &&
-        tc.elevenLabsApiKey.isNotEmpty;
-    if (!hasApiKey) return;
+    switch (tc.provider) {
+      case TtsProvider.elevenlabs:
+        _initElevenLabsTts(tc);
+        return;
+      case TtsProvider.kokoro:
+        _initKokoroTts(tc);
+        return;
+      case TtsProvider.none:
+        return;
+    }
+  }
 
+  void _initElevenLabsTts(TtsConfig tc) {
     _tts = ElevenLabsTtsService(config: tc);
 
     int elChunkCount = 0;
@@ -605,6 +614,72 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] ElevenLabs TTS active: '
         'voice=${tc.elevenLabsVoiceId} model=${tc.elevenLabsModelId}');
+  }
+
+  void _initKokoroTts(TtsConfig tc) {
+    final kokoro = KokoroTtsService(config: tc);
+    _kokoroTts = kokoro;
+
+    kokoro.initialize().then((_) {
+      if (!kokoro.isInitialized) {
+        debugPrint('[AgentService] Kokoro TTS failed to initialize');
+        _kokoroTts = null;
+        return;
+      }
+      kokoro.setVoice(tc.kokoroVoiceStyle);
+    });
+
+    int chunkCount = 0;
+    _ttsAudioSub = kokoro.audioChunks.listen((pcm) {
+      if (_ttsMuted) return;
+      chunkCount++;
+      if (chunkCount <= 3 || chunkCount % 25 == 0) {
+        debugPrint('[AgentService] Kokoro audio #$chunkCount: '
+            '${pcm.length} bytes → playResponseAudio');
+      }
+      _whisper.playResponseAudio(pcm);
+    });
+
+    _ttsSpeakingSub = kokoro.speakingState.listen((speaking) {
+      _speaking = speaking;
+      if (!speaking) {
+        _speakingEndTime = DateTime.now();
+        _schedulePostSpeakFlush();
+      }
+    });
+
+    debugPrint('[AgentService] Kokoro TTS active: voice=${tc.kokoroVoiceStyle}');
+  }
+
+  // -- Active TTS abstraction (ElevenLabs or Kokoro) --------------------------
+
+  bool get _hasTts => _tts != null || _kokoroTts != null;
+
+  void _activeTtsStartGeneration() {
+    _tts?.startGeneration();
+    _kokoroTts?.startGeneration();
+  }
+
+  void _activeTtsSendText(String text) {
+    _tts?.sendText(text);
+    _kokoroTts?.sendText(text);
+  }
+
+  void _activeTtsEndGeneration() {
+    _tts?.endGeneration();
+    _kokoroTts?.endGeneration();
+  }
+
+  void _activeTtsWarmUp() {
+    _tts?.warmUp();
+    // Kokoro doesn't need a warmUp — model is loaded on initialize().
+  }
+
+  void _activeTtsDispose() {
+    _tts?.dispose();
+    _tts = null;
+    _kokoroTts?.dispose();
+    _kokoroTts = null;
   }
 
   CalendarSyncService? _calendarSync;
@@ -1523,7 +1598,7 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
-      if (!_ttsMuted) _tts?.endGeneration();
+      if (!_ttsMuted) _activeTtsEndGeneration();
 
       if (_streamingMessageId != null) {
         final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
@@ -1555,16 +1630,16 @@ class AgentService extends ChangeNotifier {
             _callPhase == CallPhase.settling) &&
         _callPhase != CallPhase.idle;
 
-    // Pipe text delta to ElevenLabs TTS, stripping bracketed stage directions.
-    // Skip entirely when muted (text-only mode) to avoid burning TTS credits.
-    if (_tts != null && !_ttsMuted && event.text.isNotEmpty && !suppressTts) {
+    // Pipe text delta to TTS (ElevenLabs or Kokoro), stripping bracketed
+    // stage directions. Skip when muted to avoid burning TTS credits/compute.
+    if (_hasTts && !_ttsMuted && event.text.isNotEmpty && !suppressTts) {
       if (_streamingMessageId == null) {
         _ttsBracketDepth = 0;
-        _tts!.startGeneration();
+        _activeTtsStartGeneration();
       }
       final ttsText = _stripBracketsForTts(event.text);
       if (ttsText.isNotEmpty) {
-        _tts!.sendText(ttsText);
+        _activeTtsSendText(ttsText);
       }
     }
 
@@ -1980,22 +2055,25 @@ class AgentService extends ChangeNotifier {
     // before the line drops (e.g. voicemail, goodbyes).
     if (_speaking) {
       debugPrint('[AgentService] end_call deferred — waiting for TTS to finish');
-      final completer = Completer<void>();
-      late StreamSubscription<bool> sub;
-      sub = _tts!.speakingState.listen((speaking) {
-        if (!speaking && !completer.isCompleted) {
-          completer.complete();
-          sub.cancel();
-        }
-      });
-      // Safety timeout so we don't wait forever
-      await completer.future.timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          sub.cancel();
-          debugPrint('[AgentService] end_call TTS wait timed out');
-        },
-      );
+      final speakingStream =
+          _kokoroTts?.speakingState ?? _tts?.speakingState;
+      if (speakingStream != null) {
+        final completer = Completer<void>();
+        late StreamSubscription<bool> sub;
+        sub = speakingStream.listen((speaking) {
+          if (!speaking && !completer.isCompleted) {
+            completer.complete();
+            sub.cancel();
+          }
+        });
+        await completer.future.timeout(
+          const Duration(seconds: 15),
+          onTimeout: () {
+            sub.cancel();
+            debugPrint('[AgentService] end_call TTS wait timed out');
+          },
+        );
+      }
     }
 
     sipHelper!.activeCall?.hangup();
@@ -2303,11 +2381,14 @@ class AgentService extends ChangeNotifier {
       return 'No voice_id provided.';
     }
 
-    if (_tts == null) {
-      return 'ElevenLabs TTS is not active. Cannot change voice.';
+    if (_tts != null) {
+      _tts!.updateVoiceId(voiceId);
+    } else if (_kokoroTts != null) {
+      await _kokoroTts!.setVoice(voiceId);
+    } else {
+      return 'No TTS provider is active. Cannot change voice.';
     }
 
-    _tts!.updateVoiceId(voiceId);
     _messages.add(ChatMessage.system('Agent voice changed to $voiceId'));
     notifyListeners();
     debugPrint('[AgentService] Agent voice swapped to: $voiceId');
@@ -2932,7 +3013,7 @@ class AgentService extends ChangeNotifier {
       _postSpeakFlushTimer?.cancel();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
-      _tts?.endGeneration();
+      _activeTtsEndGeneration();
       _textAgent?.reset();
 
       // Clean up any agent-initiated voice sampling still in progress
@@ -2969,7 +3050,7 @@ class AgentService extends ChangeNotifier {
 
     if (phase == CallPhase.settling) {
       _startSettleTimer();
-      _tts?.warmUp();
+      _activeTtsWarmUp();
     } else if (_callPhase != CallPhase.settling) {
       _cancelSettleTimer();
     }
@@ -3292,8 +3373,7 @@ class AgentService extends ChangeNotifier {
     _textAgentConfig = null;
     _ttsAudioSub?.cancel();
     _ttsSpeakingSub?.cancel();
-    _tts?.dispose();
-    _tts = null;
+    _activeTtsDispose();
     _ttsConfig = null;
     _levelSub?.cancel();
     _speakingSub?.cancel();
@@ -3327,7 +3407,7 @@ class AgentService extends ChangeNotifier {
     _textAgent?.dispose();
     _ttsAudioSub?.cancel();
     _ttsSpeakingSub?.cancel();
-    _tts?.dispose();
+    _activeTtsDispose();
     _levelSub?.cancel();
     _speakingSub?.cancel();
     _audioSub?.cancel();

@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../elevenlabs_api_service.dart';
+import '../kokoro_tts_service.dart';
+import '../on_device_config.dart';
 import '../theme_provider.dart';
 import 'voice_clone_modal.dart';
 
@@ -18,6 +20,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   TextAgentConfig _text = const TextAgentConfig();
   CallRecordingConfig _recording = const CallRecordingConfig();
   TtsConfig _tts = const TtsConfig();
+  SttConfig _stt = const SttConfig();
   AgentMutePolicy _mutePolicy = AgentMutePolicy.autoToggle;
   bool _loaded = false;
   bool _dirty = false;
@@ -68,6 +71,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final t = await AgentConfigService.loadTextConfig();
     final r = await AgentConfigService.loadCallRecordingConfig();
     final tts = await AgentConfigService.loadTtsConfig();
+    final stt = await AgentConfigService.loadSttConfig();
     final mp = await AgentConfigService.loadMutePolicy();
     if (!mounted) return;
     setState(() {
@@ -75,6 +79,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _text = t;
       _recording = r;
       _tts = tts;
+      _stt = stt;
       _mutePolicy = mp;
       _voiceKeyCtrl.text = v.apiKey;
       _voiceInstructionsCtrl.text = v.instructions;
@@ -170,6 +175,10 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       _text.provider != TextAgentProvider.openai) ...[
                     const SizedBox(height: 16),
                     _buildTtsCard(),
+                  ],
+                  if (OnDeviceConfig.isSupported) ...[
+                    const SizedBox(height: 16),
+                    _buildSttCard(),
                   ],
                   const SizedBox(height: 40),
                 ],
@@ -681,18 +690,37 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   // ───── Voice Output (TTS) ─────
 
   Widget _buildTtsCard() {
+    final isEnabled = _tts.provider != TtsProvider.none;
     final isElevenlabs = _tts.provider == TtsProvider.elevenlabs;
+    final isKokoro = _tts.provider == TtsProvider.kokoro;
+
+    String subtitle;
+    switch (_tts.provider) {
+      case TtsProvider.elevenlabs:
+        subtitle = 'ElevenLabs';
+        break;
+      case TtsProvider.kokoro:
+        subtitle = 'Kokoro (On-Device)';
+        break;
+      case TtsProvider.none:
+        subtitle = 'None';
+        break;
+    }
 
     return _AgentCard(
       icon: Icons.record_voice_over_rounded,
       title: 'Voice Output',
-      subtitle: isElevenlabs ? 'ElevenLabs' : 'None',
-      enabled: isElevenlabs,
+      subtitle: subtitle,
+      enabled: isEnabled,
       configured: _tts.isConfigured,
       onToggle: (v) => _updateTts(_tts.copyWith(
         provider: v ? TtsProvider.elevenlabs : TtsProvider.none,
       )),
       children: [
+        if (isEnabled) ...[
+          _buildTtsProviderChips(),
+          _divider(),
+        ],
         if (isElevenlabs) ...[
           _buildKeyField('API Key', _ttsApiKeyCtrl, (val) {
             _updateTts(_tts.copyWith(elevenLabsApiKey: val));
@@ -710,6 +738,161 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               'eleven_turbo_v2_5': 'Turbo v2.5',
             },
             (v) => _updateTts(_tts.copyWith(elevenLabsModelId: v)),
+          ),
+        ],
+        if (isKokoro) ...[
+          _buildDropdown<String>(
+            'Voice',
+            _tts.kokoroVoiceStyle,
+            { for (final v in KokoroTtsService.voiceStyles) v: _formatKokoroVoiceName(v) },
+            (v) => _updateTts(_tts.copyWith(kokoroVoiceStyle: v)),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildTtsProviderChips() {
+    final providers = <TtsProvider, String>{
+      TtsProvider.elevenlabs: 'ElevenLabs',
+    };
+    if (OnDeviceConfig.isSupported) {
+      providers[TtsProvider.kokoro] = 'Kokoro (On-Device)';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Provider',
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: providers.entries.map((e) => ChoiceChip(
+                    label: Text(e.value, style: const TextStyle(fontSize: 12)),
+                    selected: _tts.provider == e.key,
+                    onSelected: (_) => _updateTts(_tts.copyWith(provider: e.key)),
+                    selectedColor: AppColors.accent.withValues(alpha: 0.2),
+                    backgroundColor: AppColors.card,
+                    side: BorderSide(
+                      color: _tts.provider == e.key
+                          ? AppColors.accent
+                          : AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5,
+                    ),
+                  )).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatKokoroVoiceName(String style) {
+    // "af_heart" → "Heart (Female US)" ; "am_adam" → "Adam (Male US)"
+    final parts = style.split('_');
+    if (parts.length < 2) return style;
+    final prefix = parts[0];
+    final name = parts.sublist(1).map((s) =>
+      s[0].toUpperCase() + s.substring(1)
+    ).join(' ');
+    final gender = prefix.startsWith('a')
+        ? (prefix.contains('m') ? 'Male' : 'Female')
+        : (prefix.contains('m') ? 'Male' : 'Female');
+    final accent = prefix.startsWith('a') ? 'US' : 'UK';
+    return '$name ($gender $accent)';
+  }
+
+  // ───── Speech-to-Text (STT) ─────
+
+  void _updateStt(SttConfig s) {
+    setState(() => _stt = s);
+    AgentConfigService.saveSttConfig(s);
+    _dirty = true;
+  }
+
+  Widget _buildSttCard() {
+    final isWhisperKit = _stt.provider == SttProvider.whisperKit;
+
+    return _AgentCard(
+      icon: Icons.hearing_rounded,
+      title: 'Speech Recognition',
+      subtitle: isWhisperKit ? 'WhisperKit (On-Device)' : 'OpenAI Realtime',
+      enabled: true,
+      configured: true,
+      onToggle: (_) {},
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 100,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text('Provider',
+                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                ),
+              ),
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('OpenAI Realtime', style: TextStyle(fontSize: 12)),
+                      selected: _stt.provider == SttProvider.openaiRealtime,
+                      onSelected: (_) => _updateStt(_stt.copyWith(provider: SttProvider.openaiRealtime)),
+                      selectedColor: AppColors.accent.withValues(alpha: 0.2),
+                      backgroundColor: AppColors.card,
+                      side: BorderSide(
+                        color: _stt.provider == SttProvider.openaiRealtime
+                            ? AppColors.accent
+                            : AppColors.border.withValues(alpha: 0.5),
+                        width: 0.5,
+                      ),
+                    ),
+                    if (OnDeviceConfig.isSupported)
+                      ChoiceChip(
+                        label: const Text('WhisperKit (On-Device)', style: TextStyle(fontSize: 12)),
+                        selected: _stt.provider == SttProvider.whisperKit,
+                        onSelected: (_) => _updateStt(_stt.copyWith(provider: SttProvider.whisperKit)),
+                        selectedColor: AppColors.accent.withValues(alpha: 0.2),
+                        backgroundColor: AppColors.card,
+                        side: BorderSide(
+                          color: _stt.provider == SttProvider.whisperKit
+                              ? AppColors.accent
+                              : AppColors.border.withValues(alpha: 0.5),
+                          width: 0.5,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (isWhisperKit) ...[
+          _divider(),
+          _buildDropdown<String>(
+            'Model Size',
+            _stt.whisperKitModelSize,
+            const {
+              'tiny': 'Tiny (~75 MB, fastest)',
+              'base': 'Base (~140 MB, balanced)',
+              'small': 'Small (~460 MB, best accuracy)',
+            },
+            (v) => _updateStt(_stt.copyWith(whisperKitModelSize: v)),
           ),
         ],
       ],

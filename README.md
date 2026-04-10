@@ -43,6 +43,8 @@ flowchart TB
   OAI["OpenAI Realtime API"]
   Claude["Claude API\n(Anthropic)"]
   EL["ElevenLabs\nWebSocket TTS"]
+  Kokoro["Kokoro TTS\n(on-device, MLX)"]
+  WK["WhisperKit STT\n(on-device, CoreML)"]
   DB[(SQLite)]
 
   Caller <-->|"SIP / WebRTC\naudio + signalling"| SIP
@@ -57,18 +59,26 @@ flowchart TB
   App -.->|"text chunks"| EL
   EL -.->|"PCM16 audio"| App
 
+  App -.->|"text chunks"| Kokoro
+  Kokoro -.->|"PCM16 audio"| App
+
+  App -.->|"PCM16 audio"| WK
+  WK -.->|"transcripts"| App
+
   App --- DB
 
   style OAI fill:#10a37f,color:#fff
   style Claude fill:#d97706,color:#fff
   style EL fill:#6366f1,color:#fff
+  style Kokoro fill:#e11d48,color:#fff
+  style WK fill:#e11d48,color:#fff
 ```
 
-<sub>Solid lines = standard pipeline (always active). Dashed lines = split pipeline (optional, when a separate text agent and/or TTS provider is configured).</sub>
+<sub>Solid lines = standard pipeline (always active). Dashed lines = optional providers. Cloud services (green/amber/purple) can be swapped for on-device alternatives (red) in Settings.</sub>
 
 ### Pipelines
 
-Phonegentic supports two agent pipeline modes, configured in **Settings > Agents**:
+Phonegentic supports two agent pipeline modes, configured in **Settings > Agents**. Within each pipeline, the STT and TTS providers are independently selectable.
 
 **Standard pipeline** — OpenAI Realtime handles transcription, reasoning, and speech output in a single WebSocket connection. Lowest latency, simplest setup.
 
@@ -81,16 +91,33 @@ flowchart LR
   WS -->|function calls| Tools["Agent Tools\n(search, dial, DTMF, …)"]
 ```
 
-**Split pipeline** — OpenAI Realtime still captures audio and produces transcripts, but reasoning is handled by a separate LLM (Claude) and speech output by ElevenLabs TTS. This lets you mix best-in-class models for each stage.
+**Split pipeline** — OpenAI Realtime (or WhisperKit) produces transcripts, Claude handles reasoning, and ElevenLabs (or Kokoro) handles speech. You can mix and match providers per stage.
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
 flowchart LR
-  Tap["Audio Tap\n(native)"] -->|"PCM16"| WS["OpenAI Realtime\n(transcription only)"]
-  WS -->|transcripts| TA["TextAgentService\n(Claude)"]
+  Tap["Audio Tap\n(native)"] -->|"PCM16"| STT
+
+  subgraph STT["STT (choose one)"]
+    direction TB
+    WS["OpenAI Realtime"]
+    WK["WhisperKit\n(on-device)"]
+  end
+
+  STT -->|transcripts| TA["TextAgentService\n(Claude)"]
   TA -->|"streaming text"| UI["Agent Panel"]
-  TA -->|"streaming text"| TTS["ElevenLabsTtsService"]
+  TA -->|"streaming text"| TTS
+
+  subgraph TTS["TTS (choose one)"]
+    direction TB
+    EL["ElevenLabs"]
+    KO["Kokoro\n(on-device)"]
+  end
+
   TTS -->|"PCM16 audio"| Play["playResponseAudio\n→ call speaker"]
+
+  style WK fill:#e11d48,color:#fff
+  style KO fill:#e11d48,color:#fff
 ```
 
 ### Internal services
@@ -118,6 +145,8 @@ flowchart TB
     WR["WhisperRealtimeService\n(OpenAI WebSocket + native audio tap)"]
     TAS["TextAgentService\n(Claude HTTP streaming)"]
     EL["ElevenLabsTtsService\n(WebSocket TTS)"]
+    KO["KokoroTtsService\n(on-device MLX TTS)"]
+    WK["WhisperKitSttService\n(on-device CoreML STT)"]
     DB[(SQLite\ncall history · contacts\njob functions · voiceprints\ntear sheets)]
   end
 
@@ -129,6 +158,8 @@ flowchart TB
   AS --> WR
   AS --> TAS
   AS --> EL
+  AS -.-> KO
+  AS -.-> WK
   AS --> JFS
   AS --> CHS
   AS --> ConS
@@ -138,7 +169,12 @@ flowchart TB
   CHS --> DB
   ConS --> DB
   TSS --> DB
+
+  style KO fill:#e11d48,color:#fff
+  style WK fill:#e11d48,color:#fff
 ```
+
+<sub>Dashed lines to on-device services indicate they are optional and require the `ENABLE_ON_DEVICE_MODELS` feature flag.</sub>
 
 ### How the audio pipeline works
 
@@ -298,22 +334,179 @@ sequenceDiagram
 
 ## Getting started
 
-### Prerequisites
+### Prerequisites (all platforms)
 
-- [Flutter SDK](https://docs.flutter.dev/get-started/install) (stable channel)
+- [Flutter SDK](https://docs.flutter.dev/get-started/install) (dev channel)
 - A **SIP account** with WebSocket (WSS) transport ([see below](#sip-credentials))
 - An **OpenAI API key** with Realtime API access ([see below](#ai-voice-agent-setup))
 
-### Run the app
+### Build configurations
+
+Phonegentic has two build modes. Choose based on whether you want on-device ML:
+
+| | `make build` | `make build-lite` |
+|---|---|---|
+| **Cloud STT** (OpenAI Realtime) | Yes | Yes |
+| **Cloud TTS** (ElevenLabs) | Yes | Yes |
+| **On-device STT** (WhisperKit) | Yes | No |
+| **On-device TTS** (Kokoro) | Yes | No |
+| **Feature flag** | `ENABLE_ON_DEVICE_MODELS=true` | (none) |
+| **App size** | ~680 MB | ~200 MB |
+| **Extra setup** | Models + Xcode config | None |
+
+### Quick start (cloud-only, no on-device models)
+
+The fastest path. No model downloads or Xcode configuration needed.
 
 ```bash
-git clone https://github.com/user/dart-sip-ua.git
-cd dart-sip-ua/phonegentic
+git clone https://github.com/reduxdj/phonegentic
+cd phonegentic
 flutter pub get
-flutter run            # or: flutter run -d macos | chrome | windows | linux
+make run-lite          # or: flutter run -d macos
 ```
 
-On first launch the app will attempt to auto-register using the credentials in [`phonegentic/lib/src/test_credentials.dart`](phonegentic/lib/src/test_credentials.dart). To use your own account, either edit that file or configure credentials at runtime through **Settings** (the gear icon in the top bar).
+### Quick start (with on-device models)
+
+Adds Kokoro TTS and WhisperKit STT as locally-running alternatives to ElevenLabs and OpenAI Realtime.
+
+```bash
+git https://github.com/reduxdj/phonegentic
+cd phonegentic
+
+# 1. Verify your environment
+make preflight
+
+# 2. Download ML model files (~480 MB)
+pip3 install huggingface_hub   # one-time
+make download-models
+
+# 3. Configure Xcode (one-time, see "macOS Xcode Setup" below)
+
+# 4. Build and run
+make run
+```
+
+On first launch the app auto-registers using the credentials in [`phonegentic/lib/src/test_credentials.dart`](phonegentic/lib/src/test_credentials.dart). To use your own account, either edit that file or configure credentials at runtime through **Settings** (the gear icon in the top bar).
+
+---
+
+## Platform setup
+
+### macOS (cloud-only)
+
+No special setup beyond Flutter and Xcode command line tools.
+
+```bash
+flutter run -d macos
+```
+
+### macOS (with on-device models)
+
+On-device providers require **macOS 15.0+** on Apple Silicon and a one-time Xcode configuration.
+
+#### Prerequisites
+
+| Requirement | Install |
+|---|---|
+| macOS 15.0+ | System update |
+| Xcode + CLI tools | App Store |
+| Metal Toolchain | `xcodebuild -downloadComponent MetalToolchain` |
+| Python 3 | `brew install python3` (or system python) |
+| huggingface_hub | `pip3 install huggingface_hub` |
+
+Run `make preflight` to verify all of the above in one shot.
+
+#### Step 1: Download models
+
+```bash
+make download-models
+# Downloads ~480 MB to phonegentic/models/ (git-ignored)
+```
+
+The script auto-detects your platform and fetches the correct formats:
+
+| Model | Source | Size |
+|---|---|---|
+| Kokoro weights (MLX bf16) | `mlx-community/Kokoro-82M-bf16` | ~327 MB |
+| Kokoro voices (54 voices) | `mlx-community/Kokoro-82M-bf16` | ~27 MB |
+| WhisperKit base (CoreML) | `argmaxinc/whisperkit-coreml` | ~140 MB |
+
+#### Step 2: Xcode package dependencies (one-time)
+
+The SPM packages are already declared in the project, but if this is a fresh clone you need Xcode to resolve them:
+
+1. Open `phonegentic/macos/Runner.xcworkspace` in Xcode
+2. Select the **Runner** project (blue icon) in the navigator
+3. Go to the **Package Dependencies** tab
+4. Verify these three packages are listed (they should be auto-resolved):
+   - `https://github.com/nickleback2k/FluidAudio.git`
+   - `https://github.com/mlalma/kokoro-ios.git` (Up to Next Major from `1.0.0`)
+   - `https://github.com/argmaxinc/WhisperKit.git` (branch: `main`)
+5. If any are missing, click **+** and add them. When prompted for target, select **Runner**.
+
+#### Step 3: Bundle model files in the app (one-time)
+
+1. In Xcode, select the **Runner** target (not project)
+2. Go to the **Build Phases** tab
+3. Expand **Copy Bundle Resources**
+4. Click **+** then **Add Other...** (bottom-left dropdown)
+5. Navigate to `phonegentic/models/` and select the entire `models` folder
+6. **Important**: Select **"Create folder references"** (blue folder, NOT yellow group)
+7. Click **Add**
+
+This copies the model files (~480 MB) into the `.app` bundle at build time. The `models/` directory is git-ignored, so each developer runs `make download-models` after cloning.
+
+#### Step 4: Verify and build
+
+```bash
+make model-status   # Should show both as READY
+make build          # Full build with on-device models
+```
+
+### Linux
+
+Linux builds work for the cloud-only configuration today. On-device model support is planned.
+
+```bash
+flutter run -d linux                # cloud-only
+make run-lite                       # same, via Makefile
+```
+
+#### Linux on-device models (future)
+
+The Dart service layer (`SttProvider`, `TtsProvider`) is platform-agnostic. Only the native implementations differ per platform:
+
+| Capability | macOS (active) | Linux (planned) |
+|---|---|---|
+| **On-device STT** | WhisperKit (CoreML) | whisper.cpp (C/C++) |
+| **On-device TTS** | Kokoro via MLX (Apple Silicon) | Kokoro via TTS.cpp (ONNX/GGML) |
+
+The download script already handles Linux model formats:
+
+```bash
+# On Linux, fetches GGML and ONNX formats instead of CoreML/MLX
+make download-models
+```
+
+| Model | macOS format | Linux format |
+|---|---|---|
+| Kokoro TTS | MLX bf16 (.safetensors) | ONNX (.onnx) |
+| Whisper STT | CoreML (.mlmodelc) | GGML (.bin) |
+
+Native channel implementations for Linux are tracked here:
+- **STT**: [whisper.cpp](https://github.com/ggerganov/whisper.cpp) -- C++ native channel alongside existing `audio_tap_channel.cc`
+- **TTS**: [TTS.cpp](https://github.com/mmwillet/TTS.cpp) -- ggml-based, Kokoro format support in development
+
+### Cursor / VS Code
+
+The `launch.json` includes pre-configured debug targets:
+
+| Configuration | On-device models | Use when |
+|---|---|---|
+| **phonegentic** | Yes | Default development with full features |
+| **phonegentic (lite, no on-device models)** | No | Quick iteration, smaller build |
+| **phonegentic (profile mode)** | Yes | Performance profiling |
+| **phonegentic (release mode)** | Yes | Release testing |
 
 ## SIP credentials
 
@@ -574,10 +767,56 @@ On narrow windows (below 700px), the Tear Sheet, Contacts, Call History, and Aud
 
 ## Supported platforms
 
+| Platform | Cloud-only | On-device models | Status |
+|---|---|---|---|
+| macOS (Apple Silicon) | Yes | Yes (Kokoro TTS + WhisperKit STT) | **Active** |
+| macOS (Intel) | Yes | No (MLX requires Apple Silicon) | **Active** |
+| Linux | Yes | Planned (whisper.cpp + TTS.cpp) | **Active** (cloud) |
+| iOS (18+) | Yes | Yes | Planned |
+| Web / Windows / Android | No | No | Not planned |
 
-- [x] macOS
-- [x] Linux
+## On-device model providers
 
+Users can mix and match cloud and on-device providers in **Settings > Agents**:
+
+| Capability | Cloud (default) | On-Device (optional) |
+|---|---|---|
+| **STT** | OpenAI Realtime | WhisperKit (CoreML, Whisper base/small/tiny) |
+| **TTS** | ElevenLabs WebSocket | Kokoro (MLX, ~3.3x real-time on M-series) |
+
+On-device providers run entirely on-device with zero API calls. They require **macOS 15.0+** on Apple Silicon and are controlled by a compile-time feature flag:
+
+```
+--dart-define=ENABLE_ON_DEVICE_MODELS=true     ← make build (ON)
+                                                ← make build-lite (OFF)
+```
+
+When the flag is OFF, on-device options are hidden from the UI and native MethodChannels return "not available." The flag is also set in `launch.json` for Cursor/VS Code debugging.
+
+### Licensing
+
+All on-device components are permissively licensed:
+
+| Component | License |
+|---|---|
+| kokoro-ios (Swift wrapper) | MIT |
+| Kokoro model weights (hexgrad) | Apache 2.0 |
+| WhisperKit (argmaxinc) | MIT |
+| Whisper model weights (OpenAI) | MIT |
+| MLX Swift (Apple) | MIT |
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `cannot execute tool 'metal'` | `xcodebuild -downloadComponent MetalToolchain` |
+| `KokoroSwift not available in this build` | Ensure SPM packages are linked to Runner target (General > Frameworks) |
+| `minimum deployment target of macOS 15.0` | Already set in project; run `flutter clean && make build` |
+| `huggingface_hub not found` | `pip3 install huggingface_hub` |
+| Models show as `NOT DOWNLOADED` | Run `make download-models` |
+| Models show as `CORRUPT` | Delete `models/` dir and re-run `make download-models` |
+| `make preflight` fails | Fix each listed issue before building |
+| App launches but Kokoro says "not initialized" | Models not in Xcode bundle; see [Step 3](#step-3-bundle-model-files-in-the-app-one-time) |
 
 
 ## FAQ
@@ -598,8 +837,6 @@ This package uses WS or TCP for SIP signalling. Once the session is connected, W
 - **PCMU** (0, 8 kHz, 1ch)
 - **PCMA** (8, 8 kHz, 1ch)
 - **telephone-event** (110, 48 kHz / 8 kHz)
-</details>
-
 
 ## License
 Phonegentic AI is released under the [MIT license](LICENSE).
