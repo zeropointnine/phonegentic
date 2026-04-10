@@ -528,22 +528,28 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       );
     }
 
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          children: [
-            const SizedBox(height: 8),
-            _buildAppearanceCard(),
-            const SizedBox(height: 16),
-            _buildIntegrationsCard(),
-            const SizedBox(height: 16),
-            _buildDemoModeCard(),
-            const SizedBox(height: 40),
-          ],
+    return ListView(
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  _buildAppearanceCard(),
+                  const SizedBox(height: 16),
+                  _buildIntegrationsCard(),
+                  const SizedBox(height: 16),
+                  _buildDemoModeCard(),
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 

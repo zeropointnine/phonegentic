@@ -640,9 +640,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
             child: Icon(
               Icons.chat_bubble_outline_rounded,
               size: 16,
-              color: messaging.isOpen
-                  ? AppColors.accent
-                  : AppColors.textSecondary,
+              color:
+                  messaging.isOpen ? AppColors.accent : AppColors.textSecondary,
             ),
           ),
           if (unread > 0)
@@ -655,8 +654,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   color: AppColors.red,
                   shape: BoxShape.circle,
                 ),
-                constraints:
-                    const BoxConstraints(minWidth: 16, minHeight: 16),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
                 child: Text(
                   unread > 99 ? '99+' : '$unread',
                   style: TextStyle(
@@ -1284,10 +1282,9 @@ class _CallButtonState extends State<_CallButton>
                     end: Alignment.bottomRight,
                     colors: [
                       AppColors.hotSignal,
-                      AppColors.phosphor,
                       AppColors.burntAmber,
                     ],
-                    stops: const [0.0, 0.45, 1.0],
+                    stops: const [0.0, 1.0],
                   ),
                   boxShadow: [
                     BoxShadow(

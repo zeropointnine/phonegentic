@@ -150,28 +150,34 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       );
     }
 
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          children: [
-            _buildVoiceAgentCard(),
-            const SizedBox(height: 16),
-            _buildCallRecordingCard(),
-            const SizedBox(height: 16),
-            _buildMutePolicyCard(),
-            const SizedBox(height: 16),
-            _buildTextAgentCard(),
-            if (_text.enabled &&
-                _text.provider != TextAgentProvider.openai) ...[
-              const SizedBox(height: 16),
-              _buildTtsCard(),
-            ],
-            const SizedBox(height: 40),
-          ],
+    return ListView(
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                children: [
+                  _buildVoiceAgentCard(),
+                  const SizedBox(height: 16),
+                  _buildCallRecordingCard(),
+                  const SizedBox(height: 16),
+                  _buildMutePolicyCard(),
+                  const SizedBox(height: 16),
+                  _buildTextAgentCard(),
+                  if (_text.enabled &&
+                      _text.provider != TextAgentProvider.openai) ...[
+                    const SizedBox(height: 16),
+                    _buildTtsCard(),
+                  ],
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 

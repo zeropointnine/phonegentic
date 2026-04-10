@@ -206,10 +206,18 @@ class _MyRegisterWidget extends State<RegisterWidget>
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios_new,
-              size: 18, color: AppColors.textSecondary),
-          onPressed: () => Navigator.of(context).pop(),
+        toolbarHeight: 52,
+        leadingWidth: 100,
+        leading: Align(
+          alignment: Alignment.bottomLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 80),
+            child: IconButton(
+              icon: Icon(Icons.arrow_back_ios_new,
+                  size: 18, color: AppColors.textSecondary),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
         ),
         title: Text(
           'Settings',
@@ -313,45 +321,51 @@ class _MyRegisterWidget extends State<RegisterWidget>
   }
 
   Widget _buildPhoneTab() {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          children: [
-            const SizedBox(height: 8),
-            _buildStatusCard(),
-            const SizedBox(height: 20),
-            _buildSection('Connection', [
-              if (_selectedTransport == TransportType.WS)
-                _buildField('WebSocket URL', _wsUriController,
-                    placeholder: 'wss://sip.example.com:7443'),
-              if (_selectedTransport == TransportType.TCP)
-                _buildField('Port', _portController, placeholder: '5060'),
-              _buildField('SIP URI', _sipUriController,
-                  placeholder: 'user@sip.example.com'),
-            ]),
-            const SizedBox(height: 16),
-            _buildSection('Authentication', [
-              _buildField('Auth User', _authorizationUserController,
-                  placeholder: 'Username'),
-              _buildField('Password', _passwordController,
-                  placeholder: 'Password', obscure: true),
-              _buildField('Display Name', _displayNameController,
-                  placeholder: '+1234567890'),
-            ]),
-            const SizedBox(height: 16),
-            _buildConferenceCard(),
-            if (!kIsWeb) ...[
-              const SizedBox(height: 16),
-              _buildTransportSelector(),
-            ],
-            const SizedBox(height: 24),
-            _buildRegisterButton(),
-            const SizedBox(height: 40),
-          ],
+    return ListView(
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  _buildStatusCard(),
+                  const SizedBox(height: 20),
+                  _buildSection('Connection', [
+                    if (_selectedTransport == TransportType.WS)
+                      _buildField('WebSocket URL', _wsUriController,
+                          placeholder: 'wss://sip.example.com:7443'),
+                    if (_selectedTransport == TransportType.TCP)
+                      _buildField('Port', _portController, placeholder: '5060'),
+                    _buildField('SIP URI', _sipUriController,
+                        placeholder: 'user@sip.example.com'),
+                  ]),
+                  const SizedBox(height: 16),
+                  _buildSection('Authentication', [
+                    _buildField('Auth User', _authorizationUserController,
+                        placeholder: 'Username'),
+                    _buildField('Password', _passwordController,
+                        placeholder: 'Password', obscure: true),
+                    _buildField('Display Name', _displayNameController,
+                        placeholder: '+1234567890'),
+                  ]),
+                  const SizedBox(height: 16),
+                  _buildConferenceCard(),
+                  if (!kIsWeb) ...[
+                    const SizedBox(height: 16),
+                    _buildTransportSelector(),
+                  ],
+                  const SizedBox(height: 24),
+                  _buildRegisterButton(),
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          ),
         ),
-      ),
+      ],
     );
   }
 
