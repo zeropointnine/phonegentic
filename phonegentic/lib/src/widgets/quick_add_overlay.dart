@@ -5,7 +5,7 @@ import '../contact_service.dart';
 import '../theme_provider.dart';
 
 class QuickAddOverlay extends StatefulWidget {
-  const QuickAddOverlay({Key? key}) : super(key: key);
+  const QuickAddOverlay({super.key});
 
   @override
   State<QuickAddOverlay> createState() => _QuickAddOverlayState();
@@ -55,10 +55,10 @@ class _QuickAddOverlayState extends State<QuickAddOverlay> {
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: Colors.black.withValues(alpha: 0.2),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
@@ -104,7 +104,7 @@ class _QuickAddOverlayState extends State<QuickAddOverlay> {
                   color: AppColors.card,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                      color: AppColors.border.withOpacity(0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
                 child: TextField(
                   controller: _controller,
@@ -131,7 +131,7 @@ class _QuickAddOverlayState extends State<QuickAddOverlay> {
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     decoration: BoxDecoration(
                       color: _saving
-                          ? AppColors.accent.withOpacity(0.5)
+                          ? AppColors.accent.withValues(alpha: 0.5)
                           : AppColors.accent,
                       borderRadius: BorderRadius.circular(10),
                     ),

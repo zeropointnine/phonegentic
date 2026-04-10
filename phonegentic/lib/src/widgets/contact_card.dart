@@ -11,12 +11,12 @@ class ContactCard extends StatefulWidget {
   final VoidCallback? onCall;
 
   const ContactCard({
-    Key? key,
+    super.key,
     required this.contact,
     required this.onFieldChanged,
     this.onDelete,
     this.onCall,
-  }) : super(key: key);
+  });
 
   @override
   State<ContactCard> createState() => _ContactCardState();
@@ -88,7 +88,7 @@ class _ContactCardState extends State<ContactCard> {
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
-                color: AppColors.border.withOpacity(0.3), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
           ),
         ),
         child: Row(
@@ -128,7 +128,7 @@ class _ContactCardState extends State<ContactCard> {
                       style: TextStyle(
                         fontSize: 13,
                         color: value.isEmpty
-                            ? AppColors.textTertiary.withOpacity(0.5)
+                            ? AppColors.textTertiary.withValues(alpha: 0.5)
                             : AppColors.textPrimary,
                       ),
                     ),
@@ -153,9 +153,9 @@ class _ContactCardState extends State<ContactCard> {
             height: 72,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(18),
-              color: AppColors.accent.withOpacity(0.12),
+              color: AppColors.accent.withValues(alpha: 0.12),
               border: Border.all(
-                  color: AppColors.accent.withOpacity(0.25), width: 0.5),
+                  color: AppColors.accent.withValues(alpha: 0.25), width: 0.5),
             ),
             child: Center(
               child: Text(
@@ -233,7 +233,7 @@ class _ContactCardState extends State<ContactCard> {
               color: AppColors.card,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                  color: AppColors.border.withOpacity(0.4), width: 0.5),
+                  color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
             ),
             child: Column(
               children: [
@@ -282,9 +282,9 @@ class _CardAction extends StatelessWidget {
             height: 44,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
-              color: color.withOpacity(0.12),
+              color: color.withValues(alpha: 0.12),
               border:
-                  Border.all(color: color.withOpacity(0.25), width: 0.5),
+                  Border.all(color: color.withValues(alpha: 0.25), width: 0.5),
             ),
             child: Icon(icon, size: 20, color: color),
           ),

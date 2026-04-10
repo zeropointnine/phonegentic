@@ -268,7 +268,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
           height: 36,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(10),
-            color: AppColors.accent.withOpacity(0.12),
+            color: AppColors.accent.withValues(alpha: 0.12),
           ),
           child: Icon(Icons.record_voice_over_rounded,
               size: 18, color: AppColors.accent),
@@ -306,7 +306,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
         color: AppColors.card,
         borderRadius: BorderRadius.circular(10),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
       child: TextField(
         controller: _nameCtrl,
@@ -329,7 +329,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
         color: AppColors.card,
         borderRadius: BorderRadius.circular(10),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
       child: Column(
         children: [
@@ -402,7 +402,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
         color: AppColors.card,
         borderRadius: BorderRadius.circular(10),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
       child: Row(
         children: [
@@ -410,7 +410,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
             width: 32,
             height: 32,
             child: Material(
-              color: AppColors.accent.withOpacity(0.12),
+              color: AppColors.accent.withValues(alpha: 0.12),
               shape: const CircleBorder(),
               child: InkWell(
                 customBorder: const CircleBorder(),
@@ -434,7 +434,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
                   borderRadius: BorderRadius.circular(2),
                   child: LinearProgressIndicator(
                     value: progress.clamp(0.0, 1.0),
-                    backgroundColor: AppColors.border.withOpacity(0.3),
+                    backgroundColor: AppColors.border.withValues(alpha: 0.3),
                     valueColor:
                         AlwaysStoppedAnimation<Color>(AppColors.accent),
                     minHeight: 3,
@@ -458,9 +458,9 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: AppColors.red.withOpacity(0.08),
+        color: AppColors.red.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.red.withOpacity(0.2), width: 0.5),
+        border: Border.all(color: AppColors.red.withValues(alpha: 0.2), width: 0.5),
       ),
       child: Text(
         _error!,
@@ -489,7 +489,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: AppColors.crtBlack,
-              disabledBackgroundColor: AppColors.accent.withOpacity(0.3),
+              disabledBackgroundColor: AppColors.accent.withValues(alpha: 0.3),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
               padding: const EdgeInsets.symmetric(horizontal: 20),

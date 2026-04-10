@@ -50,7 +50,7 @@ class ConferenceConfigSeed {
 typedef PageContentBuilder = Widget Function([SIPUAHelper? helper, Object? arguments]);
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
 
   static final SIPUAHelper _helper = SIPUAHelper();
 
@@ -113,7 +113,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
           create: (_) => MessagingService()..start(),
           update: (_, contacts, messaging) {
-            messaging!..contactService = contacts;
+            messaging!.contactService = contacts;
             return messaging;
           },
         ),
@@ -132,7 +132,7 @@ class MyApp extends StatelessWidget {
             CalendarSyncService>(
           create: (_) => CalendarSyncService()..start(),
           update: (context, jf, agent, sync) {
-            sync!..jobFunctionService = jf;
+            sync!.jobFunctionService = jf;
             agent.calendarSyncService = sync;
             agent.messagingService = context.read<MessagingService>();
             return sync;

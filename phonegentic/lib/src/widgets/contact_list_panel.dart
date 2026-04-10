@@ -10,7 +10,7 @@ import '../theme_provider.dart';
 import 'contact_card.dart';
 
 class ContactListPanel extends StatefulWidget {
-  const ContactListPanel({Key? key}) : super(key: key);
+  const ContactListPanel({super.key});
 
   @override
   State<ContactListPanel> createState() => _ContactListPanelState();
@@ -95,9 +95,9 @@ class _ContactListPanelState extends State<ContactListPanel> {
                 height: 30,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: AppColors.accent.withOpacity(0.12),
+                  color: AppColors.accent.withValues(alpha: 0.12),
                   border: Border.all(
-                      color: AppColors.accent.withOpacity(0.3), width: 0.5),
+                      color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
                 ),
                 child: Icon(Icons.add_rounded,
                     size: 16, color: AppColors.accent),
@@ -114,7 +114,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
                 borderRadius: BorderRadius.circular(8),
                 color: AppColors.card,
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Icon(Icons.close_rounded,
                   size: 16, color: AppColors.textSecondary),
@@ -140,7 +140,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
           color: AppColors.card,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-              color: AppColors.border.withOpacity(0.5), width: 0.5),
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
         child: TextField(
           controller: _searchController,
@@ -170,7 +170,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.contacts_outlined,
-                size: 36, color: AppColors.textTertiary.withOpacity(0.4)),
+                size: 36, color: AppColors.textTertiary.withValues(alpha: 0.4)),
             const SizedBox(height: 12),
             Text(
               'No contacts yet',
@@ -182,7 +182,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
               'Tap + to add your first contact',
               style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.textTertiary.withOpacity(0.7)),
+                  color: AppColors.textTertiary.withValues(alpha: 0.7)),
             ),
           ],
         ),
@@ -293,7 +293,7 @@ class _ContactTile extends StatelessWidget {
           color: AppColors.card,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-              color: AppColors.border.withOpacity(0.3), width: 0.5),
+              color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
         ),
         child: Row(
           children: [
@@ -302,9 +302,9 @@ class _ContactTile extends StatelessWidget {
               height: 34,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(9),
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 border: Border.all(
-                    color: AppColors.accent.withOpacity(0.25), width: 0.5),
+                    color: AppColors.accent.withValues(alpha: 0.25), width: 0.5),
               ),
               child: Center(
                 child: Text(
@@ -345,7 +345,7 @@ class _ContactTile extends StatelessWidget {
               ),
             ),
             Icon(Icons.chevron_right_rounded,
-                size: 18, color: AppColors.textTertiary.withOpacity(0.5)),
+                size: 18, color: AppColors.textTertiary.withValues(alpha: 0.5)),
           ],
         ),
       ),
@@ -366,9 +366,9 @@ class _ImportButton extends StatelessWidget {
           height: 30,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
-            color: AppColors.accent.withOpacity(0.12),
+            color: AppColors.accent.withValues(alpha: 0.12),
             border: Border.all(
-                color: AppColors.accent.withOpacity(0.3), width: 0.5),
+                color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
           ),
           child: service.isImporting
               ? Padding(

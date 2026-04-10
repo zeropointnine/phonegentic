@@ -6,7 +6,7 @@ import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
 class TearSheetEditor extends StatefulWidget {
-  const TearSheetEditor({Key? key}) : super(key: key);
+  const TearSheetEditor({super.key});
 
   @override
   State<TearSheetEditor> createState() => _TearSheetEditorState();
@@ -73,10 +73,10 @@ class _TearSheetEditorState extends State<TearSheetEditor> {
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.2),
+                color: Colors.black.withValues(alpha: 0.2),
                 blurRadius: 24,
                 offset: const Offset(0, 8),
               ),
@@ -125,7 +125,7 @@ class _TearSheetEditorState extends State<TearSheetEditor> {
                   color: AppColors.card,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                      color: AppColors.border.withOpacity(0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
                 child: TextField(
                   controller: _promptController,
@@ -139,7 +139,7 @@ class _TearSheetEditorState extends State<TearSheetEditor> {
                   decoration: InputDecoration(
                     hintText: 'e.g. "Contacts not called in 2 weeks"',
                     hintStyle: TextStyle(
-                        color: AppColors.textTertiary.withOpacity(0.6),
+                        color: AppColors.textTertiary.withValues(alpha: 0.6),
                         fontSize: 13),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(
@@ -207,9 +207,9 @@ class _SuggestionChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
-          color: AppColors.accent.withOpacity(0.08),
+          color: AppColors.accent.withValues(alpha: 0.08),
           border: Border.all(
-              color: AppColors.accent.withOpacity(0.2), width: 0.5),
+              color: AppColors.accent.withValues(alpha: 0.2), width: 0.5),
         ),
         child: Text(
           label,

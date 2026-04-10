@@ -5,7 +5,7 @@ import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
 class TearSheetStrip extends StatelessWidget {
-  const TearSheetStrip({Key? key}) : super(key: key);
+  const TearSheetStrip({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -65,7 +65,7 @@ class _TearSheetStripContent extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppColors.accent.withOpacity(0.12),
+                      color: AppColors.accent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -110,7 +110,7 @@ class _TearSheetStripContent extends StatelessWidget {
                         borderRadius: BorderRadius.circular(7),
                         color: AppColors.card,
                         border: Border.all(
-                          color: AppColors.border.withOpacity(0.5),
+                          color: AppColors.border.withValues(alpha: 0.5),
                           width: 0.5,
                         ),
                       ),
@@ -171,8 +171,8 @@ class _PillButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          color: color.withOpacity(0.12),
-          border: Border.all(color: color.withOpacity(0.3), width: 0.5),
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -252,12 +252,12 @@ class _QueueChip extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         color: isCurrent
-            ? AppColors.accent.withOpacity(0.15)
-            : (isDone ? AppColors.bg.withOpacity(0.5) : AppColors.card),
+            ? AppColors.accent.withValues(alpha: 0.15)
+            : (isDone ? AppColors.bg.withValues(alpha: 0.5) : AppColors.card),
         border: Border.all(
           color: isCurrent
-              ? AppColors.accent.withOpacity(0.4)
-              : AppColors.border.withOpacity(0.3),
+              ? AppColors.accent.withValues(alpha: 0.4)
+              : AppColors.border.withValues(alpha: 0.3),
           width: 0.5,
         ),
       ),
@@ -274,7 +274,7 @@ class _QueueChip extends StatelessWidget {
               fontSize: 11,
               fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
               color: isDone
-                  ? AppColors.textTertiary.withOpacity(0.5)
+                  ? AppColors.textTertiary.withValues(alpha: 0.5)
                   : AppColors.textPrimary,
               decoration: isDone ? TextDecoration.lineThrough : null,
             ),

@@ -1,8 +1,8 @@
-/// Provider-agnostic interface for SIP conference bridging.
-///
-/// Each SIP provider (Telnyx, Twilio, Vonage, etc.) implements this
-/// interface with its own REST API calls.  The [ConferenceService]
-/// delegates all server-side operations through this abstraction.
+// Provider-agnostic interface for SIP conference bridging.
+//
+// Each SIP provider (Telnyx, Twilio, Vonage, etc.) implements this
+// interface with its own REST API calls.  The [ConferenceService]
+// delegates all server-side operations through this abstraction.
 
 // ---------------------------------------------------------------------------
 // Data models

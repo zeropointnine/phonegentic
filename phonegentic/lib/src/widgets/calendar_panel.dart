@@ -13,7 +13,7 @@ import '../theme_provider.dart';
 enum _CalendarView { week, month }
 
 class CalendarPanel extends StatefulWidget {
-  const CalendarPanel({Key? key}) : super(key: key);
+  const CalendarPanel({super.key});
 
   @override
   State<CalendarPanel> createState() => _CalendarPanelState();
@@ -207,7 +207,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
           border: Border.all(
             color: selected
                 ? AppColors.accent
-                : AppColors.border.withOpacity(0.5),
+                : AppColors.border.withValues(alpha: 0.5),
             width: 0.5,
           ),
         ),
@@ -333,7 +333,7 @@ class _WeekViewState extends State<_WeekView> {
             decoration: BoxDecoration(
               border: Border(
                 right: BorderSide(
-                    color: AppColors.border.withOpacity(0.6), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
               ),
             ),
             child: Column(
@@ -441,7 +441,7 @@ class _DayColumnState extends State<_DayColumn> {
           ? BoxDecoration(
               border: Border(
                 right: BorderSide(
-                    color: AppColors.border.withOpacity(0.35), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.35), width: 0.5),
               ),
             )
           : null,
@@ -460,7 +460,7 @@ class _DayColumnState extends State<_DayColumn> {
                 color: AppColors.surface,
                 border: Border(
                   bottom: BorderSide(
-                      color: AppColors.border.withOpacity(0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
               ),
               child: Stack(
@@ -521,7 +521,7 @@ class _DayColumnState extends State<_DayColumn> {
                             color: AppColors.accent,
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.accent.withOpacity(0.4),
+                                color: AppColors.accent.withValues(alpha: 0.4),
                                 blurRadius: 4,
                               ),
                             ],
@@ -558,7 +558,7 @@ class _DayColumnState extends State<_DayColumn> {
                   right: 0,
                   child: Container(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5),
+                    color: AppColors.border.withValues(alpha: 0.5),
                   ),
                 ),
               if (widget.isToday) _buildNowLine(),
@@ -589,7 +589,7 @@ class _DayColumnState extends State<_DayColumn> {
           color: AppColors.accent,
           boxShadow: [
             BoxShadow(
-              color: AppColors.accent.withOpacity(0.4),
+              color: AppColors.accent.withValues(alpha: 0.4),
               blurRadius: 3,
             ),
           ],
@@ -620,10 +620,10 @@ class _DayColumnState extends State<_DayColumn> {
           margin: const EdgeInsets.symmetric(horizontal: 1),
           padding: const EdgeInsets.all(3),
           decoration: BoxDecoration(
-            color: AppColors.accent.withOpacity(0.18),
+            color: AppColors.accent.withValues(alpha: 0.18),
             borderRadius: BorderRadius.circular(4),
             border: Border.all(
-                color: AppColors.accent.withOpacity(0.35), width: 0.5),
+                color: AppColors.accent.withValues(alpha: 0.35), width: 0.5),
           ),
           child: Text(
             event.title,
@@ -677,7 +677,7 @@ class _MonthView extends StatelessWidget {
               color: AppColors.surface,
               border: Border(
                 bottom: BorderSide(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
             ),
             child: Row(
@@ -776,7 +776,7 @@ class _MonthDayCellState extends State<_MonthDayCell> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             color: widget.isToday
-                ? AppColors.accent.withOpacity(0.12)
+                ? AppColors.accent.withValues(alpha: 0.12)
                 : Colors.transparent,
           ),
           child: Stack(
@@ -835,7 +835,7 @@ class _MonthDayCellState extends State<_MonthDayCell> {
                         color: AppColors.accent,
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.accent.withOpacity(0.4),
+                            color: AppColors.accent.withValues(alpha: 0.4),
                             blurRadius: 4,
                           ),
                         ],
@@ -888,7 +888,7 @@ Widget _buildField({
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: TextStyle(
-              fontSize: 13, color: AppColors.textTertiary.withOpacity(0.6)),
+              fontSize: 13, color: AppColors.textTertiary.withValues(alpha: 0.6)),
           filled: true,
           fillColor: AppColors.card,
           contentPadding:
@@ -896,12 +896,12 @@ Widget _buildField({
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: BorderSide(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: BorderSide(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
@@ -959,7 +959,7 @@ Widget _buildTimeSelector({
             color: AppColors.card,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           child: Row(
             children: [
@@ -1028,7 +1028,7 @@ Widget _buildDateSelector({
             color: AppColors.card,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           child: Row(
             children: [
@@ -1226,7 +1226,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
           border: Border.all(color: AppColors.border, width: 0.5),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withValues(alpha: 0.5),
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),
@@ -1241,7 +1241,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
-                      color: AppColors.border.withOpacity(0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
               ),
               child: Row(
@@ -1340,7 +1340,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                         hintText: 'Search contacts...',
                         hintStyle: TextStyle(
                             fontSize: 13,
-                            color: AppColors.textTertiary.withOpacity(0.6)),
+                            color: AppColors.textTertiary.withValues(alpha: 0.6)),
                         prefixIcon: Icon(Icons.search_rounded,
                             size: 16, color: AppColors.textTertiary),
                         prefixIconConstraints:
@@ -1352,13 +1352,13 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                           borderSide: BorderSide(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                           borderSide: BorderSide(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         focusedBorder: OutlineInputBorder(
@@ -1377,7 +1377,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                           color: AppColors.card,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         child: ListView.builder(
@@ -1494,7 +1494,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                         color: AppColors.card,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                            color: AppColors.border.withOpacity(0.5),
+                            color: AppColors.border.withValues(alpha: 0.5),
                             width: 0.5),
                       ),
                       child: DropdownButton<int?>(
@@ -1543,13 +1543,13 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                               horizontal: 12, vertical: 10),
                           decoration: BoxDecoration(
                             color: _syncToCalendly
-                                ? AppColors.accent.withOpacity(0.1)
+                                ? AppColors.accent.withValues(alpha: 0.1)
                                 : AppColors.card,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
                               color: _syncToCalendly
-                                  ? AppColors.accent.withOpacity(0.4)
-                                  : AppColors.border.withOpacity(0.5),
+                                  ? AppColors.accent.withValues(alpha: 0.4)
+                                  : AppColors.border.withValues(alpha: 0.5),
                               width: 0.5,
                             ),
                           ),
@@ -1591,7 +1591,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
               decoration: BoxDecoration(
                 border: Border(
                   top: BorderSide(
-                      color: AppColors.border.withOpacity(0.5),
+                      color: AppColors.border.withValues(alpha: 0.5),
                       width: 0.5),
                 ),
               ),
@@ -1605,7 +1605,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         child: Center(
@@ -1632,7 +1632,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: [
                             BoxShadow(
-                              color: AppColors.accent.withOpacity(0.3),
+                              color: AppColors.accent.withValues(alpha: 0.3),
                               blurRadius: 8,
                               offset: const Offset(0, 2),
                             ),
@@ -1838,7 +1838,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
           border: Border.all(color: AppColors.border, width: 0.5),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.5),
+              color: Colors.black.withValues(alpha: 0.5),
               blurRadius: 24,
               offset: const Offset(0, 8),
             ),
@@ -1853,7 +1853,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
-                      color: AppColors.border.withOpacity(0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
               ),
               child: Row(
@@ -1952,7 +1952,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                         hintText: 'Search contacts...',
                         hintStyle: TextStyle(
                             fontSize: 13,
-                            color: AppColors.textTertiary.withOpacity(0.6)),
+                            color: AppColors.textTertiary.withValues(alpha: 0.6)),
                         prefixIcon: Icon(Icons.search_rounded,
                             size: 16, color: AppColors.textTertiary),
                         prefixIconConstraints:
@@ -1964,13 +1964,13 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                           borderSide: BorderSide(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                           borderSide: BorderSide(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         focusedBorder: OutlineInputBorder(
@@ -1989,7 +1989,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                           color: AppColors.card,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color: AppColors.border.withOpacity(0.5),
+                              color: AppColors.border.withValues(alpha: 0.5),
                               width: 0.5),
                         ),
                         child: ListView.builder(
@@ -2106,7 +2106,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                         color: AppColors.card,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                            color: AppColors.border.withOpacity(0.5),
+                            color: AppColors.border.withValues(alpha: 0.5),
                             width: 0.5),
                       ),
                       child: DropdownButton<int?>(
@@ -2155,7 +2155,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
               decoration: BoxDecoration(
                 border: Border(
                   top: BorderSide(
-                      color: AppColors.border.withOpacity(0.5),
+                      color: AppColors.border.withValues(alpha: 0.5),
                       width: 0.5),
                 ),
               ),
@@ -2170,12 +2170,12 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         color: _confirmDelete
-                            ? AppColors.red.withOpacity(0.15)
+                            ? AppColors.red.withValues(alpha: 0.15)
                             : Colors.transparent,
                         border: Border.all(
                           color: _confirmDelete
                               ? AppColors.red
-                              : AppColors.red.withOpacity(0.4),
+                              : AppColors.red.withValues(alpha: 0.4),
                           width: 0.5,
                         ),
                       ),
@@ -2186,7 +2186,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                               size: 14,
                               color: _confirmDelete
                                   ? AppColors.red
-                                  : AppColors.red.withOpacity(0.7)),
+                                  : AppColors.red.withValues(alpha: 0.7)),
                           const SizedBox(width: 4),
                           Text(
                             _confirmDelete ? 'Confirm' : 'Delete',
@@ -2195,7 +2195,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                               fontWeight: FontWeight.w600,
                               color: _confirmDelete
                                   ? AppColors.red
-                                  : AppColors.red.withOpacity(0.7),
+                                  : AppColors.red.withValues(alpha: 0.7),
                             ),
                           ),
                         ],
@@ -2212,7 +2212,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                            color: AppColors.border.withOpacity(0.5),
+                            color: AppColors.border.withValues(alpha: 0.5),
                             width: 0.5),
                       ),
                       child: Text(
@@ -2237,7 +2237,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                         borderRadius: BorderRadius.circular(8),
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.accent.withOpacity(0.3),
+                            color: AppColors.accent.withValues(alpha: 0.3),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),

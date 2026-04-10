@@ -8,7 +8,7 @@ import '../theme_provider.dart';
 import 'conversation_view.dart';
 
 class MessagingPanel extends StatefulWidget {
-  const MessagingPanel({Key? key}) : super(key: key);
+  const MessagingPanel({super.key});
 
   @override
   State<MessagingPanel> createState() => _MessagingPanelState();
@@ -52,7 +52,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
       child: Column(
         children: [
           _buildHeader(messaging),
-          Divider(height: 0.5, color: AppColors.border.withOpacity(0.4)),
+          Divider(height: 0.5, color: AppColors.border.withValues(alpha: 0.4)),
           _buildSearchBar(),
           if (_showNewMessage) _buildNewMessageRow(messaging),
           Expanded(
@@ -64,7 +64,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
                     separatorBuilder: (_, __) => Divider(
                       height: 0.5,
                       indent: 68,
-                      color: AppColors.border.withOpacity(0.3),
+                      color: AppColors.border.withValues(alpha: 0.3),
                     ),
                     itemBuilder: (context, i) =>
                         _buildConversationTile(messaging, filtered[i]),
@@ -104,7 +104,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 color: _showNewMessage
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(6),
               ),
@@ -136,7 +136,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
         decoration: BoxDecoration(
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border.withOpacity(0.4), width: 0.5),
+          border: Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
         child: TextField(
           controller: _searchCtrl,
@@ -169,7 +169,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border:
-                    Border.all(color: AppColors.border.withOpacity(0.4), width: 0.5),
+                    Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
               ),
               child: TextField(
                 controller: _newNumberCtrl,
@@ -224,7 +224,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.chat_bubble_outline_rounded,
-                size: 48, color: AppColors.textTertiary.withOpacity(0.4)),
+                size: 48, color: AppColors.textTertiary.withValues(alpha: 0.4)),
             const SizedBox(height: 12),
             Text(
               messaging.isConfigured
@@ -242,7 +242,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
                 child: Text(
                   'Set up SMS (Telnyx or Twilio) in Settings',
                   style: TextStyle(
-                      fontSize: 12, color: AppColors.textTertiary.withOpacity(0.6)),
+                      fontSize: 12, color: AppColors.textTertiary.withValues(alpha: 0.6)),
                 ),
               ),
           ],
@@ -275,12 +275,12 @@ class _MessagingPanelState extends State<MessagingPanel> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: hasUnread
-                    ? AppColors.accent.withOpacity(0.15)
+                    ? AppColors.accent.withValues(alpha: 0.15)
                     : AppColors.card,
                 border: Border.all(
                   color: hasUnread
-                      ? AppColors.accent.withOpacity(0.3)
-                      : AppColors.border.withOpacity(0.4),
+                      ? AppColors.accent.withValues(alpha: 0.3)
+                      : AppColors.border.withValues(alpha: 0.4),
                   width: 0.5,
                 ),
               ),

@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -211,7 +209,7 @@ class _AddCallModalState extends State<AddCallModal> {
     _applyPhase(derived);
 
     return Container(
-      color: AppColors.bg.withOpacity(0.97),
+      color: AppColors.bg.withValues(alpha: 0.97),
       child: SafeArea(
         child: Column(
           children: [
@@ -276,7 +274,7 @@ class _AddCallModalState extends State<AddCallModal> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: AppColors.burntAmber.withOpacity(0.15),
+                color: AppColors.burntAmber.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(
@@ -327,7 +325,7 @@ class _AddCallModalState extends State<AddCallModal> {
                       letterSpacing: 2,
                       shadows: [
                         Shadow(
-                          color: AppColors.phosphor.withOpacity(0.35),
+                          color: AppColors.phosphor.withValues(alpha: 0.35),
                           blurRadius: 12,
                         ),
                       ],
@@ -361,7 +359,7 @@ class _AddCallModalState extends State<AddCallModal> {
                   height: 36,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: AppColors.accent.withOpacity(0.12),
+                    color: AppColors.accent.withValues(alpha: 0.12),
                   ),
                   child: Center(
                     child: Text(
@@ -398,7 +396,7 @@ class _AddCallModalState extends State<AddCallModal> {
                   ),
                 ),
                 Icon(Icons.phone_rounded,
-                    size: 18, color: AppColors.green.withOpacity(0.7)),
+                    size: 18, color: AppColors.green.withValues(alpha: 0.7)),
               ],
             ),
           ),
@@ -467,8 +465,8 @@ class _AddCallModalState extends State<AddCallModal> {
           height: 80,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.green.withOpacity(0.12),
-            border: Border.all(color: AppColors.green.withOpacity(0.3), width: 1.5),
+            color: AppColors.green.withValues(alpha: 0.12),
+            border: Border.all(color: AppColors.green.withValues(alpha: 0.3), width: 1.5),
           ),
           child: Center(
             child: Text(
@@ -511,7 +509,7 @@ class _AddCallModalState extends State<AddCallModal> {
           width: 56,
           height: 56,
           child: Material(
-            color: AppColors.red.withOpacity(0.15),
+            color: AppColors.red.withValues(alpha: 0.15),
             shape: const CircleBorder(),
             child: InkWell(
               customBorder: const CircleBorder(),
@@ -533,7 +531,7 @@ class _AddCallModalState extends State<AddCallModal> {
           height: 64,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.red.withOpacity(0.12),
+            color: AppColors.red.withValues(alpha: 0.12),
           ),
           child: Icon(Icons.call_end_rounded, color: AppColors.red, size: 28),
         ),
@@ -576,7 +574,7 @@ class _AddCallModalState extends State<AddCallModal> {
             height: 20,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: AppColors.phosphor.withOpacity(0.6),
+              color: AppColors.phosphor.withValues(alpha: 0.6),
             ),
           ),
         ],
@@ -682,13 +680,13 @@ class _ConferenceCallButtonState extends State<_ConferenceCallButton>
                   boxShadow: [
                     BoxShadow(
                       color: AppColors.phosphor
-                          .withOpacity(_hovered ? 0.6 : _glowAnim.value),
+                          .withValues(alpha: _hovered ? 0.6 : _glowAnim.value),
                       blurRadius: _hovered ? 28 : 20,
                       spreadRadius: _hovered ? 4 : 2,
                     ),
                     if (_hovered)
                       BoxShadow(
-                        color: AppColors.hotSignal.withOpacity(0.3),
+                        color: AppColors.hotSignal.withValues(alpha: 0.3),
                         blurRadius: 40,
                         spreadRadius: 6,
                       ),

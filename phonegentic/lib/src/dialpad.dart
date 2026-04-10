@@ -39,7 +39,7 @@ import 'widgets/tear_sheet_strip.dart';
 
 class DialPadWidget extends StatefulWidget {
   final SIPUAHelper? _helper;
-  DialPadWidget(this._helper, {Key? key}) : super(key: key);
+  DialPadWidget(this._helper, {super.key});
 
   @override
   State<DialPadWidget> createState() => _MyDialPadWidget();
@@ -471,13 +471,13 @@ class _MyDialPadWidget extends State<DialPadWidget>
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: conf.hasConference
-              ? AppColors.green.withOpacity(0.12)
-              : AppColors.burntAmber.withOpacity(0.12),
+              ? AppColors.green.withValues(alpha: 0.12)
+              : AppColors.burntAmber.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: conf.hasConference
-                ? AppColors.green.withOpacity(0.3)
-                : AppColors.burntAmber.withOpacity(0.3),
+                ? AppColors.green.withValues(alpha: 0.3)
+                : AppColors.burntAmber.withValues(alpha: 0.3),
             width: 0.5,
           ),
         ),
@@ -542,7 +542,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   letterSpacing: -0.5,
                   shadows: [
                     Shadow(
-                      color: AppColors.phosphor.withOpacity(0.4),
+                      color: AppColors.phosphor.withValues(alpha: 0.4),
                       blurRadius: 6,
                     ),
                   ],
@@ -556,10 +556,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: _statusColor.withOpacity(0.12),
+                    color: _statusColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                        color: _statusColor.withOpacity(0.25), width: 0.5),
+                        color: _statusColor.withValues(alpha: 0.25), width: 0.5),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -625,13 +625,13 @@ class _MyDialPadWidget extends State<DialPadWidget>
             height: 32,
             decoration: BoxDecoration(
               color: messaging.isOpen
-                  ? AppColors.accent.withOpacity(0.12)
+                  ? AppColors.accent.withValues(alpha: 0.12)
                   : AppColors.card,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color: messaging.isOpen
-                    ? AppColors.accent.withOpacity(0.4)
-                    : AppColors.border.withOpacity(0.5),
+                    ? AppColors.accent.withValues(alpha: 0.4)
+                    : AppColors.border.withValues(alpha: 0.5),
                 width: 0.5,
               ),
             ),
@@ -684,13 +684,13 @@ class _MyDialPadWidget extends State<DialPadWidget>
         height: 32,
         decoration: BoxDecoration(
           color: tearSheet.isActive
-              ? AppColors.accent.withOpacity(0.12)
+              ? AppColors.accent.withValues(alpha: 0.12)
               : AppColors.card,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: tearSheet.isActive
-                ? AppColors.accent.withOpacity(0.4)
-                : AppColors.border.withOpacity(0.5),
+                ? AppColors.accent.withValues(alpha: 0.4)
+                : AppColors.border.withValues(alpha: 0.5),
             width: 0.5,
           ),
         ),
@@ -716,7 +716,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
           border:
-              Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+              Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
         child: Icon(Icons.contacts_rounded,
             size: 16, color: AppColors.textSecondary),
@@ -736,7 +736,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
           border:
-              Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+              Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
         child: Icon(Icons.history_rounded,
             size: 16, color: AppColors.textSecondary),
@@ -754,7 +754,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
           color: AppColors.card,
           borderRadius: BorderRadius.circular(8),
           border:
-              Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+              Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         ),
         child: Icon(Icons.headphones_rounded,
             size: 16, color: AppColors.textSecondary),
@@ -954,7 +954,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                       letterSpacing: 2,
                       shadows: [
                         Shadow(
-                          color: AppColors.phosphor.withOpacity(0.35),
+                          color: AppColors.phosphor.withValues(alpha: 0.35),
                           blurRadius: 12,
                         ),
                       ],
@@ -1288,13 +1288,13 @@ class _CallButtonState extends State<_CallButton>
                   boxShadow: [
                     BoxShadow(
                       color: AppColors.phosphor
-                          .withOpacity(_hovered ? 0.6 : _glowAnim.value),
+                          .withValues(alpha: _hovered ? 0.6 : _glowAnim.value),
                       blurRadius: _hovered ? 28 : 20,
                       spreadRadius: _hovered ? 4 : 2,
                     ),
                     if (_hovered)
                       BoxShadow(
-                        color: AppColors.hotSignal.withOpacity(0.3),
+                        color: AppColors.hotSignal.withValues(alpha: 0.3),
                         blurRadius: 40,
                         spreadRadius: 6,
                       ),

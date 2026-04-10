@@ -17,10 +17,10 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("sip_logger.dart")) {
+    if (!out.contains('sip_logger.dart')) {
       List<String> lines = message.toString().split('\r\n');
-      for (final line in lines) {
-        logger.log(Level.trace, " $line", options: options);
+      for (final String line in lines) {
+        logger.log(Level.trace, ' $line', options: options);
       }
     }
   }
@@ -28,15 +28,18 @@ class Log {
   static String removeLastCrLf(String input) {
     try {
       final RegExp regex = RegExp(r'(?:(?!\r\n)[\s\S])*(?:\r\n)(?![\s\S]*\r\n)');
-      return input.replaceAllMapped(regex, (match) => match.group(0)!.replaceAll("\r\n", ""));
+      return input.replaceAllMapped(
+        regex,
+        (Match match) => match.group(0)!.replaceAll('\r\n', ''),
+      );
     } catch (e) {
       return input;
     }
   }
 
   static void printWrapped(String text) {
-    final pattern = RegExp('.{1,800}'); // 800 is the size of each chunk
-    pattern.allMatches(text).forEach((match) => print(match.group(0)));
+    final RegExp pattern = RegExp('.{1,800}'); // 800 is the size of each chunk
+    pattern.allMatches(text).forEach((RegExpMatch match) => print(match.group(0)));
   }
 
   void d(
@@ -47,7 +50,7 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("sip_logger.dart")) {
+    if (!out.contains('sip_logger.dart')) {
       logger.log(Level.trace, out, options: options);
     }
   }
@@ -60,10 +63,10 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("sip_logger.dart")) {
+    if (!out.contains('sip_logger.dart')) {
       logger.log(
         Level.error,
-        out.replaceAll("\r\n", "\n"),
+        out.replaceAll('\r\n', '\n'),
       );
     }
   }
@@ -80,12 +83,12 @@ class Log {
     try {
       AnsiColor color = level.value == 5000 ? AnsiColor.fg(31) : AnsiColor.fg(34);
       bool useColor = EnvConfig.USE_ANSI_COLOR_IN_LOGS;
-      printWrapped("${useColor ? color : ''} SIP_LOG $now $message");
+      printWrapped('${useColor ? color : ''} SIP_LOG $now $message');
       if (EnvConfig.LOGGING_ENABLED) {
-        await logPrinter.write(" $now, $message");
+        await logPrinter.write(' $now, $message');
       }
     } catch (e) {
-      print("SIP_LOG error ${e.toString()}");
+      print('SIP_LOG error ${e.toString()}');
     }
   }
 }

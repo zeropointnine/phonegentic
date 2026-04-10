@@ -2,8 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:logger/logger.dart';
@@ -57,7 +55,7 @@ class WhisperRealtimeService {
   WebSocketChannel? _ws;
   StreamSubscription<dynamic>? _audioSub;
   bool _connected = false;
-  bool _muted = false;
+  bool muted = false;
   bool _vadActive = false;
   bool _isTtsPlaying = false;
 
@@ -87,9 +85,6 @@ class WhisperRealtimeService {
   Stream<bool> get speakingState => _speakingController.stream;
   bool get isConnected => _connected;
   bool get vadActive => _vadActive;
-
-  bool get muted => _muted;
-  set muted(bool value) => _muted = value;
 
   bool get isTtsPlaying => _isTtsPlaying;
   set isTtsPlaying(bool value) {
@@ -232,7 +227,7 @@ class WhisperRealtimeService {
     };
 
     if (instructions.isNotEmpty) {
-      session['instructions'] = instructions +
+      session['instructions'] = '$instructions'
           '\n\nYou have access to a local call history database and a contacts database. '
           'When the user asks about past calls, call duration, '
           'or wants to search their call history, use the search_calls tool. '
@@ -731,11 +726,11 @@ class WhisperRealtimeService {
   int _audioSendCount = 0;
   void sendAudio(Uint8List pcm16Mono24kHz) {
     _emitAudioLevel(pcm16Mono24kHz);
-    if (_muted || !_connected || _ws == null) return;
+    if (muted || !_connected || _ws == null) return;
     _audioSendCount++;
     if (_audioSendCount == 1 || _audioSendCount == 50 || _audioSendCount % 500 == 0) {
       debugPrint('[Whisper] sendAudio #$_audioSendCount: ${pcm16Mono24kHz.length} bytes '
-          '(muted=$_muted connected=$_connected ws=${_ws != null})');
+          '(muted=$muted connected=$_connected ws=${_ws != null})');
     }
     final b64 = base64Encode(pcm16Mono24kHz);
     _send({
@@ -979,7 +974,7 @@ class WhisperRealtimeService {
     await stopAudioTap();
     await stopResponseAudio();
     _connected = false;
-    _muted = false;
+    muted = false;
     await _ws?.sink.close();
     _ws = null;
   }

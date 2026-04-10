@@ -31,7 +31,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 10,
+        version: 11,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -198,6 +198,12 @@ class CallHistoryDb {
     if (oldVersion < 10) {
       await db.execute(
         'ALTER TABLE job_functions ADD COLUMN agent_name TEXT',
+      );
+    }
+
+    if (oldVersion < 11) {
+      await db.execute(
+        'ALTER TABLE sms_messages ADD COLUMN error_reason TEXT',
       );
     }
   }
@@ -907,6 +913,7 @@ class CallHistoryDb {
         status TEXT NOT NULL DEFAULT 'queued',
         is_read INTEGER NOT NULL DEFAULT 0,
         is_deleted INTEGER NOT NULL DEFAULT 0,
+        error_reason TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT
       )

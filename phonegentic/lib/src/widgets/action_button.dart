@@ -12,7 +12,7 @@ class ActionButton extends StatefulWidget {
   final Function()? onLongPress;
 
   const ActionButton({
-    Key? key,
+    super.key,
     this.title,
     this.subTitle = '',
     this.icon,
@@ -21,7 +21,7 @@ class ActionButton extends StatefulWidget {
     this.checked = false,
     this.number = false,
     this.fillColor,
-  }) : super(key: key);
+  });
 
   @override
   State<ActionButton> createState() => _ActionButtonState();
@@ -79,19 +79,19 @@ class _ActionButtonState extends State<ActionButton> {
               ),
               border: Border.all(
                 color: _hovered
-                    ? AppColors.burntAmber.withOpacity(0.45)
-                    : AppColors.burntAmber.withOpacity(0.22),
+                    ? AppColors.burntAmber.withValues(alpha: 0.45)
+                    : AppColors.burntAmber.withValues(alpha: 0.22),
                 width: 0.8,
               ),
               boxShadow: [
                 if (_hovered && !_pressed)
                   BoxShadow(
-                    color: AppColors.phosphor.withOpacity(0.15),
+                    color: AppColors.phosphor.withValues(alpha: 0.15),
                     blurRadius: 16,
                     spreadRadius: 1,
                   ),
                 BoxShadow(
-                  color: AppColors.phosphor.withOpacity(_pressed ? 0.02 : 0.05),
+                  color: AppColors.phosphor.withValues(alpha: _pressed ? 0.02 : 0.05),
                   blurRadius: 10,
                 ),
               ],
@@ -133,7 +133,7 @@ class _ActionButtonState extends State<ActionButton> {
     final bgColor = hasFill
         ? widget.fillColor!
         : (widget.checked
-            ? AppColors.accent.withOpacity(0.15)
+            ? AppColors.accent.withValues(alpha: 0.15)
             : AppColors.card);
     final iconColor = hasFill
         ? AppColors.onAccent
@@ -163,28 +163,28 @@ class _ActionButtonState extends State<ActionButton> {
                 height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _pressed ? bgColor.withOpacity(0.6) : bgColor,
+                  color: _pressed ? bgColor.withValues(alpha: 0.6) : bgColor,
                   border: hasFill
                       ? null
                       : Border.all(
                           color: widget.checked
-                              ? AppColors.accent.withOpacity(0.3)
+                              ? AppColors.accent.withValues(alpha: 0.3)
                               : (_hovered
                                   ? AppColors.border
-                                  : AppColors.border.withOpacity(0.5)),
+                                  : AppColors.border.withValues(alpha: 0.5)),
                           width: 0.5,
                         ),
                   boxShadow: widget.checked
                       ? [
                           BoxShadow(
-                            color: AppColors.accent.withOpacity(0.2),
+                            color: AppColors.accent.withValues(alpha: 0.2),
                             blurRadius: 8,
                           ),
                         ]
                       : (_hovered
                           ? [
                               BoxShadow(
-                                color: AppColors.phosphor.withOpacity(0.1),
+                                color: AppColors.phosphor.withValues(alpha: 0.1),
                                 blurRadius: 12,
                               ),
                             ]

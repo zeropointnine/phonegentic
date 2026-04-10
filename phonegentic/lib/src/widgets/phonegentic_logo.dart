@@ -11,8 +11,7 @@ class PhonegenticLogo extends StatelessWidget {
   final double size;
   final List<Color>? colors;
 
-  const PhonegenticLogo({Key? key, this.size = 32, this.colors})
-      : super(key: key);
+  const PhonegenticLogo({super.key, this.size = 32, this.colors});
 
   @override
   Widget build(BuildContext context) {

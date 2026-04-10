@@ -24,17 +24,17 @@ class Log {
       bool useColor = EnvConfig.USE_ANSI_COLOR_IN_LOGS;
 
       if (EnvConfig.PRINT_DEBUG_LOGS) {
-        printWrapped("${useColor ? color : ''} SIP_UA_LOG $now $message");
-        logPrinter.write(" $now, $message");
+        printWrapped('${useColor ? color : ''} SIP_UA_LOG $now $message');
+        logPrinter.write(' $now, $message');
       }
     } catch (e) {
-      print("SIP_LOG error ${e.toString()}");
+      print('SIP_LOG error ${e.toString()}');
     }
   }
 
   static void printWrapped(String text) {
-    final pattern = RegExp('.{1,800}'); // 800 is the size of each chunk
-    pattern.allMatches(text).forEach((match) => print(match.group(0)));
+    final RegExp pattern = RegExp('.{1,800}'); // 800 is the size of each chunk
+    pattern.allMatches(text).forEach((RegExpMatch match) => print(match.group(0)));
   }
 
   void d(
@@ -45,7 +45,7 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("sip_logger.dart")) {
+    if (!out.contains('sip_logger.dart')) {
       logger.log(Level.trace, out, options: options);
     }
   }
@@ -58,10 +58,10 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("sip_logger.dart")) {
+    if (!out.contains('sip_logger.dart')) {
       logger.log(
         Level.error,
-        out.replaceAll("\r\n", "\n"),
+        out.replaceAll('\r\n', '\n'),
       );
     }
   }

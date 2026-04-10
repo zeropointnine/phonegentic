@@ -101,11 +101,60 @@ class TelnyxMessagingProvider implements MessagingProvider {
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw TelnyxApiException(resp.statusCode, resp.body);
     }
-    final data = jsonDecode(resp.body)['data'] as Map<String, dynamic>;
+    final json = jsonDecode(resp.body);
+    final data = json['data'] as Map<String, dynamic>;
     final dir = (data['direction'] as String?) == 'inbound'
         ? SmsDirection.inbound
         : SmsDirection.outbound;
-    return _parseMessageResponse(data, dir);
+    final msg = _parseMessageResponse(data, dir);
+
+    if (msg.status == SmsStatus.failed) {
+      debugPrint('[TelnyxMessaging] Message $providerId FAILED. Full response: ${resp.body}');
+      final errorReason = _extractErrorReason(data);
+      if (errorReason != null) {
+        return msg.copyWith(errorReason: errorReason);
+      }
+    }
+
+    return msg;
+  }
+
+  /// Pull the most descriptive error from the Telnyx message response.
+  /// Checks `errors[]`, `to[].carrier` rejection info, and status detail fields.
+  String? _extractErrorReason(Map<String, dynamic> data) {
+    // Check top-level `errors` array (Telnyx v2 error format)
+    final errors = data['errors'] as List<dynamic>?;
+    if (errors != null && errors.isNotEmpty) {
+      final first = errors.first as Map<String, dynamic>;
+      final code = first['code']?.toString() ?? '';
+      final title = (first['title'] as String?) ?? '';
+      final detail = (first['detail'] as String?) ?? '';
+      final parts = [if (code.isNotEmpty) '[$code]', title, detail]
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (parts.isNotEmpty) return parts.join(' ');
+    }
+
+    // Check per-recipient status in `to[]`
+    final toList = data['to'] as List<dynamic>?;
+    if (toList != null && toList.isNotEmpty) {
+      final first = toList.first;
+      if (first is Map<String, dynamic>) {
+        final status = first['status'] as String?;
+        // Telnyx sometimes includes a carrier error in the recipient object
+        for (final key in ['carrier', 'error_message', 'error_code', 'reason']) {
+          final val = first[key];
+          if (val != null && val.toString().isNotEmpty) {
+            return '$status — $key: $val';
+          }
+        }
+        if (status != null && status != 'delivery_failed') {
+          return status;
+        }
+      }
+    }
+
+    return null;
   }
 
   // ---------------------------------------------------------------------------

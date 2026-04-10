@@ -16,7 +16,7 @@ import 'widgets/user_settings_tab.dart';
 
 class RegisterWidget extends StatefulWidget {
   final SIPUAHelper? _helper;
-  RegisterWidget(this._helper, {Key? key}) : super(key: key);
+  RegisterWidget(this._helper, {super.key});
 
   @override
   State<RegisterWidget> createState() => _MyRegisterWidget();
@@ -248,7 +248,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
             color: AppColors.card,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           child: TabBar(
             controller: _tabController,
@@ -257,7 +257,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
               borderRadius: BorderRadius.circular(7),
               boxShadow: [
                 BoxShadow(
-                  color: AppColors.accent.withOpacity(0.3),
+                  color: AppColors.accent.withValues(alpha: 0.3),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
@@ -392,7 +392,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         color: isActive
-                            ? AppColors.accent.withOpacity(0.12)
+                            ? AppColors.accent.withValues(alpha: 0.12)
                             : AppColors.card,
                       ),
                       child: Icon(Icons.groups_rounded,
@@ -455,7 +455,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
               ),
               if (isBasic) ...[
-                Divider(height: 1, color: AppColors.border.withOpacity(0.4)),
+                Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
                 _buildBasicConfToggle(
                   label: 'Platform supports sending Updates',
                   subtitle: 'Use SIP UPDATE for hold; otherwise re-INVITE',
@@ -472,7 +472,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
               ],
               if (isTelnyx) ...[
-                Divider(height: 1, color: AppColors.border.withOpacity(0.4)),
+                Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: TextField(
@@ -587,7 +587,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
           ),
           Switch.adaptive(
             value: value,
-            activeColor: AppColors.accent,
+            activeTrackColor: AppColors.accent,
             onChanged: onChanged,
           ),
         ],

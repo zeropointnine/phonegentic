@@ -1,6 +1,6 @@
-/// Persistent configuration for the conference integration.
-///
-/// Follows the same pattern as [VoiceAgentConfig], [TtsConfig], etc.
+// Persistent configuration for the conference integration.
+//
+// Follows the same pattern as [VoiceAgentConfig], [TtsConfig], etc.
 
 enum ConferenceProviderType { none, basic, telnyx }
 

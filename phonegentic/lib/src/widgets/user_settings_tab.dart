@@ -123,7 +123,7 @@ class _ChromeLaunchDialogState extends State<_ChromeLaunchDialog> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Row(
                 children: [
@@ -186,7 +186,7 @@ class _ChromeLaunchDialogState extends State<_ChromeLaunchDialog> {
 }
 
 class UserSettingsTab extends StatefulWidget {
-  const UserSettingsTab({Key? key}) : super(key: key);
+  const UserSettingsTab({super.key});
 
   @override
   State<UserSettingsTab> createState() => _UserSettingsTabState();
@@ -581,7 +581,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               ),
               Divider(
                   height: 0.5,
-                  color: AppColors.border.withOpacity(0.5)),
+                  color: AppColors.border.withValues(alpha: 0.5)),
               _buildThemeRow(
                 theme: AppTheme.miamiVice,
                 label: 'Miami Vice',
@@ -592,7 +592,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               ),
               Divider(
                   height: 0.5,
-                  color: AppColors.border.withOpacity(0.5)),
+                  color: AppColors.border.withValues(alpha: 0.5)),
               _buildThemeRow(
                 theme: AppTheme.light,
                 label: 'Pedestrian Neutral',
@@ -629,7 +629,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: selected
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(icon,
@@ -698,7 +698,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               if (_calendlyExpanded) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 _buildKeyField('API Key', _calendlyKeyCtrl, (val) {
                   _updateCalendly(_calendly.copyWith(apiKey: val));
                   setState(() => _connectionStatus = null);
@@ -708,12 +708,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 _buildSyncMacToggle(),
               ],
               Divider(
-                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+                  height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
               _buildSmsHeader(),
               if (_smsExpanded) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 _buildMessagingBackendRow(),
                 if (_messagingBackend == MessagingBackend.none) ...[
                   Padding(
@@ -765,12 +765,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 ],
               ],
               Divider(
-                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+                  height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
               _buildFlightAwareHeader(),
               if (_flightAwareExpanded) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 _buildFlightAwareEnableToggle(),
                 if (_flightAware.enabled) ...[
                   _divider(),
@@ -798,12 +798,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 ],
               ],
               Divider(
-                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+                  height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
               _buildGmailHeader(),
               if (_gmailExpanded) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 _buildGmailEnableToggle(),
                 if (_gmail.enabled) ...[
                   _divider(),
@@ -834,12 +834,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 ],
               ],
               Divider(
-                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+                  height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
               _buildGcalHeader(),
               if (_gcalExpanded) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 _buildGcalEnableToggle(),
                 if (_gcal.enabled) ...[
                   _divider(),
@@ -872,12 +872,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                 ],
               ],
               Divider(
-                  height: 0.5, color: AppColors.border.withOpacity(0.5)),
+                  height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
               _buildGoogleSearchHeader(),
               if (_googleSearchExpanded) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 _buildGoogleSearchEnableToggle(),
                 if (_googleSearch.enabled) ...[
                   _divider(),
@@ -922,7 +922,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: _calendly.isConfigured
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.calendar_month_rounded,
@@ -959,8 +959,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: _calendly.isConfigured
-                              ? AppColors.green.withOpacity(0.12)
-                              : AppColors.orange.withOpacity(0.12),
+                              ? AppColors.green.withValues(alpha: 0.12)
+                              : AppColors.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -1005,7 +1005,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: _testingConnection
@@ -1063,7 +1063,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               value: _calendly.syncToMacOS,
               onChanged: (v) =>
                   _updateCalendly(_calendly.copyWith(syncToMacOS: v)),
-              activeColor: AppColors.accent,
+              activeTrackColor: AppColors.accent,
             ),
           ),
         ],
@@ -1106,7 +1106,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         color: _demo.enabled
-                            ? AppColors.accent.withOpacity(0.12)
+                            ? AppColors.accent.withValues(alpha: 0.12)
                             : AppColors.card,
                       ),
                       child: Icon(Icons.visibility_off_rounded,
@@ -1144,7 +1144,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                         value: _demo.enabled,
                         onChanged: (v) =>
                             _updateDemo(_demo.copyWith(enabled: v)),
-                        activeColor: AppColors.accent,
+                        activeTrackColor: AppColors.accent,
                       ),
                     ),
                   ],
@@ -1153,7 +1153,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               if (_demo.enabled) ...[
                 Divider(
                     height: 0.5,
-                    color: AppColors.border.withOpacity(0.5)),
+                    color: AppColors.border.withValues(alpha: 0.5)),
                 Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -1223,7 +1223,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: _smsConfiguredForBackend
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.sms_rounded,
@@ -1264,10 +1264,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: _messagingBackend == MessagingBackend.none
-                              ? AppColors.textTertiary.withOpacity(0.12)
+                              ? AppColors.textTertiary.withValues(alpha: 0.12)
                               : _smsConfiguredForBackend
-                                  ? AppColors.green.withOpacity(0.12)
-                                  : AppColors.orange.withOpacity(0.12),
+                                  ? AppColors.green.withValues(alpha: 0.12)
+                                  : AppColors.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -1362,7 +1362,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: _testingTwilioMsg
@@ -1415,7 +1415,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: _testingTelnyxMsg
@@ -1472,7 +1472,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: _flightAware.isConfigured
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.flight_rounded,
@@ -1509,8 +1509,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: _flightAware.isConfigured
-                              ? AppColors.green.withOpacity(0.12)
-                              : AppColors.orange.withOpacity(0.12),
+                              ? AppColors.green.withValues(alpha: 0.12)
+                              : AppColors.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -1560,7 +1560,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               value: _flightAware.enabled,
               onChanged: (v) =>
                   _updateFlightAware(_flightAware.copyWith(enabled: v)),
-              activeColor: AppColors.accent,
+              activeTrackColor: AppColors.accent,
             ),
           ),
         ],
@@ -1642,7 +1642,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: isLoading
@@ -1717,7 +1717,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: svc.loading
@@ -1868,7 +1868,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: svc.loading
@@ -1979,7 +1979,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: _gmail.isConfigured
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.email_rounded,
@@ -2016,8 +2016,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: _gmail.isConfigured
-                              ? AppColors.green.withOpacity(0.12)
-                              : AppColors.orange.withOpacity(0.12),
+                              ? AppColors.green.withValues(alpha: 0.12)
+                              : AppColors.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -2064,7 +2064,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             child: Switch(
               value: _gmail.enabled,
               onChanged: (v) => _updateGmail(_gmail.copyWith(enabled: v)),
-              activeColor: AppColors.accent,
+              activeTrackColor: AppColors.accent,
             ),
           ),
         ],
@@ -2140,7 +2140,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   },
                   backgroundColor: AppColors.card,
                   side: BorderSide(
-                      color: AppColors.border.withOpacity(0.5)),
+                      color: AppColors.border.withValues(alpha: 0.5)),
                 ),
             ],
           ),
@@ -2327,7 +2327,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: _gcal.isConfigured
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.calendar_month_rounded,
@@ -2364,8 +2364,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: _gcal.isConfigured
-                              ? AppColors.green.withOpacity(0.12)
-                              : AppColors.orange.withOpacity(0.12),
+                              ? AppColors.green.withValues(alpha: 0.12)
+                              : AppColors.orange.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: Text(
@@ -2412,7 +2412,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             child: Switch(
               value: _gcal.enabled,
               onChanged: (v) => _updateGcal(_gcal.copyWith(enabled: v)),
-              activeColor: AppColors.accent,
+              activeTrackColor: AppColors.accent,
             ),
           ),
         ],
@@ -2489,7 +2489,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   },
                   backgroundColor: AppColors.card,
                   side: BorderSide(
-                      color: AppColors.border.withOpacity(0.5)),
+                      color: AppColors.border.withValues(alpha: 0.5)),
                 ),
             ],
           ),
@@ -2552,7 +2552,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               value: _gcal.syncEnabled,
               onChanged: (v) =>
                   _updateGcal(_gcal.copyWith(syncEnabled: v)),
-              activeColor: AppColors.accent,
+              activeTrackColor: AppColors.accent,
             ),
           ),
         ],
@@ -2683,7 +2683,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: _googleSearch.isConfigured
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(Icons.search_rounded,
@@ -2711,7 +2711,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                     decoration: BoxDecoration(
                       color: _googleSearch.isConfigured
-                          ? AppColors.green.withOpacity(0.12)
+                          ? AppColors.green.withValues(alpha: 0.12)
                           : AppColors.card,
                       borderRadius: BorderRadius.circular(4),
                     ),
@@ -2753,7 +2753,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
             value: _googleSearch.enabled,
             onChanged: (v) =>
                 _updateGoogleSearch(_googleSearch.copyWith(enabled: v)),
-            activeColor: AppColors.accent,
+            activeTrackColor: AppColors.accent,
           ),
         ],
       ),
@@ -2942,5 +2942,5 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   }
 
   Widget _divider() => Divider(
-      height: 0.5, indent: 16, color: AppColors.border.withOpacity(0.5));
+      height: 0.5, indent: 16, color: AppColors.border.withValues(alpha: 0.5));
 }

@@ -1,4 +1,6 @@
 #!/usr/bin/env dart
+
+// ignore: dangling_library_doc_comments
 /// Creates a stub test_credentials_local.dart if one doesn't exist.
 /// Run this before your first build:
 ///   dart tool/ensure_credentials.dart
@@ -41,5 +43,6 @@ void main() {
   file.parent.createSync(recursive: true);
   file.writeAsStringSync(_stub);
   print('✓ Created $_target with empty credentials.');
-  print('  Fill in your SIP username/password/hostname to enable auto-register.');
+  print(
+      '  Fill in your SIP username/password/hostname to enable auto-register.');
 }

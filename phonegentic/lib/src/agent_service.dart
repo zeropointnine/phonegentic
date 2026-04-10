@@ -2148,8 +2148,9 @@ class AgentService extends ChangeNotifier {
       final phone = c['phone_number'] as String? ?? '';
       buf.writeln('- $name${phone.isNotEmpty ? " ($phone)" : ""}');
     }
-    if (filtered.length > 50)
+    if (filtered.length > 50) {
       buf.writeln('... and ${filtered.length - 50} more.');
+    }
     return buf.toString();
   }
 
@@ -3244,7 +3245,7 @@ class AgentService extends ChangeNotifier {
       case 'onBeepDetected':
         if (!_ivrHeard || !_inBeepWindow || _voicemailPromptSent) {
           debugPrint(
-              '[AgentService] Native beep IGNORED (ivr=$_ivrHeard window=${_inBeepWindow} sent=$_voicemailPromptSent)');
+              '[AgentService] Native beep IGNORED (ivr=$_ivrHeard window=$_inBeepWindow sent=$_voicemailPromptSent)');
           break;
         }
         _beepDetected = true;

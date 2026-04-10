@@ -15,6 +15,7 @@ class SmsMessage {
   final List<String> mediaUrls;
   final bool isRead;
   final bool isDeleted;
+  final String? errorReason;
 
   const SmsMessage({
     this.localId,
@@ -29,6 +30,7 @@ class SmsMessage {
     this.mediaUrls = const [],
     this.isRead = false,
     this.isDeleted = false,
+    this.errorReason,
   });
 
   String get remotePhone => direction == SmsDirection.inbound ? from : to;
@@ -47,6 +49,7 @@ class SmsMessage {
     List<String>? mediaUrls,
     bool? isRead,
     bool? isDeleted,
+    String? errorReason,
   }) {
     return SmsMessage(
       localId: localId ?? this.localId,
@@ -61,6 +64,7 @@ class SmsMessage {
       mediaUrls: mediaUrls ?? this.mediaUrls,
       isRead: isRead ?? this.isRead,
       isDeleted: isDeleted ?? this.isDeleted,
+      errorReason: errorReason ?? this.errorReason,
     );
   }
 
@@ -76,6 +80,7 @@ class SmsMessage {
         'status': status.name,
         'is_read': isRead ? 1 : 0,
         'is_deleted': isDeleted ? 1 : 0,
+        'error_reason': errorReason,
         'created_at': createdAt.toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
       };
@@ -97,6 +102,7 @@ class SmsMessage {
       mediaUrls: _splitMedia(map['media_urls'] as String?),
       isRead: (map['is_read'] as int?) == 1,
       isDeleted: (map['is_deleted'] as int?) == 1,
+      errorReason: map['error_reason'] as String?,
     );
   }
 

@@ -5,7 +5,7 @@ import '../agent_service.dart';
 import '../theme_provider.dart';
 
 class VoiceAgentOverlay extends StatelessWidget {
-  const VoiceAgentOverlay({Key? key}) : super(key: key);
+  const VoiceAgentOverlay({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -33,12 +33,12 @@ class _VoiceAgentIndicator extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: AppColors.surface.withOpacity(0.95),
+        color: AppColors.surface.withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.2),
+            color: Colors.black.withValues(alpha: 0.2),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -56,7 +56,7 @@ class _VoiceAgentIndicator extends StatelessWidget {
               color: _statusColor,
               boxShadow: [
                 BoxShadow(
-                  color: _statusColor.withOpacity(0.5),
+                  color: _statusColor.withValues(alpha: 0.5),
                   blurRadius: 6,
                   spreadRadius: 1,
                 ),
@@ -89,7 +89,7 @@ class _VoiceAgentIndicator extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: agent.muted
-                    ? AppColors.red.withOpacity(0.15)
+                    ? AppColors.red.withValues(alpha: 0.15)
                     : AppColors.card,
               ),
               child: Icon(
@@ -121,7 +121,7 @@ class _WaveformPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = muted ? color.withOpacity(0.3) : color
+      ..color = muted ? color.withValues(alpha: 0.3) : color
       ..strokeCap = StrokeCap.round
       ..strokeWidth = 2.5;
 

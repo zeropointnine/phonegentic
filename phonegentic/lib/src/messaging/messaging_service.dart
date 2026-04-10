@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../contact_service.dart';
@@ -313,12 +312,18 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
           return;
         }
         if (msg.status == SmsStatus.failed) {
-          await _updateMessageStatus(messageId, SmsStatus.failed);
-          _lastError = _provider!.providerType == 'twilio'
-              ? 'Message delivery failed. Check Twilio A2P 10DLC / toll-free '
-                  'registration and account balance.'
-              : 'Message delivery failed. Check your Telnyx 10DLC registration '
-                  '(required for US numbers since Feb 2025) and account balance.';
+          await _updateMessageStatus(messageId, SmsStatus.failed,
+              errorReason: msg.errorReason);
+
+          if (msg.errorReason != null && msg.errorReason!.isNotEmpty) {
+            _lastError = 'Message delivery failed: ${msg.errorReason}';
+          } else {
+            _lastError = _provider!.providerType == 'twilio'
+                ? 'Message delivery failed. Check Twilio A2P 10DLC / toll-free '
+                    'registration and account balance.'
+                : 'Message delivery failed. Check your Telnyx 10DLC registration '
+                    '(required for US numbers since Feb 2025) and account balance.';
+          }
           notifyListeners();
           return;
         }
@@ -328,11 +333,14 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _updateMessageStatus(String providerId, SmsStatus status) async {
+  Future<void> _updateMessageStatus(String providerId, SmsStatus status,
+      {String? errorReason}) async {
     final db = await CallHistoryDb.database;
+    final values = <String, dynamic>{'status': status.name};
+    if (errorReason != null) values['error_reason'] = errorReason;
     await db.update(
       'sms_messages',
-      {'status': status.name},
+      values,
       where: 'provider_id = ?',
       whereArgs: [providerId],
     );

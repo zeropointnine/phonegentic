@@ -99,10 +99,12 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
     setState(() => _voiceListLoading = true);
     try {
       final voices = await ElevenLabsApiService.listVoices(apiKey);
-      if (mounted) setState(() {
-        _voiceList = voices;
-        _voiceListLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _voiceList = voices;
+          _voiceListLoading = false;
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _voiceListLoading = false);
     }
@@ -269,10 +271,10 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.25),
+                color: Colors.black.withValues(alpha: 0.25),
                 blurRadius: 30,
                 offset: const Offset(0, 10),
               ),
@@ -420,7 +422,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
         color: AppColors.card,
         borderRadius: BorderRadius.circular(10),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
       child: TextField(
         controller: controller,
@@ -446,13 +448,13 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: _whisperByDefault
-              ? AppColors.burntAmber.withOpacity(0.08)
+              ? AppColors.burntAmber.withValues(alpha: 0.08)
               : AppColors.card,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: _whisperByDefault
-                ? AppColors.burntAmber.withOpacity(0.3)
-                : AppColors.border.withOpacity(0.5),
+                ? AppColors.burntAmber.withValues(alpha: 0.3)
+                : AppColors.border.withValues(alpha: 0.5),
             width: 0.5,
           ),
         ),
@@ -500,7 +502,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                 borderRadius: BorderRadius.circular(10),
                 color: _whisperByDefault
                     ? AppColors.burntAmber
-                    : AppColors.border.withOpacity(0.4),
+                    : AppColors.border.withValues(alpha: 0.4),
               ),
               child: AnimatedAlign(
                 duration: const Duration(milliseconds: 150),
@@ -534,7 +536,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
             color: AppColors.card,
             borderRadius: BorderRadius.circular(10),
             border:
-                Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+                Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           child: Column(
             children: [
@@ -601,7 +603,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   }
 
   Widget _thinDivider() => Divider(
-      height: 0.5, indent: 12, color: AppColors.border.withOpacity(0.3));
+      height: 0.5, indent: 12, color: AppColors.border.withValues(alpha: 0.3));
 
   Widget _buildVoiceSelector() {
     return Column(
@@ -614,7 +616,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
             color: AppColors.card,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-                color: AppColors.border.withOpacity(0.5), width: 0.5),
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
           ),
           child: _voiceListLoading
               ? Padding(
@@ -727,7 +729,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: TextField(
                 controller: s.role,
@@ -752,7 +754,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
               color: AppColors.card,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: AppColors.border.withOpacity(0.5), width: 0.5),
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             ),
             child: DropdownButton<String>(
               value: s.source,
@@ -842,7 +844,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: TextField(
                 controller: _guardrailControllers[index],
@@ -902,7 +904,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                 borderRadius: BorderRadius.circular(10),
                 color: AppColors.card,
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Text(
                 'Cancel',
@@ -925,9 +927,9 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                 borderRadius: BorderRadius.circular(10),
                 color: canSave
                     ? (_saving
-                        ? AppColors.accent.withOpacity(0.5)
+                        ? AppColors.accent.withValues(alpha: 0.5)
                         : AppColors.accent)
-                    : AppColors.accent.withOpacity(0.3),
+                    : AppColors.accent.withValues(alpha: 0.3),
               ),
               child: Text(
                 _saving ? 'Saving...' : 'Save',
@@ -936,7 +938,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                   fontWeight: FontWeight.w600,
                   color: canSave
                       ? AppColors.crtBlack
-                      : AppColors.crtBlack.withOpacity(0.5),
+                      : AppColors.crtBlack.withValues(alpha: 0.5),
                 ),
               ),
             ),

@@ -406,9 +406,9 @@ class TextAgentService {
     String sseBuf = '';
 
     final toolBlocks = <Map<String, dynamic>>[];
-    String? _activeToolId;
-    String? _activeToolName;
-    final _activeToolInput = StringBuffer();
+    String? activeToolId;
+    String? activeToolName;
+    final StringBuffer activeToolInput = StringBuffer();
 
     await for (final chunk in response.transform(utf8.decoder)) {
       sseBuf += chunk;
@@ -427,9 +427,9 @@ class TextAgentService {
           if (type == 'content_block_start') {
             final cb = json['content_block'] as Map<String, dynamic>?;
             if (cb?['type'] == 'tool_use') {
-              _activeToolId = cb!['id'] as String?;
-              _activeToolName = cb['name'] as String?;
-              _activeToolInput.clear();
+              activeToolId = cb!['id'] as String?;
+              activeToolName = cb['name'] as String?;
+              activeToolInput.clear();
             }
           } else if (type == 'content_block_delta') {
             final delta = json['delta'] as Map<String, dynamic>?;
@@ -441,14 +441,14 @@ class TextAgentService {
                     .add(ResponseTextEvent(text: t, isFinal: false));
               }
             } else if (delta?['type'] == 'input_json_delta') {
-              _activeToolInput
+              activeToolInput
                   .write(delta!['partial_json'] as String? ?? '');
             }
           } else if (type == 'content_block_stop') {
-            if (_activeToolId != null && _activeToolName != null) {
+            if (activeToolId != null && activeToolName != null) {
               Map<String, dynamic> parsedInput = {};
               try {
-                final raw = _activeToolInput.toString();
+                final raw = activeToolInput.toString();
                 if (raw.isNotEmpty) {
                   parsedInput =
                       jsonDecode(raw) as Map<String, dynamic>;
@@ -456,13 +456,13 @@ class TextAgentService {
               } catch (_) {}
               toolBlocks.add({
                 'type': 'tool_use',
-                'id': _activeToolId,
-                'name': _activeToolName,
+                'id': activeToolId,
+                'name': activeToolName,
                 'input': parsedInput,
               });
-              _activeToolId = null;
-              _activeToolName = null;
-              _activeToolInput.clear();
+              activeToolId = null;
+              activeToolName = null;
+              activeToolInput.clear();
             }
           }
         } catch (_) {}

@@ -5,8 +5,7 @@ import '../theme_provider.dart';
 class EmojiPickerWidget extends StatefulWidget {
   final ValueChanged<String> onSelected;
 
-  const EmojiPickerWidget({Key? key, required this.onSelected})
-      : super(key: key);
+  const EmojiPickerWidget({super.key, required this.onSelected});
 
   @override
   State<EmojiPickerWidget> createState() => _EmojiPickerWidgetState();
@@ -34,7 +33,7 @@ class _EmojiPickerWidgetState extends State<EmojiPickerWidget> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(
-          top: BorderSide(color: AppColors.border.withOpacity(0.4), width: 0.5),
+          top: BorderSide(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
       ),
       child: Column(
@@ -58,7 +57,7 @@ class _EmojiPickerWidgetState extends State<EmojiPickerWidget> {
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: selected
-                          ? AppColors.accent.withOpacity(0.15)
+                          ? AppColors.accent.withValues(alpha: 0.15)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(5),
                     ),

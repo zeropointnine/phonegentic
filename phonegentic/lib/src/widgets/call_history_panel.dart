@@ -1,6 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:just_audio/just_audio.dart';
@@ -16,7 +14,7 @@ import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 
 class CallHistoryPanel extends StatefulWidget {
-  const CallHistoryPanel({Key? key}) : super(key: key);
+  const CallHistoryPanel({super.key});
 
   @override
   State<CallHistoryPanel> createState() => _CallHistoryPanelState();
@@ -145,9 +143,9 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                     horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
-                  color: AppColors.accent.withOpacity(0.12),
+                  color: AppColors.accent.withValues(alpha: 0.12),
                   border: Border.all(
-                      color: AppColors.accent.withOpacity(0.3),
+                      color: AppColors.accent.withValues(alpha: 0.3),
                       width: 0.5),
                 ),
                 child: Row(
@@ -179,7 +177,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                 borderRadius: BorderRadius.circular(8),
                 color: AppColors.card,
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Icon(Icons.close_rounded,
                   size: 16, color: AppColors.textSecondary),
@@ -206,7 +204,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: TextField(
                 controller: _searchController,
@@ -255,7 +253,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                   borderRadius: BorderRadius.circular(10),
                   color: AppColors.card,
                   border: Border.all(
-                      color: AppColors.accent.withOpacity(0.4), width: 0.5),
+                      color: AppColors.accent.withValues(alpha: 0.4), width: 0.5),
                 ),
                 child: Icon(Icons.auto_awesome,
                     size: 16, color: AppColors.accent),
@@ -274,7 +272,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.phone_missed_rounded,
-                size: 36, color: AppColors.textTertiary.withOpacity(0.4)),
+                size: 36, color: AppColors.textTertiary.withValues(alpha: 0.4)),
             const SizedBox(height: 12),
             Text(
               'No calls found',
@@ -286,7 +284,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
               'Try a different search or ask the AI agent',
               style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.textTertiary.withOpacity(0.7)),
+                  color: AppColors.textTertiary.withValues(alpha: 0.7)),
             ),
           ],
         ),
@@ -449,7 +447,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
         color: AppColors.bg,
         borderRadius: BorderRadius.circular(8),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
       ),
       child: Row(
         children: [
@@ -492,9 +490,9 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               height: 34,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.accent.withOpacity(0.12),
+                color: AppColors.accent.withValues(alpha: 0.12),
                 border: Border.all(
-                    color: AppColors.accent.withOpacity(0.3), width: 0.5),
+                    color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
               ),
               child:
                   Icon(Icons.phone_rounded, size: 16, color: AppColors.accent),
@@ -512,7 +510,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
         color: AppColors.bg,
         borderRadius: BorderRadius.circular(8),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -557,9 +555,9 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               child: LinearProgressIndicator(
                 value: 0,
                 minHeight: 3,
-                backgroundColor: AppColors.border.withOpacity(0.15),
+                backgroundColor: AppColors.border.withValues(alpha: 0.15),
                 valueColor: AlwaysStoppedAnimation<Color>(
-                    AppColors.textTertiary.withOpacity(0.2)),
+                    AppColors.textTertiary.withValues(alpha: 0.2)),
               ),
             ),
           ],
@@ -576,7 +574,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
         color: AppColors.bg,
         borderRadius: BorderRadius.circular(8),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
       ),
       child: _loadingTranscripts
           ? Center(
@@ -622,7 +620,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
 
   @override
   Widget build(BuildContext context) {
-    final _demo = context.watch<DemoModeService>();
+    final demo = context.watch<DemoModeService>();
     return GestureDetector(
       onTap: widget.onTap,
       child: AnimatedContainer(
@@ -636,8 +634,8 @@ class _CallRecordTileState extends State<_CallRecordTile> {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: widget.isExpanded
-                ? AppColors.accent.withOpacity(0.3)
-                : AppColors.border.withOpacity(0.4),
+                ? AppColors.accent.withValues(alpha: 0.3)
+                : AppColors.border.withValues(alpha: 0.4),
             width: 0.5,
           ),
         ),
@@ -652,13 +650,13 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                   height: 34,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(9),
-                    color: _statusColor.withOpacity(0.12),
+                    color: _statusColor.withValues(alpha: 0.12),
                     border: Border.all(
-                        color: _statusColor.withOpacity(0.25), width: 0.5),
+                        color: _statusColor.withValues(alpha: 0.25), width: 0.5),
                   ),
                   child: Center(
                     child: Text(
-                      _initial(_demo),
+                      _initial(demo),
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -685,7 +683,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
-                              _name(_demo),
+                              _name(demo),
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 13,
@@ -747,9 +745,9 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                     height: 26,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.accent.withOpacity(0.12),
+                      color: AppColors.accent.withValues(alpha: 0.12),
                       border: Border.all(
-                          color: AppColors.accent.withOpacity(0.3), width: 0.5),
+                          color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
                     ),
                     child: Icon(Icons.phone_rounded,
                         size: 13, color: AppColors.accent),
@@ -760,7 +758,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                   _timeLabel,
                   style: TextStyle(
                     fontSize: 10,
-                    color: AppColors.textTertiary.withOpacity(0.8),
+                    color: AppColors.textTertiary.withValues(alpha: 0.8),
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -867,7 +865,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
         color: AppColors.bg,
         borderRadius: BorderRadius.circular(8),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.3), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.3), width: 0.5),
       ),
       child: Row(
         children: [
@@ -902,7 +900,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
               child: LinearProgressIndicator(
                 value: progress.clamp(0.0, 1.0),
                 minHeight: 3,
-                backgroundColor: AppColors.border.withOpacity(0.3),
+                backgroundColor: AppColors.border.withValues(alpha: 0.3),
                 valueColor:
                     AlwaysStoppedAnimation<Color>(AppColors.accent),
               ),
@@ -1035,7 +1033,7 @@ class _TranscriptLine extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
             decoration: BoxDecoration(
-              color: _roleColor.withOpacity(0.12),
+              color: _roleColor.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(
@@ -1050,7 +1048,7 @@ class _TranscriptLine extends StatelessWidget {
               transcript['text'] as String? ?? '',
               style: TextStyle(
                 fontSize: 11,
-                color: AppColors.textSecondary.withOpacity(0.85),
+                color: AppColors.textSecondary.withValues(alpha: 0.85),
                 height: 1.4,
               ),
             ),

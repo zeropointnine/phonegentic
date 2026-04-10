@@ -15,6 +15,41 @@ import './stack_trace.dart';
 // ignore_for_file: avoid_print
 
 class MyLogPrinter {
+  factory MyLogPrinter({String filePrefix = '', String statementPrefix = ''}) {
+    if (!_instances.containsKey(filePrefix)) {
+      _instances[filePrefix] = MyLogPrinter._private(filePrefix: filePrefix, statementPrefix: statementPrefix);
+    }
+    return _instances[filePrefix]!;
+  }
+
+  MyLogPrinter._private({this.filePrefix = '', this.statementPrefix = ''}) {
+    if (PlatformExtension.isDesktop) {
+      getApplicationDocumentsDirectory().then((Directory appDir) {
+        if (appDir.path.isNotEmpty) {
+          _currentLogDate = DateTime.now();
+          String fileName = getFileName(filePrefix: filePrefix);
+          String pathName = Platform.isWindows ? '${appDir.path}\\$fileName' : '${appDir.path}/$fileName';
+          file = File(pathName);
+          print('$statementPrefix Application Log File Path: $pathName');
+          isInitialized = true;
+
+          // Set up log buffer processing
+          _setupLogBufferProcessing();
+
+          // Flush any initial statements
+          if (initialStatement.isNotEmpty) {
+            _logBuffer.add(initialStatement);
+            initialStatement = '';
+          }
+          // Call manageLogs at startup
+          manageLogs();
+        }
+      }, onError: (Object error, StackTrace stackTrace) {
+        print('MyLogPrinter Error: $error');
+      });
+    }
+  }
+
   late File file;
   final StreamController<String> _logBuffer = StreamController<String>();
   Timer? _flushTimer;
@@ -32,44 +67,28 @@ class MyLogPrinter {
   String statementPrefix;
   bool isInitialized = false;
 
-  // Private constructor
-  MyLogPrinter._private({this.filePrefix = '', this.statementPrefix = ''}) {
-    if (PlatformExtension.isDesktop) {
-      getApplicationDocumentsDirectory().then((appDir) {
-        if (appDir.path.isNotEmpty) {
-          _currentLogDate = DateTime.now();
-          String fileName = getFileName(filePrefix: filePrefix);
-          String pathName = Platform.isWindows ? "${appDir.path}\\$fileName" : "${appDir.path}/$fileName";
-          file = File(pathName);
-          print('$statementPrefix Application Log File Path: $pathName');
-          isInitialized = true;
+  static final Map<String, MyLogPrinter> _instances = <String, MyLogPrinter>{};
 
-          // Set up log buffer processing
-          _setupLogBufferProcessing();
+  static final Map<Level, AnsiColor> levelColors = <Level, AnsiColor>{
+    Level.debug: AnsiColor.none(),
+    Level.info: AnsiColor.fg(12),
+    Level.warning: AnsiColor.fg(208),
+    Level.error: AnsiColor.fg(196),
+  };
 
-          // Flush any initial statements
-          if (initialStatement.isNotEmpty) {
-            _logBuffer.add(initialStatement);
-            initialStatement = "";
-          }
-          // Call manageLogs at startup
-          manageLogs();
-        }
-      }, onError: (error, stackTrace) {
-        print('MyLogPrinter Error: $error');
-      });
-    }
-  }
+  bool colors = true;
+
+  String initialStatement = '';
 
   void _setupLogBufferProcessing() {
     // Set up a subscription to process log entries
-    _logBuffer.stream.listen((logEntry) {
+    _logBuffer.stream.listen((String logEntry) {
       _pendingWrites.write(logEntry);
       _processWrites();
     });
 
     // Set up periodic flush timer (every 500ms)
-    _flushTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+    _flushTimer = Timer.periodic(const Duration(milliseconds: 500), (Timer timer) {
       if (_pendingWrites.isNotEmpty) {
         _processWrites();
       }
@@ -94,7 +113,7 @@ class MyLogPrinter {
       await file.writeAsBytes(utf8.encode(dataToWrite), mode: FileMode.append, flush: true // Ensure data is written to disk
           );
     } catch (e) {
-      print("Error writing to log file: $e");
+      print('Error writing to log file: $e');
       // Put content back in the buffer to retry
       _pendingWrites.write(dataToWrite);
     } finally {
@@ -113,58 +132,40 @@ class MyLogPrinter {
     _logBuffer.close();
   }
 
-  static final Map<String, MyLogPrinter> _instances = {};
-
-  factory MyLogPrinter({String filePrefix = '', String statementPrefix = ''}) {
-    if (!_instances.containsKey(filePrefix)) {
-      _instances[filePrefix] = MyLogPrinter._private(filePrefix: filePrefix, statementPrefix: statementPrefix);
-    }
-    return _instances[filePrefix]!;
-  }
-  static final Map<Level, AnsiColor> levelColors = <Level, AnsiColor>{
-    Level.debug: AnsiColor.none(),
-    Level.info: AnsiColor.fg(12),
-    Level.warning: AnsiColor.fg(208),
-    Level.error: AnsiColor.fg(196),
-  };
-
-  String getFileName({String filePrefix = "", DateTime? forDate}) {
+  String getFileName({String filePrefix = '', DateTime? forDate}) {
     DateTime now = forDate ?? DateTime.now();
     String year = now.year.toString();
     String month = now.month.toString().padLeft(2, '0');
     String day = now.day.toString().padLeft(2, '0');
     String hour = now.hour.toString().padLeft(2, '0');
-    String result = "${filePrefix}_${year}_${month}_${day}_$hour";
+    String result = '${filePrefix}_${year}_${month}_${day}_$hour';
     print(result); // Output ex: 2023_10_09_14
     return result;
   }
 
-  bool colors = true;
-
-  String initialStatement = "";
-  Future<void> write(arg) async {
+  Future<void> write(dynamic arg) async {
     try {
-      const String lineTerminator = "\n"; // Always use \n for consistency
+      const String lineTerminator = '\n'; // Always use \n for consistency
       if (isInitialized) {
         // Check if we've crossed midnight and need to rotate the log file
         await _checkAndRotateLogFile();
 
-        _logBuffer.add("$arg$lineTerminator");
+        _logBuffer.add('$arg$lineTerminator');
         _lineCount++;
         if (_lineCount >= _cleanupThreshold) {
           _performPeriodicCleanup();
         }
       } else {
-        initialStatement += "$arg$lineTerminator";
+        initialStatement += '$arg$lineTerminator';
       }
     } catch (e) {
-      print("LogPrinter: Error buffering log entry ${e.toString()}");
+      print('LogPrinter: Error buffering log entry ${e.toString()}');
     }
   }
 
   /// Checks if the date has changed and rotates to a new log file if needed
   Future<void> _checkAndRotateLogFile() async {
-    final now = DateTime.now();
+    final DateTime now = DateTime.now();
 
     // Check if we need to rotate (date has changed)
     if (_currentLogDate != null && (now.year != _currentLogDate!.year || now.month != _currentLogDate!.month || now.day != _currentLogDate!.day)) {
@@ -186,9 +187,9 @@ class MyLogPrinter {
       _currentLogDate = newDate;
 
       // Create new file with new date
-      final appDir = await getApplicationDocumentsDirectory();
+      final Directory appDir = await getApplicationDocumentsDirectory();
       String fileName = getFileName(filePrefix: filePrefix, forDate: newDate);
-      String pathName = Platform.isWindows ? "${appDir.path}\\$fileName" : "${appDir.path}/$fileName";
+      String pathName = Platform.isWindows ? '${appDir.path}\\$fileName' : '${appDir.path}/$fileName';
       file = File(pathName);
 
       print('$statementPrefix New log file path: $pathName');
@@ -262,8 +263,8 @@ class MyLogPrinter {
   }
 
   void manageLogs() async {
-    final logDir = await getApplicationDocumentsDirectory();
-    final oldLogFiles = await getLogsByDate(logDir, DateTime.now().subtract(const Duration(days: 10)));
+    final Directory logDir = await getApplicationDocumentsDirectory();
+    final List<File> oldLogFiles = await getLogsByDate(logDir, DateTime.now().subtract(const Duration(days: 10)));
     _deleteOldLogs(oldLogFiles);
   }
 
@@ -271,8 +272,8 @@ class MyLogPrinter {
   Future<void> _performPeriodicCleanup() async {
     try {
       // First, clean up old log files
-      final logDir = await getApplicationDocumentsDirectory();
-      final oldLogFiles = await getLogsByDate(logDir, DateTime.now().subtract(const Duration(days: 10)));
+      final Directory logDir = await getApplicationDocumentsDirectory();
+      final List<File> oldLogFiles = await getLogsByDate(logDir, DateTime.now().subtract(const Duration(days: 10)));
       _deleteOldLogs(oldLogFiles);
 
       print('$statementPrefix Periodic cleanup and log rotation completed');
@@ -284,18 +285,18 @@ class MyLogPrinter {
   /// Gets log files older than the specified date using file modified date
   /// This approach works regardless of filename format and supports long-running apps
   Future<List<File>> getLogsByDate(Directory logDir, DateTime date) async {
-    final List<File> logFiles = [];
+    final List<File> logFiles = <File>[];
     // Match both old format (daily) and new format (daily with hour)
-    final regex = RegExp(r'(SIP|APP)_\d{4}_\d{2}_\d{2}(_\d{2})?');
+    final RegExp regex = RegExp(r'(SIP|APP)_\d{4}_\d{2}_\d{2}(_\d{2})?');
     if (await logDir.exists()) {
-      for (var file in logDir.listSync().whereType<File>()) {
-        final fileName = path.basename(file.path);
-        final match = regex.firstMatch(fileName);
+      for (File file in logDir.listSync().whereType<File>()) {
+        final String fileName = path.basename(file.path);
+        final RegExpMatch? match = regex.firstMatch(fileName);
         if (match != null) {
           try {
             // Use file's last modified date instead of parsing filename
-            final stat = await file.stat();
-            final fileModifiedDate = stat.modified;
+            final FileStat stat = await file.stat();
+            final DateTime fileModifiedDate = stat.modified;
 
             // Check if file was last modified before the cutoff date
             if (fileModifiedDate.isBefore(date)) {
@@ -311,7 +312,7 @@ class MyLogPrinter {
   }
 
   void _deleteOldLogs(List<File> logFiles) {
-    for (var file in logFiles) {
+    for (File file in logFiles) {
       try {
         file.deleteSync();
         print('MyLogPrinter Deleted Old Log: ${file.path}');

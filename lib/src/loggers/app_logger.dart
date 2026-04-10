@@ -7,16 +7,17 @@ import './log_printer.dart';
 // ignore_for_file: avoid_print
 
 class Log {
-  Log._private(); // Private constructor
-  static Log? _instance;
   factory Log() {
     _instance = _instance ?? Log._private();
     return _instance!;
   }
 
+  Log._private(); // Private constructor
+  static Log? _instance;
+
   static void printWrapped(String text) {
-    final pattern = RegExp('.{1,800}'); // 800 is the size of each chunk
-    pattern.allMatches(text).forEach((match) => print(match.group(0)));
+    final RegExp pattern = RegExp('.{1,800}'); // 800 is the size of each chunk
+    pattern.allMatches(text).forEach((RegExpMatch match) => print(match.group(0)));
   }
 
   static void d(
@@ -27,7 +28,7 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("logger.dart")) {
+    if (!out.contains('logger.dart')) {
       logger.log(Level.trace, out, options: options);
     }
   }
@@ -40,7 +41,7 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("logger.dart")) {
+    if (!out.contains('logger.dart')) {
       logger.log(Level.trace, out, options: options);
     }
   }
@@ -53,10 +54,10 @@ class Log {
     StackTrace? stackTrace,
   }) {
     String out = message as String;
-    if (!out.contains("logger.dart")) {
+    if (!out.contains('logger.dart')) {
       logger.log(
         Level.error,
-        out.replaceAll("\r\n", "\n"),
+        out.replaceAll('\r\n', '\n'),
       );
     }
   }
@@ -73,12 +74,12 @@ class Log {
     try {
       AnsiColor color = level.value == 5000 ? AnsiColor.fg(31) : AnsiColor.fg(34);
       bool useColor = EnvConfig.USE_ANSI_COLOR_IN_LOGS;
-      printWrapped("${useColor ? color : ''} APP_LOG $now $message");
+      printWrapped('${useColor ? color : ''} APP_LOG $now $message');
       if (EnvConfig.LOGGING_ENABLED) {
-        logPrinter.write(" $now, $message");
+        logPrinter.write(' $now, $message');
       }
     } catch (e) {
-      print("APP_LOG error ${e.toString()}");
+      print('APP_LOG error ${e.toString()}');
     }
   }
 }

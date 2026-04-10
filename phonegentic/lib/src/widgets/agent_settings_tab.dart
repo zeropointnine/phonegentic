@@ -213,7 +213,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
                     color: _recording.autoRecord
-                        ? AppColors.red.withOpacity(0.12)
+                        ? AppColors.red.withValues(alpha: 0.12)
                         : AppColors.card,
                   ),
                   child: Icon(Icons.fiber_manual_record,
@@ -251,7 +251,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     value: _recording.autoRecord,
                     onChanged: (v) =>
                         _updateRecording(_recording.copyWith(autoRecord: v)),
-                    activeColor: AppColors.red,
+                    activeTrackColor: AppColors.red,
                   ),
                 ),
               ],
@@ -300,7 +300,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               Divider(
                   height: 0.5,
                   indent: 16,
-                  color: AppColors.border.withOpacity(0.5)),
+                  color: AppColors.border.withValues(alpha: 0.5)),
               _mutePolicyOption(
                 AgentMutePolicy.stayMuted,
                 Icons.volume_off_rounded,
@@ -310,7 +310,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               Divider(
                   height: 0.5,
                   indent: 16,
-                  color: AppColors.border.withOpacity(0.5)),
+                  color: AppColors.border.withValues(alpha: 0.5)),
               _mutePolicyOption(
                 AgentMutePolicy.stayUnmuted,
                 Icons.volume_up_rounded,
@@ -352,7 +352,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: selected
-                    ? AppColors.accent.withOpacity(0.12)
+                    ? AppColors.accent.withValues(alpha: 0.12)
                     : AppColors.card,
               ),
               child: Icon(icon,
@@ -495,12 +495,12 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide:
-                    BorderSide(color: AppColors.border.withOpacity(0.5)),
+                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide:
-                    BorderSide(color: AppColors.border.withOpacity(0.5)),
+                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -585,7 +585,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Row(
                 children: [
@@ -648,12 +648,12 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide:
-                    BorderSide(color: AppColors.border.withOpacity(0.5)),
+                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide:
-                    BorderSide(color: AppColors.border.withOpacity(0.5)),
+                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -759,7 +759,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       color: AppColors.card,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
-                          color: AppColors.border.withOpacity(0.5),
+                          color: AppColors.border.withValues(alpha: 0.5),
                           width: 0.5),
                     ),
                     child: DropdownButton<String>(
@@ -828,7 +828,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(6),
                       side: BorderSide(
-                          color: AppColors.accent.withOpacity(0.3)),
+                          color: AppColors.accent.withValues(alpha: 0.3)),
                     ),
                   ),
                 ),
@@ -964,7 +964,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: DropdownButton<T>(
                 value: value,
@@ -993,7 +993,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   }
 
   Widget _divider() => Divider(
-      height: 0.5, indent: 16, color: AppColors.border.withOpacity(0.5));
+      height: 0.5, indent: 16, color: AppColors.border.withValues(alpha: 0.5));
 }
 
 // ───── Reusable Agent Card ─────
@@ -1051,7 +1051,7 @@ class _AgentCard extends StatelessWidget {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
                         color: enabled
-                            ? AppColors.accent.withOpacity(0.12)
+                            ? AppColors.accent.withValues(alpha: 0.12)
                             : AppColors.card,
                       ),
                       child: Icon(icon,
@@ -1089,8 +1089,8 @@ class _AgentCard extends StatelessWidget {
                                     horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
                                   color: configured
-                                      ? AppColors.green.withOpacity(0.12)
-                                      : AppColors.orange.withOpacity(0.12),
+                                      ? AppColors.green.withValues(alpha: 0.12)
+                                      : AppColors.orange.withValues(alpha: 0.12),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -1114,7 +1114,7 @@ class _AgentCard extends StatelessWidget {
                       child: Switch.adaptive(
                         value: enabled,
                         onChanged: onToggle,
-                        activeColor: AppColors.accent,
+                        activeTrackColor: AppColors.accent,
                       ),
                     ),
                   ],
@@ -1122,7 +1122,7 @@ class _AgentCard extends StatelessWidget {
               ),
               Divider(
                   height: 0.5,
-                  color: AppColors.border.withOpacity(0.5)),
+                  color: AppColors.border.withValues(alpha: 0.5)),
               ...children,
             ],
           ),

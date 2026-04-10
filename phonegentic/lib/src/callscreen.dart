@@ -36,8 +36,7 @@ class CallScreenWidget extends StatefulWidget {
   final Call? _call;
   final VoidCallback? onDismiss;
 
-  CallScreenWidget(this._helper, this._call, {Key? key, this.onDismiss})
-      : super(key: key);
+  CallScreenWidget(this._helper, this._call, {super.key, this.onDismiss});
 
   @override
   State<CallScreenWidget> createState() => _MyCallScreenWidget();
@@ -720,6 +719,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   void _handleKeyPad() => setState(() => _showNumPad = !_showNumPad);
 
+  // ignore: unused_element
   void _handleVideoUpgrade() {
     if (voiceOnly) {
       setState(() => call!.voiceOnly = false);
@@ -857,7 +857,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   letterSpacing: -0.5,
                   shadows: [
                     Shadow(
-                      color: AppColors.phosphor.withOpacity(0.4),
+                      color: AppColors.phosphor.withValues(alpha: 0.4),
                       blurRadius: 6,
                     ),
                   ],
@@ -917,10 +917,10 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: AppColors.burntAmber.withOpacity(0.15),
+          color: AppColors.burntAmber.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-              color: AppColors.burntAmber.withOpacity(0.4), width: 0.5),
+              color: AppColors.burntAmber.withValues(alpha: 0.4), width: 0.5),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -952,13 +952,13 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: conf.hasConference
-              ? AppColors.green.withOpacity(0.12)
-              : AppColors.burntAmber.withOpacity(0.12),
+              ? AppColors.green.withValues(alpha: 0.12)
+              : AppColors.burntAmber.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: conf.hasConference
-                ? AppColors.green.withOpacity(0.3)
-                : AppColors.burntAmber.withOpacity(0.3),
+                ? AppColors.green.withValues(alpha: 0.3)
+                : AppColors.burntAmber.withValues(alpha: 0.3),
             width: 0.5,
           ),
         ),
@@ -1009,13 +1009,13 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             height: 32,
             decoration: BoxDecoration(
               color: active
-                  ? AppColors.accent.withOpacity(0.12)
+                  ? AppColors.accent.withValues(alpha: 0.12)
                   : AppColors.card,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color: active
-                    ? AppColors.accent.withOpacity(0.4)
-                    : AppColors.border.withOpacity(0.5),
+                    ? AppColors.accent.withValues(alpha: 0.4)
+                    : AppColors.border.withValues(alpha: 0.5),
                 width: 0.5,
               ),
             ),
@@ -1240,9 +1240,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   height: 88,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: AppColors.accent.withOpacity(0.15),
+                    color: AppColors.accent.withValues(alpha: 0.15),
                     border: Border.all(
-                        color: AppColors.accent.withOpacity(0.3), width: 1.5),
+                        color: AppColors.accent.withValues(alpha: 0.3), width: 1.5),
                   ),
                   child: Center(
                     child: Text(
@@ -1378,7 +1378,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               onPressed: _muteVideo,
             ),
         ]);
-        if (voiceOnly && _ttsConfig != null && _ttsConfig!.isConfigured)
+        if (voiceOnly && _ttsConfig != null && _ttsConfig!.isConfigured) {
           actions.addAll([
             ActionButton(
               title: _isSampling && _sampleParty == 'host'
@@ -1407,6 +1407,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               onPressed: () => _toggleVoiceSample('remote'),
             ),
           ]);
+        }
         bottomRow.addAll([
           ActionButton(
             title: _hold ? 'Resume' : 'Hold',
@@ -1430,7 +1431,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
-        bottomRow.add(_circleBtn(Icons.call_end, AppColors.burntAmber.withOpacity(0.4), '', () {}));
+        bottomRow.add(_circleBtn(Icons.call_end, AppColors.burntAmber.withValues(alpha: 0.4), '', () {}));
         break;
 
       case CallStateEnum.PROGRESS:
@@ -1477,7 +1478,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               color: color,
               boxShadow: [
                 BoxShadow(
-                  color: color.withOpacity(0.35),
+                  color: color.withValues(alpha: 0.35),
                   blurRadius: 16,
                   spreadRadius: 1,
                 ),

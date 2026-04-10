@@ -96,13 +96,13 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
         color: AppColors.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         border: Border(
-          top: BorderSide(color: AppColors.border.withOpacity(0.5)),
-          left: BorderSide(color: AppColors.border.withOpacity(0.5)),
-          right: BorderSide(color: AppColors.border.withOpacity(0.5)),
+          top: BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
+          left: BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
+          right: BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withValues(alpha: 0.3),
             blurRadius: 30,
             offset: const Offset(0, -8),
           ),
@@ -129,7 +129,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
         width: 36,
         height: 4,
         decoration: BoxDecoration(
-          color: AppColors.textTertiary.withOpacity(0.4),
+          color: AppColors.textTertiary.withValues(alpha: 0.4),
           borderRadius: BorderRadius.circular(2),
         ),
       ),
@@ -146,7 +146,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
             height: 32,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
-              color: AppColors.accent.withOpacity(0.12),
+              color: AppColors.accent.withValues(alpha: 0.12),
             ),
             child: Icon(
               Icons.headphones_rounded,
@@ -173,7 +173,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Icon(Icons.refresh_rounded,
                   size: 16, color: AppColors.textSecondary),
@@ -192,7 +192,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
         color: AppColors.card,
         borderRadius: BorderRadius.circular(10),
         border:
-            Border.all(color: AppColors.border.withOpacity(0.5), width: 0.5),
+            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
       child: TabBar(
         controller: _tabController,
@@ -201,7 +201,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
           borderRadius: BorderRadius.circular(7),
           boxShadow: [
             BoxShadow(
-              color: AppColors.accent.withOpacity(0.3),
+              color: AppColors.accent.withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -252,7 +252,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(Icons.error_outline_rounded,
-                  size: 32, color: AppColors.red.withOpacity(0.7)),
+                  size: 32, color: AppColors.red.withValues(alpha: 0.7)),
               const SizedBox(height: 12),
               Text(
                 'Could not load audio devices',
@@ -307,7 +307,7 @@ class _AudioDeviceSheetState extends State<_AudioDeviceSheet>
             Icon(
               isOutput ? Icons.volume_off_rounded : Icons.mic_off_rounded,
               size: 28,
-              color: AppColors.textTertiary.withOpacity(0.5),
+              color: AppColors.textTertiary.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 10),
             Text(
@@ -371,15 +371,15 @@ class _DeviceTileState extends State<_DeviceTile> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: widget.isSelected
-                ? accent.withOpacity(0.08)
+                ? accent.withValues(alpha: 0.08)
                 : (_hovering ? AppColors.card : Colors.transparent),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: widget.isSelected
-                  ? accent.withOpacity(0.3)
+                  ? accent.withValues(alpha: 0.3)
                   : (_hovering
                       ? AppColors.border
-                      : AppColors.border.withOpacity(0.3)),
+                      : AppColors.border.withValues(alpha: 0.3)),
               width: 0.5,
             ),
           ),
@@ -390,13 +390,13 @@ class _DeviceTileState extends State<_DeviceTile> {
                 height: 36,
                 decoration: BoxDecoration(
                   color: widget.isSelected
-                      ? accent.withOpacity(0.12)
+                      ? accent.withValues(alpha: 0.12)
                       : AppColors.card,
                   borderRadius: BorderRadius.circular(10),
                   border: widget.isSelected
                       ? null
                       : Border.all(
-                          color: AppColors.border.withOpacity(0.5),
+                          color: AppColors.border.withValues(alpha: 0.5),
                           width: 0.5),
                 ),
                 child: Icon(

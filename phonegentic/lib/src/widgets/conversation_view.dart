@@ -13,7 +13,7 @@ import '../theme_provider.dart';
 import 'emoji_picker.dart';
 
 class ConversationView extends StatefulWidget {
-  const ConversationView({Key? key}) : super(key: key);
+  const ConversationView({super.key});
 
   @override
   State<ConversationView> createState() => _ConversationViewState();
@@ -106,13 +106,13 @@ class _ConversationViewState extends State<ConversationView> {
               color: AppColors.bg,
               border: _isDragging
                   ? Border.all(
-                      color: AppColors.accent.withOpacity(0.8), width: 2)
+                      color: AppColors.accent.withValues(alpha: 0.8), width: 2)
                   : null,
             ),
             child: Column(
               children: [
                 _buildConvoHeader(messaging, convo),
-                Divider(height: 0.5, color: AppColors.border.withOpacity(0.4)),
+                Divider(height: 0.5, color: AppColors.border.withValues(alpha: 0.4)),
                 Expanded(
                   child: Stack(
                     children: [
@@ -121,7 +121,7 @@ class _ConversationViewState extends State<ConversationView> {
                           : _buildMessageList(messages),
                       if (_isDragging)
                         Container(
-                          color: AppColors.bg.withOpacity(0.85),
+                          color: AppColors.bg.withValues(alpha: 0.85),
                           child: Center(
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
@@ -176,7 +176,7 @@ class _ConversationViewState extends State<ConversationView> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
                 border:
-                    Border.all(color: AppColors.border.withOpacity(0.4), width: 0.5),
+                    Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
               ),
               child: Icon(Icons.arrow_back_ios_new_rounded,
                   size: 14, color: AppColors.textSecondary),
@@ -189,7 +189,7 @@ class _ConversationViewState extends State<ConversationView> {
             height: 34,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: AppColors.accent.withOpacity(0.12),
+              color: AppColors.accent.withValues(alpha: 0.12),
             ),
             child: Center(
               child: Text(
@@ -323,9 +323,9 @@ class _ConversationViewState extends State<ConversationView> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: AppColors.red.withOpacity(0.12),
+          color: AppColors.red.withValues(alpha: 0.12),
           border: Border(
-            top: BorderSide(color: AppColors.red.withOpacity(0.3), width: 0.5),
+            top: BorderSide(color: AppColors.red.withValues(alpha: 0.3), width: 0.5),
           ),
         ),
         child: Row(
@@ -342,7 +342,7 @@ class _ConversationViewState extends State<ConversationView> {
               ),
             ),
             Icon(Icons.close_rounded,
-                size: 14, color: AppColors.red.withOpacity(0.6)),
+                size: 14, color: AppColors.red.withValues(alpha: 0.6)),
           ],
         ),
       ),
@@ -358,7 +358,7 @@ class _ConversationViewState extends State<ConversationView> {
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: AppColors.border.withOpacity(0.4), width: 0.5),
+          top: BorderSide(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
       ),
       child: Column(
@@ -403,7 +403,7 @@ class _ConversationViewState extends State<ConversationView> {
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
-                    color: AppColors.border.withOpacity(0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Focus(
                 onKeyEvent: (node, event) {
@@ -483,7 +483,7 @@ class _ConversationViewState extends State<ConversationView> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                      color: AppColors.border.withOpacity(0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
@@ -644,7 +644,7 @@ class _MessageBubble extends StatelessWidget {
                   borderRadius: borderRadius,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
+                      color: Colors.black.withValues(alpha: 0.06),
                       blurRadius: 4,
                       offset: const Offset(0, 1),
                     ),
@@ -687,6 +687,9 @@ class _MessageBubble extends StatelessWidget {
       case SmsStatus.sent:
         return 'Sent';
       case SmsStatus.failed:
+        if (message.errorReason != null && message.errorReason!.isNotEmpty) {
+          return 'Failed: ${message.errorReason}';
+        }
         return 'Failed';
       case SmsStatus.queued:
         return 'Sending...';
