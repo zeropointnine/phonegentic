@@ -1958,9 +1958,10 @@ class _TranscriptBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
+            margin: const EdgeInsets.only(top: 1),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
               color: _pillColor.withValues(alpha: 0.12),
@@ -1970,7 +1971,10 @@ class _TranscriptBubble extends StatelessWidget {
               message.speakerName ??
                   (message.role == ChatRole.host ? 'Host' : 'RP1'),
               style: TextStyle(
-                  fontSize: 9, fontWeight: FontWeight.w600, color: _pillColor),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  color: _pillColor,
+                  height: 1.4),
             ),
           ),
           const SizedBox(width: 8),
@@ -1990,7 +1994,8 @@ class _TranscriptBubble extends StatelessWidget {
             _formatTime(message.timestamp),
             style: TextStyle(
                 fontSize: 9,
-                color: AppColors.textTertiary.withValues(alpha: 0.6)),
+                color: AppColors.textTertiary.withValues(alpha: 0.6),
+                height: 1.4),
           ),
         ],
       ),
