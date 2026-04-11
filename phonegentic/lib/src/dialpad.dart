@@ -32,6 +32,7 @@ import 'widgets/call_history_panel.dart';
 import 'widgets/contact_list_panel.dart';
 import 'widgets/messaging_panel.dart';
 import 'widgets/job_function_editor.dart';
+import 'widgets/dialpad_contact_preview.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/quick_add_overlay.dart';
 import 'widgets/tear_sheet_editor.dart';
@@ -61,6 +62,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
   final Map<String?, Call> _calls = {};
   Call? _focusedCall;
   Call? get _activeCall => _focusedCall;
+
+  Map<String, dynamic>? _matchedContact;
 
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
   Timer? _conferenceTimeout;
@@ -99,7 +102,21 @@ class _MyDialPadWidget extends State<DialPadWidget>
     _dest = '';
     _textController = TextEditingController(text: _dest);
     _textController!.text = _dest ?? '';
+    _textController!.addListener(_onDigitsChanged);
     setState(() {});
+  }
+
+  void _onDigitsChanged() {
+    final digits = _textController?.text ?? '';
+    if (digits.length < 3) {
+      if (_matchedContact != null) setState(() => _matchedContact = null);
+      return;
+    }
+    final contacts = Provider.of<ContactService>(context, listen: false);
+    final match = contacts.lookupByPhone(digits);
+    if (match != _matchedContact) {
+      setState(() => _matchedContact = match);
+    }
   }
 
   bool _handleGlobalKeyEvent(KeyEvent event) {
@@ -907,6 +924,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
   Widget _buildPhoneContent() {
     final userPhone = TestCredentials.sipUser.displayName;
     final demoMode = context.watch<DemoModeService>();
+    final bool showCard = _matchedContact != null;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: SingleChildScrollView(
@@ -924,6 +943,31 @@ class _MyDialPadWidget extends State<DialPadWidget>
               ),
             ),
             const SizedBox(height: 8),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 320),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.08),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
+                );
+              },
+              child: showCard
+                  ? Padding(
+                      key: ValueKey(_matchedContact!['id']),
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: DialpadContactPreview(
+                          contact: _matchedContact!),
+                    )
+                  : const SizedBox.shrink(key: ValueKey('empty')),
+            ),
             _buildNumberDisplay(),
             const SizedBox(height: 28),
             _buildNumPad(),
