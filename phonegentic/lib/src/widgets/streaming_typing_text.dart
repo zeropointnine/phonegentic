@@ -29,8 +29,10 @@ class StreamingTypingText extends StatefulWidget {
 class _StreamingTypingTextState extends State<StreamingTypingText> {
   int _revealed = 0;
   Timer? _timer;
+  Timer? _pauseTimer;
 
   static const _tickMs = 40;
+  static const _boundaryPauseMs = 2000;
 
   int get _streamRate => widget.voiceSync ? 1 : 4;
   int get _drainRate => widget.voiceSync ? 2 : 8;
@@ -56,8 +58,9 @@ class _StreamingTypingTextState extends State<StreamingTypingText> {
     }
 
     // voiceSync changed — restart timer at new cadence.
-    if (widget.voiceSync != oldWidget.voiceSync && _timer != null) {
-      _stopTimer();
+    if (widget.voiceSync != oldWidget.voiceSync) {
+      _cancelPause();
+      if (_timer != null) _stopTimer();
     }
 
     if (!widget.isStreaming && _revealed >= widget.fullText.length) {
@@ -75,6 +78,11 @@ class _StreamingTypingTextState extends State<StreamingTypingText> {
     _timer = null;
   }
 
+  void _cancelPause() {
+    _pauseTimer?.cancel();
+    _pauseTimer = null;
+  }
+
   void _ensureTimer() {
     if (_timer != null) return;
     _timer = Timer.periodic(
@@ -90,16 +98,45 @@ class _StreamingTypingTextState extends State<StreamingTypingText> {
           return;
         }
         final step = widget.isStreaming ? _streamRate : _drainRate;
+        final oldRevealed = _revealed;
+        final newRevealed = (_revealed + step).clamp(0, target);
         setState(() {
-          _revealed = (_revealed + step).clamp(0, target);
+          _revealed = newRevealed;
         });
+        if (widget.voiceSync &&
+            _hitsSentenceBoundary(widget.fullText, oldRevealed, newRevealed)) {
+          _stopTimer();
+          _pauseTimer = Timer(
+            const Duration(milliseconds: _boundaryPauseMs),
+            () {
+              _pauseTimer = null;
+              if (mounted && _revealed < widget.fullText.length) {
+                _ensureTimer();
+              }
+            },
+          );
+        }
       },
     );
+  }
+
+  /// True if the text between [from] (exclusive) and [to] (inclusive) contains
+  /// a sentence-ending punctuation mark followed by a space or newline.
+  static bool _hitsSentenceBoundary(String text, int from, int to) {
+    for (var i = from; i < to && i + 1 < text.length; i++) {
+      final ch = text[i];
+      if (ch == '.' || ch == '?' || ch == '!') {
+        final next = text.codeUnitAt(i + 1);
+        if (next == 0x20 || next == 0x0A) return true;
+      }
+    }
+    return false;
   }
 
   @override
   void dispose() {
     _stopTimer();
+    _cancelPause();
     super.dispose();
   }
 

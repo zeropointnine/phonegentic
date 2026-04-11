@@ -185,6 +185,12 @@ is used for **all** agent bubbles (via `agent_panel.dart`). It tracks a
 | **Voice sync** (TTS active) | 80 ms | 1 char/tick | 2 chars/tick | ~8 s |
 | **Text-only** (muted / no TTS) | 40 ms | 4 chars/tick | 8 chars/tick | ~1 s |
 
+- **Sentence boundary pause (voice sync only):** when the reveal cursor crosses
+  a sentence-ending punctuation mark (`. ` `? ` `! ` followed by space/newline),
+  the timer stops for 2 seconds before resuming. This keeps the text animation
+  in lockstep with TTS audio, which has natural inter-sentence gaps while the
+  next sentence synthesizes. Without this pause the text would race ahead of
+  the audio during multi-sentence responses.
 - **Steady state:** once caught up (`_revealed >= target`), the timer stops and
   restarts when new text arrives.
 - **No snap on stream end:** the widget **does not** snap to full text when
