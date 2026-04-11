@@ -5,6 +5,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'agent_config_service.dart';
+import 'text_segmenter.dart';
 
 // =============================================================================
 // ElevenLabs TTS Service — Architecture & Lifecycle
@@ -97,6 +98,7 @@ class ElevenLabsTtsService {
 
   final List<String> _pendingText = [];
   final StringBuffer _textBuffer = StringBuffer();
+  final TextSegmenter _segmenter = TextSegmenter();
   static const _minFlushChars = 50;
   Completer<void>? _connectCompleter;
 
@@ -262,6 +264,7 @@ class ElevenLabsTtsService {
     _endAfterFlush = false;
     _pendingText.clear();
     _textBuffer.clear();
+    _segmenter.reset();
     _bosSent = false;
     _speakingController.add(true);
     _connectAndFlush();
@@ -302,10 +305,11 @@ class ElevenLabsTtsService {
     }
   }
 
-  /// Stream a text chunk.  Small fragments are accumulated in [_textBuffer]
-  /// and flushed once [_minFlushChars] is reached or a sentence boundary
-  /// is detected, preventing ElevenLabs from generating tiny audio clips
-  /// for partial words.
+  /// Stream a text chunk. Small fragments are accumulated in [_textBuffer]
+  /// and flushed once [_minFlushChars] is reached or a real sentence boundary
+  /// is detected by [TextSegmenter], preventing ElevenLabs from generating
+  /// tiny audio clips for partial words while avoiding false flushes on
+  /// abbreviations like "Mr." or "D.C."
   void sendText(String text) {
     if (!_generating || text.isEmpty) {
       if (!_generating && text.isNotEmpty) {
@@ -322,18 +326,16 @@ class ElevenLabsTtsService {
     }
 
     _textBuffer.write(text);
-    if (_textBuffer.length >= _minFlushChars || _hasSentenceEnd(text)) {
+    final sentences = _segmenter.addText(text);
+
+    if (sentences.isNotEmpty) {
+      // A real sentence boundary was detected — flush everything accumulated.
+      _flushTextBuffer();
+    } else if (_textBuffer.length >= _minFlushChars) {
+      // No sentence boundary yet, but enough chars for ElevenLabs to work
+      // with via its server-side chunk_length_schedule.
       _flushTextBuffer();
     }
-  }
-
-  static bool _hasSentenceEnd(String text) {
-    for (int i = text.length - 1; i >= 0; i--) {
-      final ch = text[i];
-      if (ch == '.' || ch == '?' || ch == '!' || ch == ';') return true;
-      if (ch != ' ' && ch != '\n') break;
-    }
-    return false;
   }
 
   void _flushTextBuffer() {
@@ -384,6 +386,7 @@ class ElevenLabsTtsService {
     _bosSent = false;
     _pendingText.clear();
     _textBuffer.clear();
+    _segmenter.reset();
   }
 
   Future<void> dispose() async {

@@ -103,6 +103,7 @@ class JobFunctionService extends ChangeNotifier {
       guardrails: jf.guardrails,
       textOnly: jf.whisperByDefault,
       elevenLabsVoiceId: jf.elevenLabsVoiceId,
+      kokoroVoiceStyle: jf.kokoroVoiceStyle,
     );
   }
 

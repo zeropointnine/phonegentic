@@ -15,6 +15,7 @@ import '../models/job_function.dart';
 import '../models/chat_message.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
+import 'streaming_typing_text.dart';
 
 class AgentPanel extends StatefulWidget {
   final Widget? dragHandle;
@@ -88,7 +89,8 @@ class _AgentPanelState extends State<AgentPanel> {
         return Container(
           decoration: BoxDecoration(
             color: AppColors.card,
-            border: Border(left: BorderSide(color: AppColors.border, width: 0.5)),
+            border:
+                Border(left: BorderSide(color: AppColors.border, width: 0.5)),
           ),
           child: Column(
             children: [
@@ -103,7 +105,8 @@ class _AgentPanelState extends State<AgentPanel> {
                 },
               ),
               if (agent.hasActiveCall) _ConferenceCallBar(agent: agent),
-              Expanded(child: _MessageList(
+              Expanded(
+                  child: _MessageList(
                 messages: agent.messages,
                 scrollController: _scrollController,
                 onAction: (action) {
@@ -115,9 +118,8 @@ class _AgentPanelState extends State<AgentPanel> {
                 controller: _controller,
                 onSend: () => _send(agent),
                 onWhisperSend: () => _sendWhisperOneShot(agent),
-                onToggleWhisper: agent.canToggleWhisper
-                    ? agent.toggleWhisperMode
-                    : null,
+                onToggleWhisper:
+                    agent.canToggleWhisper ? agent.toggleWhisperMode : null,
                 active: agent.active,
                 whisperMode: agent.whisperMode,
                 hasActiveCall: agent.hasActiveCall,
@@ -190,35 +192,13 @@ class _AgentHeader extends StatelessWidget {
                     const SizedBox(width: 5),
                     Text(
                       _statusLabel,
-                      style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textTertiary),
                     ),
                   ],
                 ),
               ],
             ),
-          ),
-          _HeaderButton(
-            icon: Icons.receipt_long_rounded,
-            color: tearSheet.isActive
-                ? AppColors.accent
-                : AppColors.textSecondary,
-            bgColor: tearSheet.isActive
-                ? AppColors.accent.withValues(alpha: 0.12)
-                : AppColors.card,
-            onTap: () {
-              if (tearSheet.isActive) {
-                if (tearSheet.isPaused) {
-                  tearSheet.play();
-                } else {
-                  tearSheet.pause();
-                }
-              } else {
-                tearSheet.openEditor();
-              }
-            },
-            tooltip: tearSheet.isActive
-                ? (tearSheet.isPaused ? 'Play tear sheet' : 'Pause tear sheet')
-                : 'Tear sheet',
           ),
           const SizedBox(width: 6),
           _MuteButtonWithPolicy(agent: agent),
@@ -281,7 +261,8 @@ class _MuteButtonWithPolicy extends StatelessWidget {
       color: AppColors.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+        side: BorderSide(
+            color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
       elevation: 8,
       items: [
@@ -318,7 +299,8 @@ class _MuteButtonWithPolicy extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                color:
+                    selected ? AppColors.textPrimary : AppColors.textSecondary,
               ),
             ),
           ),
@@ -336,9 +318,8 @@ class _MuteButtonWithPolicy extends StatelessWidget {
     return HoverButton(
       onTap: agent.active ? agent.toggleMute : null,
       onLongPress: () => _showPolicyMenu(context),
-      tooltip: agent.muted
-          ? 'Unmute (hold for policy)'
-          : 'Mute (hold for policy)',
+      tooltip:
+          agent.muted ? 'Unmute (hold for policy)' : 'Mute (hold for policy)',
       borderRadius: BorderRadius.circular(8),
       child: Container(
         height: 30,
@@ -494,8 +475,7 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
         String contextMsg;
         switch (level) {
           case ReminderLevel.upcoming:
-            contextMsg =
-                '[CALENDAR] Upcoming event "${event.title}" at '
+            contextMsg = '[CALENDAR] Upcoming event "${event.title}" at '
                 '${timeFmt.format(startLocal)} ($mins minutes from now).';
             break;
           case ReminderLevel.imminent:
@@ -504,8 +484,7 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
                 'at ${timeFmt.format(startLocal)}. Prepare now.';
             break;
           case ReminderLevel.active:
-            contextMsg =
-                '[CALENDAR] Event "${event.title}" is starting NOW. '
+            contextMsg = '[CALENDAR] Event "${event.title}" is starting NOW. '
                 'Follow your job function instructions.';
             break;
           case ReminderLevel.none:
@@ -546,9 +525,7 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
         bgColor = AppColors.accent.withValues(alpha: 0.06);
         timeColor = AppColors.accent;
         iconColor = AppColors.accent;
-        prefix = minutesLeft <= 0
-            ? 'Starting now'
-            : 'In $minutesLeft min';
+        prefix = minutesLeft <= 0 ? 'Starting now' : 'In $minutesLeft min';
         break;
       case ReminderLevel.active:
         bgColor = AppColors.accent.withValues(alpha: 0.08);
@@ -579,8 +556,7 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
       ),
       child: Row(
         children: [
-          Icon(Icons.calendar_today_rounded,
-              size: 12, color: iconColor),
+          Icon(Icons.calendar_today_rounded, size: 12, color: iconColor),
           const SizedBox(width: 8),
           Text(
             prefix,
@@ -610,8 +586,7 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
           if (jfChipLabel != null && level == ReminderLevel.imminent) ...[
             const SizedBox(width: 6),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: AppColors.accent.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(4),
@@ -665,8 +640,8 @@ class _JobFunctionDropdown extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Cancel',
-                style: TextStyle(color: AppColors.textTertiary)),
+            child:
+                Text('Cancel', style: TextStyle(color: AppColors.textTertiary)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -709,7 +684,8 @@ class _JobFunctionDropdown extends StatelessWidget {
             color: AppColors.surface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side: BorderSide(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              side: BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             ),
             elevation: 8,
             shadowColor: Colors.black.withValues(alpha: 0.3),
@@ -781,7 +757,8 @@ class _JobFunctionDropdown extends StatelessWidget {
                   },
                   child: Row(
                     children: [
-                      Icon(Icons.add_rounded, size: 14, color: AppColors.accent),
+                      Icon(Icons.add_rounded,
+                          size: 14, color: AppColors.accent),
                       const SizedBox(width: 8),
                       Text(
                         'New Job Function',
@@ -873,7 +850,8 @@ class _CallInfoBar extends StatelessWidget {
       agent.isOutbound ? Icons.call_made_rounded : Icons.call_received_rounded;
 
   String _remoteLabel(DemoModeService demo) {
-    if (agent.remoteDisplayName != null && agent.remoteDisplayName!.isNotEmpty) {
+    if (agent.remoteDisplayName != null &&
+        agent.remoteDisplayName!.isNotEmpty) {
       return demo.maskDisplayName(agent.remoteDisplayName!);
     }
     final raw = agent.remoteIdentity ?? 'Unknown';
@@ -890,7 +868,9 @@ class _CallInfoBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.04),
-        border: Border(bottom: BorderSide(color: AppColors.border.withValues(alpha: 0.4), width: 0.5)),
+        border: Border(
+            bottom: BorderSide(
+                color: AppColors.border.withValues(alpha: 0.4), width: 0.5)),
       ),
       child: Row(
         children: [
@@ -903,7 +883,9 @@ class _CallInfoBar extends StatelessWidget {
               color: color.withValues(alpha: 0.12),
             ),
             child: Icon(
-              phase.isActive ? Icons.phone_in_talk_rounded : Icons.phone_rounded,
+              phase.isActive
+                  ? Icons.phone_in_talk_rounded
+                  : Icons.phone_rounded,
               size: 14,
               color: color,
             ),
@@ -916,7 +898,8 @@ class _CallInfoBar extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Icon(_directionIcon, size: 10, color: AppColors.textTertiary),
+                    Icon(_directionIcon,
+                        size: 10, color: AppColors.textTertiary),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -970,16 +953,20 @@ class _CallInfoBar extends StatelessWidget {
               onTap: agent.confirmPartyConnected,
               borderRadius: BorderRadius.circular(10),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
                   color: AppColors.green.withValues(alpha: 0.15),
-                  border: Border.all(color: AppColors.green.withValues(alpha: 0.3), width: 0.5),
+                  border: Border.all(
+                      color: AppColors.green.withValues(alpha: 0.3),
+                      width: 0.5),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.person_add_alt_1_rounded, size: 12, color: AppColors.green),
+                    Icon(Icons.person_add_alt_1_rounded,
+                        size: 12, color: AppColors.green),
                     const SizedBox(width: 4),
                     Text(
                       'Party On',
@@ -1164,8 +1151,7 @@ class _CallLegRow extends StatelessWidget {
               ? AppColors.accent.withValues(alpha: 0.06)
               : Colors.transparent,
           border: isFocused
-              ? Border(
-                  left: BorderSide(color: AppColors.accent, width: 2))
+              ? Border(left: BorderSide(color: AppColors.accent, width: 2))
               : null,
         ),
         child: Row(
@@ -1310,18 +1296,16 @@ class _MergeConnector extends StatelessWidget {
                 children: [
                   Icon(Icons.merge_type_rounded,
                       size: 12,
-                      color: canMerge
-                          ? AppColors.accent
-                          : AppColors.textTertiary),
+                      color:
+                          canMerge ? AppColors.accent : AppColors.textTertiary),
                   const SizedBox(width: 4),
                   Text(
                     'Merge',
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
-                      color: canMerge
-                          ? AppColors.accent
-                          : AppColors.textTertiary,
+                      color:
+                          canMerge ? AppColors.accent : AppColors.textTertiary,
                     ),
                   ),
                 ],
@@ -1343,7 +1327,8 @@ class _StatusDot extends StatefulWidget {
   State<_StatusDot> createState() => _StatusDotState();
 }
 
-class _StatusDotState extends State<_StatusDot> with SingleTickerProviderStateMixin {
+class _StatusDotState extends State<_StatusDot>
+    with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
 
   @override
@@ -1385,7 +1370,12 @@ class _StatusDotState extends State<_StatusDot> with SingleTickerProviderStateMi
             shape: BoxShape.circle,
             color: widget.color,
             boxShadow: glow > 0
-                ? [BoxShadow(color: widget.color.withValues(alpha: 0.5), blurRadius: glow, spreadRadius: 0.5)]
+                ? [
+                    BoxShadow(
+                        color: widget.color.withValues(alpha: 0.5),
+                        blurRadius: glow,
+                        spreadRadius: 0.5)
+                  ]
                 : null,
           ),
         );
@@ -1427,7 +1417,9 @@ class _WaveformPill extends StatelessWidget {
             : null,
         color: active ? null : AppColors.card,
         border: Border.all(
-          color: active ? color.withValues(alpha: 0.3) : AppColors.border.withValues(alpha: 0.5),
+          color: active
+              ? color.withValues(alpha: 0.3)
+              : AppColors.border.withValues(alpha: 0.5),
           width: 0.5,
         ),
       ),
@@ -1447,7 +1439,8 @@ class _MiniWaveformPainter extends CustomPainter {
   final Color color;
   final int barCount;
 
-  _MiniWaveformPainter({required this.levels, required this.color, required this.barCount});
+  _MiniWaveformPainter(
+      {required this.levels, required this.color, required this.barCount});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1462,9 +1455,7 @@ class _MiniWaveformPainter extends CustomPainter {
     final cy = size.height / 2;
 
     for (int i = 0; i < barCount; i++) {
-      final idx = levels.length > barCount
-          ? levels.length - barCount + i
-          : i;
+      final idx = levels.length > barCount ? levels.length - barCount + i : i;
       final level = (idx >= 0 && idx < levels.length) ? levels[idx] : 0.0;
       final h = minH + (maxH - minH) * level;
       final x = spacing * i + spacing / 2;
@@ -1504,7 +1495,8 @@ class _HeaderButton extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
           color: bgColor,
-          border: Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
         child: Icon(icon, size: 14, color: color),
       ),
@@ -1595,6 +1587,7 @@ class _MessageBubble extends StatelessWidget {
           child = _AgentBubble(
             message: message,
             showActions: showActions,
+            voiceSync: context.read<AgentService>().ttsActiveForUi,
             onAction: onAction,
           );
           break;
@@ -1630,7 +1623,8 @@ class _SystemBubble extends StatelessWidget {
           child: Text(
             text,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: AppColors.textTertiary, height: 1.4),
+            style: TextStyle(
+                fontSize: 11, color: AppColors.textTertiary, height: 1.4),
           ),
         ),
       ),
@@ -1648,13 +1642,17 @@ class _CallStatePill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Expanded(child: Divider(color: AppColors.border.withValues(alpha: 0.3), height: 1)),
+          Expanded(
+              child: Divider(
+                  color: AppColors.border.withValues(alpha: 0.3), height: 1)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.phone_in_talk_rounded, size: 10, color: AppColors.textTertiary.withValues(alpha: 0.7)),
+                Icon(Icons.phone_in_talk_rounded,
+                    size: 10,
+                    color: AppColors.textTertiary.withValues(alpha: 0.7)),
                 const SizedBox(width: 5),
                 Text(
                   text,
@@ -1668,7 +1666,9 @@ class _CallStatePill extends StatelessWidget {
               ],
             ),
           ),
-          Expanded(child: Divider(color: AppColors.border.withValues(alpha: 0.3), height: 1)),
+          Expanded(
+              child: Divider(
+                  color: AppColors.border.withValues(alpha: 0.3), height: 1)),
         ],
       ),
     );
@@ -1678,17 +1678,20 @@ class _CallStatePill extends StatelessWidget {
 class _AgentBubble extends StatelessWidget {
   final ChatMessage message;
   final bool showActions;
+  final bool voiceSync;
   final ValueChanged<MessageAction> onAction;
 
   const _AgentBubble({
     required this.message,
     required this.showActions,
+    this.voiceSync = false,
     required this.onAction,
   });
 
   @override
   Widget build(BuildContext context) {
-    final String? agentName = context.read<JobFunctionService>().selected?.agentName;
+    final String? agentName =
+        context.read<JobFunctionService>().selected?.agentName;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -1702,7 +1705,8 @@ class _AgentBubble extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(7),
               color: AppColors.bg,
-              border: Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             ),
             child: Icon(Icons.auto_awesome, size: 12, color: AppColors.accent),
           ),
@@ -1712,7 +1716,8 @@ class _AgentBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: AppColors.card,
                     borderRadius: const BorderRadius.only(
@@ -1721,7 +1726,9 @@ class _AgentBubble extends StatelessWidget {
                       bottomLeft: Radius.circular(14),
                       bottomRight: Radius.circular(14),
                     ),
-                    border: Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                    border: Border.all(
+                        color: AppColors.border.withValues(alpha: 0.5),
+                        width: 0.5),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1731,13 +1738,18 @@ class _AgentBubble extends StatelessWidget {
                           Text(
                             agentName != null ? 'AI ($agentName)' : 'AI',
                             style: TextStyle(
-                              fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textTertiary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textTertiary,
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Text(_formatTime(message.timestamp), style: TextStyle(
-                            fontSize: 10, color: AppColors.textTertiary.withValues(alpha: 0.7),
-                          )),
+                          Text(_formatTime(message.timestamp),
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textTertiary
+                                    .withValues(alpha: 0.7),
+                              )),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -1746,8 +1758,11 @@ class _AgentBubble extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Flexible(
-                            child: Text(
-                              message.text,
+                            child: StreamingTypingText(
+                              key: ValueKey(message.id),
+                              fullText: message.text,
+                              isStreaming: message.isStreaming,
+                              voiceSync: voiceSync,
                               style: TextStyle(
                                 fontSize: 13,
                                 color: AppColors.textSecondary,
@@ -1769,10 +1784,12 @@ class _AgentBubble extends StatelessWidget {
                   Wrap(
                     spacing: 6,
                     runSpacing: 4,
-                    children: message.actions.map((a) => _ActionChip(
-                      label: a.label,
-                      onTap: () => onAction(a),
-                    )).toList(),
+                    children: message.actions
+                        .map((a) => _ActionChip(
+                              label: a.label,
+                              onTap: () => onAction(a),
+                            ))
+                        .toList(),
                   ),
                 ],
               ],
@@ -1805,18 +1822,24 @@ class _UserBubble extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_formatTime(message.timestamp), style: TextStyle(
-                      fontSize: 10, color: AppColors.textTertiary.withValues(alpha: 0.7),
-                    )),
+                    Text(_formatTime(message.timestamp),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textTertiary.withValues(alpha: 0.7),
+                        )),
                     const SizedBox(width: 6),
-                    Text('You', style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textTertiary,
-                    )),
+                    Text('You',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textTertiary,
+                        )),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: AppColors.accent.withValues(alpha: 0.12),
                     borderRadius: const BorderRadius.only(
@@ -1825,7 +1848,9 @@ class _UserBubble extends StatelessWidget {
                       bottomLeft: Radius.circular(14),
                       bottomRight: Radius.circular(14),
                     ),
-                    border: Border.all(color: AppColors.accent.withValues(alpha: 0.2), width: 0.5),
+                    border: Border.all(
+                        color: AppColors.accent.withValues(alpha: 0.2),
+                        width: 0.5),
                   ),
                   child: Text(
                     message.text,
@@ -1865,21 +1890,28 @@ class _WhisperBubble extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(_formatTime(message.timestamp), style: TextStyle(
-                      fontSize: 10, color: AppColors.textTertiary.withValues(alpha: 0.5),
-                    )),
+                    Text(_formatTime(message.timestamp),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textTertiary.withValues(alpha: 0.5),
+                        )),
                     const SizedBox(width: 6),
-                    Icon(Icons.hearing_disabled, size: 10, color: AppColors.burntAmber.withValues(alpha: 0.6)),
+                    Icon(Icons.hearing_disabled,
+                        size: 10,
+                        color: AppColors.burntAmber.withValues(alpha: 0.6)),
                     const SizedBox(width: 3),
-                    Text('W', style: TextStyle(
-                      fontSize: 10, fontWeight: FontWeight.w700,
-                      color: AppColors.burntAmber.withValues(alpha: 0.6),
-                    )),
+                    Text('W',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.burntAmber.withValues(alpha: 0.6),
+                        )),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: AppColors.bg.withValues(alpha: 0.6),
                     borderRadius: const BorderRadius.only(
@@ -1889,7 +1921,8 @@ class _WhisperBubble extends StatelessWidget {
                       bottomRight: Radius.circular(14),
                     ),
                     border: Border.all(
-                      color: AppColors.burntAmber.withValues(alpha: 0.15), width: 0.5),
+                        color: AppColors.burntAmber.withValues(alpha: 0.15),
+                        width: 0.5),
                   ),
                   child: Text(
                     message.text,
@@ -1935,8 +1968,10 @@ class _TranscriptBubble extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              message.speakerName ?? (message.role == ChatRole.host ? 'Host' : 'RP1'),
-              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: _pillColor),
+              message.speakerName ??
+                  (message.role == ChatRole.host ? 'Host' : 'RP1'),
+              style: TextStyle(
+                  fontSize: 9, fontWeight: FontWeight.w600, color: _pillColor),
             ),
           ),
           const SizedBox(width: 8),
@@ -1954,7 +1989,9 @@ class _TranscriptBubble extends StatelessWidget {
           const SizedBox(width: 6),
           Text(
             _formatTime(message.timestamp),
-            style: TextStyle(fontSize: 9, color: AppColors.textTertiary.withValues(alpha: 0.6)),
+            style: TextStyle(
+                fontSize: 9,
+                color: AppColors.textTertiary.withValues(alpha: 0.6)),
           ),
         ],
       ),
@@ -1978,7 +2015,8 @@ class _StreamingCursorState extends State<_StreamingCursor>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600))
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 600))
       ..repeat(reverse: true);
   }
 
@@ -2026,7 +2064,8 @@ class _ActionChip extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           color: AppColors.card,
-          border: Border.all(color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+          border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
         ),
         child: Text(
           label,
@@ -2123,8 +2162,11 @@ class _InputBarState extends State<_InputBar> {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       decoration: BoxDecoration(
         color: w ? AppColors.bg : AppColors.surface,
-        border: Border(top: BorderSide(
-          color: w ? AppColors.burntAmber.withValues(alpha: 0.3) : AppColors.border,
+        border: Border(
+            top: BorderSide(
+          color: w
+              ? AppColors.burntAmber.withValues(alpha: 0.3)
+              : AppColors.border,
           width: 0.5,
         )),
       ),
@@ -2135,12 +2177,15 @@ class _InputBarState extends State<_InputBar> {
             child: Container(
               constraints: const BoxConstraints(maxHeight: 120),
               decoration: BoxDecoration(
-                color: w ? AppColors.card.withValues(alpha: 0.5) : AppColors.card,
+                color:
+                    w ? AppColors.card.withValues(alpha: 0.5) : AppColors.card,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: _hasText
                       ? accentColor.withValues(alpha: 0.4)
-                      : (w ? AppColors.burntAmber.withValues(alpha: 0.2) : AppColors.border),
+                      : (w
+                          ? AppColors.burntAmber.withValues(alpha: 0.2)
+                          : AppColors.border),
                   width: 0.5,
                 ),
               ),
@@ -2158,12 +2203,15 @@ class _InputBarState extends State<_InputBar> {
                 decoration: InputDecoration(
                   hintText: _hint,
                   hintStyle: TextStyle(
-                    color: w ? AppColors.burntAmber.withValues(alpha: 0.4) : AppColors.textTertiary,
+                    color: w
+                        ? AppColors.burntAmber.withValues(alpha: 0.4)
+                        : AppColors.textTertiary,
                     fontSize: 13,
                     fontStyle: w ? FontStyle.italic : FontStyle.normal,
                   ),
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 ),
               ),
             ),
@@ -2231,7 +2279,9 @@ class _InputBarState extends State<_InputBar> {
                 borderRadius: BorderRadius.circular(10),
                 color: _hasText ? accentColor : AppColors.card,
                 border: Border.all(
-                  color: _hasText ? accentColor : AppColors.border.withValues(alpha: 0.5),
+                  color: _hasText
+                      ? accentColor
+                      : AppColors.border.withValues(alpha: 0.5),
                   width: 0.5,
                 ),
               ),

@@ -80,6 +80,9 @@ class KokoroTtsChannel: NSObject, FlutterStreamHandler {
                 voice: args["voice"] as? String ?? "af_heart",
                 result: result
             )
+        case "warmup":
+            let args = call.arguments as? [String: Any] ?? [:]
+            handleWarmup(voice: args["voice"] as? String ?? "af_heart", result: result)
         case "dispose":
             handleDispose(result: result)
         default:
@@ -174,6 +177,39 @@ class KokoroTtsChannel: NSObject, FlutterStreamHandler {
         }
         #else
         result(false)
+        #endif
+    }
+
+    /// Runs a tiny synthesis on the background queue and discards PCM so the
+    /// first user-facing `synthesize` does not pay full MLX cold-start cost.
+    private func handleWarmup(voice: String, result: @escaping FlutterResult) {
+        #if canImport(KokoroSwift)
+        guard isInitialized, let engine = ttsEngine else {
+            result(FlutterError(code: "NOT_INIT", message: "Kokoro TTS not initialized", details: nil))
+            return
+        }
+        let voiceEmbedding = voiceStyles[voice] ?? currentVoice
+        guard let embedding = voiceEmbedding else {
+            result(FlutterError(code: "NO_VOICE", message: "No voice embedding loaded for '\(voice)'", details: nil))
+            return
+        }
+        synthesisQueue.async {
+            do {
+                NSLog("[KokoroTTS] Warmup (discarded PCM)...")
+                let start = CFAbsoluteTimeGetCurrent()
+                _ = try engine.generateAudio(voice: embedding, language: .enUS, text: ".")
+                let elapsed = CFAbsoluteTimeGetCurrent() - start
+                NSLog("[KokoroTTS] Warmup complete: \(elapsed)s")
+                DispatchQueue.main.async { result(nil) }
+            } catch {
+                DispatchQueue.main.async {
+                    NSLog("[KokoroTTS] Warmup error: \(error)")
+                    result(nil)
+                }
+            }
+        }
+        #else
+        result(nil)
         #endif
     }
 

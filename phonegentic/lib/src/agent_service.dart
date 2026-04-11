@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -48,6 +50,57 @@ class AgentService extends ChangeNotifier {
 
   final Queue<double> _levels = Queue<double>();
   static const int waveformBars = 14;
+
+  // TTS waveform: audio chunks arrive in a burst but play over seconds.
+  // Slice each chunk into 100ms segments, queue the per-segment RMS,
+  // and drain at playback rate so the waveform tracks actual audio.
+  final Queue<double> _ttsLevelQueue = Queue<double>();
+  Timer? _ttsLevelTimer;
+  static const int _ttsLevelIntervalMs = 100;
+  static const int _samplesPerSegment = 2400; // 100ms at 24kHz
+
+  void _pushTtsAudioLevel(Uint8List pcm16) {
+    if (pcm16.length < 4) return;
+    final bd = ByteData.sublistView(pcm16);
+    final totalSamples = pcm16.length ~/ 2;
+
+    for (int offset = 0; offset < totalSamples; offset += _samplesPerSegment) {
+      final end = min(offset + _samplesPerSegment, totalSamples);
+      final segLen = end - offset;
+      double sum = 0;
+      for (int i = offset; i < end; i++) {
+        final s = bd.getInt16(i * 2, Endian.little) / 32768.0;
+        sum += s * s;
+      }
+      _ttsLevelQueue.addLast((sqrt(sum / segLen) * 4.0).clamp(0.0, 1.0));
+    }
+
+    _ttsLevelTimer ??= Timer.periodic(
+      const Duration(milliseconds: _ttsLevelIntervalMs),
+      (_) => _drainTtsLevel(),
+    );
+  }
+
+  void _drainTtsLevel() {
+    if (_ttsLevelQueue.isEmpty) {
+      _ttsLevelTimer?.cancel();
+      _ttsLevelTimer = null;
+      notifyListeners();
+      return;
+    }
+    final level = _ttsLevelQueue.removeFirst();
+    _levels.addLast(level);
+    while (_levels.length > waveformBars) {
+      _levels.removeFirst();
+    }
+    notifyListeners();
+  }
+
+  void _stopTtsLevelDrain() {
+    _ttsLevelTimer?.cancel();
+    _ttsLevelTimer = null;
+    _ttsLevelQueue.clear();
+  }
 
   final List<ChatMessage> _messages = [];
   AgentBootContext _bootContext = AgentBootContext.trivia();
@@ -101,6 +154,9 @@ class AgentService extends ChangeNotifier {
     }
     _applyInitialMuteState();
     _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
+    if (_bootContext.kokoroVoiceStyle != null && _kokoroTts != null) {
+      _kokoroTts!.setVoice(_bootContext.kokoroVoiceStyle!);
+    }
     _pushInstructionsIfLive();
     notifyListeners();
   }
@@ -164,6 +220,71 @@ class AgentService extends ChangeNotifier {
 
   String? _streamingMessageId;
   int _ttsBracketDepth = 0;
+
+  /// When TTS is active, hold agent bubble text until the first PCM plays so
+  /// the UI does not run ahead of speech. Raw model deltas accumulate here.
+  bool _voiceHoldUntilFirstPcm = false;
+  StringBuffer? _voiceUiBuffer;
+
+  /// Set when Claude's isFinal arrives while the voice hold is still active.
+  /// The PCM listener uses this to finalize the message on release.
+  bool _voiceFinalPending = false;
+  Timer? _voiceFinalTimer;
+
+  void _resetVoiceUiSyncState() {
+    _voiceHoldUntilFirstPcm = false;
+    _voiceUiBuffer = null;
+    _voiceFinalPending = false;
+    _voiceFinalTimer?.cancel();
+    _voiceFinalTimer = null;
+  }
+
+  /// Call before routing TTS PCM to the speaker. Flushes `_voiceUiBuffer`
+  /// into the streaming agent message on the first chunk of each generation.
+  void _releaseVoiceUiIfWaitingForTts(Uint8List pcm) {
+    if (pcm.isEmpty) return;
+    if (!_voiceHoldUntilFirstPcm) return;
+    if (_streamingMessageId == null) {
+      _resetVoiceUiSyncState();
+      return;
+    }
+    final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+    if (idx < 0) {
+      _resetVoiceUiSyncState();
+      return;
+    }
+    if (_voiceUiBuffer != null && _voiceUiBuffer!.isNotEmpty) {
+      _messages[idx].text = _voiceUiBuffer.toString();
+      _voiceUiBuffer = null;
+    }
+    _voiceHoldUntilFirstPcm = false;
+
+    if (_voiceFinalPending) {
+      _messages[idx].isStreaming = false;
+      _voiceFinalPending = false;
+      _voiceFinalTimer?.cancel();
+      _voiceFinalTimer = null;
+      _streamingMessageId = null;
+    }
+    notifyListeners();
+  }
+
+  /// Safety fallback: release voice hold if TTS never produced audio.
+  void _forceReleaseVoiceHold() {
+    if (!_voiceHoldUntilFirstPcm) return;
+    if (_streamingMessageId != null) {
+      final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+      if (idx >= 0) {
+        if (_voiceUiBuffer != null && _voiceUiBuffer!.isNotEmpty) {
+          _messages[idx].text = _voiceUiBuffer.toString();
+        }
+        _messages[idx].isStreaming = false;
+      }
+    }
+    _resetVoiceUiSyncState();
+    _streamingMessageId = null;
+    notifyListeners();
+  }
 
   // Agent-initiated voice sampling state
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
@@ -279,6 +400,7 @@ class AgentService extends ChangeNotifier {
 
   final List<TranscriptionEvent> _pendingTranscripts = [];
   Timer? _postSpeakFlushTimer;
+  Timer? _playbackEndDebounce;
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -300,9 +422,14 @@ class AgentService extends ChangeNotifier {
 
   bool get active => _active;
   bool get muted => _muted;
-  bool get speaking => _speaking;
+  bool get speaking => _speaking || _ttsLevelTimer != null;
   bool get whisperMode => _splitPipeline ? _ttsMuted : _whisperMode;
   bool get canToggleWhisper => true;
+
+  /// True when TTS is active and unmuted — used by the UI to slow down the
+  /// typewriter reveal so text matches speech pace.
+  bool get ttsActiveForUi =>
+      _splitPipeline && _hasTts && !_ttsMuted && !_muted;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -426,6 +553,8 @@ class AgentService extends ChangeNotifier {
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
         _messages.clear();
+        _resetVoiceUiSyncState();
+        _streamingMessageId = null;
         _messages.add(ChatMessage.system(
             'Voice agent not configured. Go to Settings > Agents to set up.'));
         notifyListeners();
@@ -434,6 +563,8 @@ class AgentService extends ChangeNotifier {
 
       _statusText = 'Connecting...';
       _messages.clear();
+      _resetVoiceUiSyncState();
+      _streamingMessageId = null;
       _messages.add(ChatMessage.system('Connecting to AI...'));
       notifyListeners();
 
@@ -464,6 +595,8 @@ class AgentService extends ChangeNotifier {
       }
 
       _messages.clear();
+      _resetVoiceUiSyncState();
+      _streamingMessageId = null;
       if (_active) {
         await _loadPreviousConversation();
         final jfTitle = _jobFunctionService?.selected?.title;
@@ -596,6 +729,8 @@ class AgentService extends ChangeNotifier {
     int elChunkCount = 0;
     _ttsAudioSub = _tts!.audioChunks.listen((pcm) {
       if (_ttsMuted) return;
+      _releaseVoiceUiIfWaitingForTts(pcm);
+      _pushTtsAudioLevel(pcm);
       elChunkCount++;
       if (elChunkCount <= 3 || elChunkCount % 25 == 0) {
         debugPrint('[AgentService] ElevenLabs audio #$elChunkCount: '
@@ -605,10 +740,15 @@ class AgentService extends ChangeNotifier {
     });
 
     _ttsSpeakingSub = _tts!.speakingState.listen((speaking) {
-      _speaking = speaking;
-      if (!speaking) {
-        _speakingEndTime = DateTime.now();
-        _schedulePostSpeakFlush();
+      // Only set _speaking = true here; playback outlasts generation, so
+      // _speaking = false is deferred to onPlaybackComplete to keep the
+      // echo guard active until audio actually stops.
+      if (speaking) {
+        _speaking = true;
+        if (!_muted) {
+          _statusText = 'Speaking';
+          notifyListeners();
+        }
       }
     });
 
@@ -620,18 +760,25 @@ class AgentService extends ChangeNotifier {
     final kokoro = KokoroTtsService(config: tc);
     _kokoroTts = kokoro;
 
-    kokoro.initialize().then((_) {
-      if (!kokoro.isInitialized) {
-        debugPrint('[AgentService] Kokoro TTS failed to initialize');
-        _kokoroTts = null;
-        return;
+    kokoro.initialize().then((_) async {
+      try {
+        if (!kokoro.isInitialized) {
+          debugPrint('[AgentService] Kokoro TTS failed to initialize');
+          _kokoroTts = null;
+          return;
+        }
+        await kokoro.setVoice(tc.kokoroVoiceStyle);
+        await kokoro.warmUpSynthesis();
+      } catch (e, st) {
+        debugPrint('[AgentService] Kokoro post-init: $e\n$st');
       }
-      kokoro.setVoice(tc.kokoroVoiceStyle);
     });
 
     int chunkCount = 0;
     _ttsAudioSub = kokoro.audioChunks.listen((pcm) {
       if (_ttsMuted) return;
+      _releaseVoiceUiIfWaitingForTts(pcm);
+      _pushTtsAudioLevel(pcm);
       chunkCount++;
       if (chunkCount <= 3 || chunkCount % 25 == 0) {
         debugPrint('[AgentService] Kokoro audio #$chunkCount: '
@@ -641,10 +788,12 @@ class AgentService extends ChangeNotifier {
     });
 
     _ttsSpeakingSub = kokoro.speakingState.listen((speaking) {
-      _speaking = speaking;
-      if (!speaking) {
-        _speakingEndTime = DateTime.now();
-        _schedulePostSpeakFlush();
+      if (speaking) {
+        _speaking = true;
+        if (!_muted) {
+          _statusText = 'Speaking';
+          notifyListeners();
+        }
       }
     });
 
@@ -672,7 +821,7 @@ class AgentService extends ChangeNotifier {
 
   void _activeTtsWarmUp() {
     _tts?.warmUp();
-    // Kokoro doesn't need a warmUp — model is loaded on initialize().
+    // Kokoro: discarded `warmup` synthesis runs once after init (see _initKokoroTts).
   }
 
   void _activeTtsDispose() {
@@ -724,7 +873,7 @@ class AgentService extends ChangeNotifier {
   }
 
   String _buildTextAgentInstructions() {
-    final hasTts = _tts != null;
+    final hasTts = (_tts != null || _kokoroTts != null) && !_ttsMuted && !_muted;
     final ctx = AgentBootContext(
       name: _bootContext.name,
       role: _bootContext.role,
@@ -1598,26 +1747,47 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
-      if (!_ttsMuted) _activeTtsEndGeneration();
+      if (!_ttsMuted && !_muted) _activeTtsEndGeneration();
 
       if (_streamingMessageId != null) {
         final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
         if (idx >= 0) {
-          _messages[idx].isStreaming = false;
-          if (event.text.isNotEmpty) {
-            _messages[idx].text = event.text;
-          }
-          final finalText = _messages[idx].text;
+          // Determine the canonical final text.
+          final finalText = event.text.isNotEmpty
+              ? event.text
+              : (_voiceUiBuffer != null && _voiceUiBuffer!.isNotEmpty
+                  ? _voiceUiBuffer.toString()
+                  : _messages[idx].text);
+
           _recentAgentTexts.add(finalText);
           while (_recentAgentTexts.length > _maxRecentAgentTexts) {
             _recentAgentTexts.removeAt(0);
           }
-          callHistory?.addTranscript(
-            role: 'agent',
-            text: finalText,
-          );
+          callHistory?.addTranscript(role: 'agent', text: finalText);
+
+          if (_voiceHoldUntilFirstPcm) {
+            // PCM hasn't arrived yet — keep the hold so text stays hidden
+            // until audio actually starts. Store full text for release.
+            _voiceUiBuffer = StringBuffer(finalText);
+            _voiceFinalPending = true;
+            // Safety: force-release after 8s in case TTS never produces audio.
+            _voiceFinalTimer?.cancel();
+            _voiceFinalTimer = Timer(const Duration(seconds: 8), () {
+              if (!_voiceHoldUntilFirstPcm) return;
+              debugPrint('[AgentService] Voice-hold safety timeout — '
+                  'releasing text without PCM');
+              _forceReleaseVoiceHold();
+            });
+          } else {
+            // PCM already arrived — finalize immediately.
+            _messages[idx].text = finalText;
+            _voiceUiBuffer = null;
+            _messages[idx].isStreaming = false;
+            _streamingMessageId = null;
+          }
+        } else {
+          _streamingMessageId = null;
         }
-        _streamingMessageId = null;
       }
       notifyListeners();
       return;
@@ -1630,14 +1800,22 @@ class AgentService extends ChangeNotifier {
             _callPhase == CallPhase.settling) &&
         _callPhase != CallPhase.idle;
 
+    /// Only defer when this pipeline drives speech via Kokoro/ElevenLabs
+    /// (`_ttsAudioSub`). Unified OpenAI audio does not use that stream.
+    final ttsActive = !_ttsMuted && !_muted;
+    final deferAgentTextForTts =
+        _splitPipeline && _hasTts && ttsActive && !suppressTts;
+
     // Pipe text delta to TTS (ElevenLabs or Kokoro), stripping bracketed
     // stage directions. Skip when muted to avoid burning TTS credits/compute.
-    if (_hasTts && !_ttsMuted && event.text.isNotEmpty && !suppressTts) {
+    if (_hasTts && ttsActive && event.text.isNotEmpty && !suppressTts) {
       if (_streamingMessageId == null) {
         _ttsBracketDepth = 0;
         _activeTtsStartGeneration();
       }
-      final ttsText = _stripBracketsForTts(event.text);
+      final ttsText = _flattenMarkdownForTtsDelta(
+        _stripBracketsForTts(event.text),
+      ).trim();
       if (ttsText.isNotEmpty) {
         _activeTtsSendText(ttsText);
       }
@@ -1646,16 +1824,44 @@ class AgentService extends ChangeNotifier {
     if (_streamingMessageId != null) {
       final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
       if (idx >= 0) {
-        _messages[idx].text += event.text;
+        if (deferAgentTextForTts && _voiceHoldUntilFirstPcm) {
+          _voiceUiBuffer ??= StringBuffer();
+          _voiceUiBuffer!.write(event.text);
+        } else {
+          _messages[idx].text += event.text;
+        }
         notifyListeners();
         return;
       }
     }
 
-    final msg = ChatMessage.agent(event.text, isStreaming: true);
+    final initialText = deferAgentTextForTts ? '' : event.text;
+    final msg = ChatMessage.agent(initialText, isStreaming: true);
     _streamingMessageId = msg.id;
+    if (deferAgentTextForTts) {
+      _voiceHoldUntilFirstPcm = true;
+      _voiceUiBuffer = StringBuffer(event.text);
+    } else {
+      _resetVoiceUiSyncState();
+    }
     _messages.add(msg);
     notifyListeners();
+  }
+
+  /// Per-delta cleanup so markdown does not get spoken (e.g. `**`, headings).
+  /// Paragraph breaks become `. ` so the segmenter treats them as sentence
+  /// boundaries, keeping first-segment size small for faster time-to-audio.
+  static String _flattenMarkdownForTtsDelta(String s) {
+    if (s.isEmpty) return s;
+    var t = s.replaceAll('**', ' ');
+    t = t.replaceAll('__', ' ');
+    t = t.replaceAll('`', '');
+    t = t.replaceAllMapped(RegExp(r'^#{1,6}\s+', multiLine: true), (_) => '');
+    // Paragraph breaks → sentence boundary so TTS flushes sooner.
+    t = t.replaceAllMapped(RegExp(r'([.!?…])\s*\n{2,}'), (m) => '${m[1]} ');
+    t = t.replaceAll(RegExp(r'\n{2,}'), '. ');
+    t = t.replaceAll('\n', ' ');
+    return t;
   }
 
   /// Strip bracketed text from a streaming delta before sending to TTS.
@@ -3011,6 +3217,8 @@ class AgentService extends ChangeNotifier {
       _pendingTranscripts.clear();
       _settleTranscripts.clear();
       _postSpeakFlushTimer?.cancel();
+      _playbackEndDebounce?.cancel();
+      _stopTtsLevelDrain();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
       _activeTtsEndGeneration();
@@ -3039,7 +3247,7 @@ class AgentService extends ChangeNotifier {
             _whisper.muted = false;
             _statusText = _speaking ? 'Speaking...' : 'Listening...';
           }
-          if (_splitPipeline && _ttsMuted) {
+          if (_splitPipeline && _ttsMuted && !_bootContext.textOnly) {
             _ttsMuted = false;
           }
           notifyListeners();
@@ -3321,7 +3529,23 @@ class AgentService extends ChangeNotifier {
   Future<dynamic> _handleNativeTapCall(MethodCall call) async {
     switch (call.method) {
       case 'onPlaybackComplete':
-        _whisper.isTtsPlaying = false;
+        if (_splitPipeline) {
+          // AudioTap fires this per-buffer drain, not once at the end.
+          // Debounce: keep the echo guard open until 2s after the LAST event.
+          _playbackEndDebounce?.cancel();
+          _playbackEndDebounce = Timer(const Duration(seconds: 2), () {
+            _whisper.isTtsPlaying = false;
+            if (_speaking) {
+              _speaking = false;
+              _speakingEndTime = DateTime.now();
+              _statusText = _muted ? 'Not Listening...' : 'Listening';
+              notifyListeners();
+              _schedulePostSpeakFlush();
+            }
+          });
+        } else {
+          _whisper.isTtsPlaying = false;
+        }
         break;
       case 'onBeepDetected':
         if (!_ivrHeard || !_inBeepWindow || _voicemailPromptSent) {
@@ -3359,9 +3583,13 @@ class AgentService extends ChangeNotifier {
     _userMuteOverride = true;
     _muted = !_muted;
     _whisper.muted = _muted;
+    if (_muted && _splitPipeline) {
+      _activeTtsEndGeneration();
+    }
     if (!_speaking) {
       _statusText = _muted ? 'Not Listening...' : 'Listening';
     }
+    _pushInstructionsIfLive();
     notifyListeners();
   }
 
@@ -3390,6 +3618,7 @@ class AgentService extends ChangeNotifier {
     _callPhase = CallPhase.idle;
     _levels.clear();
     _messages.clear();
+    _resetVoiceUiSyncState();
     _streamingMessageId = null;
     _statusText = 'Reconnecting...';
     notifyListeners();
@@ -3401,6 +3630,8 @@ class AgentService extends ChangeNotifier {
     _cancelSettleTimer();
     _cancelConnectedGreeting();
     _postSpeakFlushTimer?.cancel();
+    _playbackEndDebounce?.cancel();
+    _stopTtsLevelDrain();
     _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
@@ -3414,6 +3645,8 @@ class AgentService extends ChangeNotifier {
     _transcriptSub?.cancel();
     _responseTextSub?.cancel();
     _functionCallSub?.cancel();
+    _resetVoiceUiSyncState();
+    _streamingMessageId = null;
     _whisper.dispose();
     super.dispose();
   }
