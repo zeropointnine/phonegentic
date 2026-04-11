@@ -15,6 +15,8 @@ class ActiveCallInfo {
   final String? to;
   final int? durationSeconds;
   final String? createdAt;
+  final String? callSessionId;
+  final String? callLegId;
 
   const ActiveCallInfo({
     required this.callControlId,
@@ -22,11 +24,14 @@ class ActiveCallInfo {
     this.to,
     this.durationSeconds,
     this.createdAt,
+    this.callSessionId,
+    this.callLegId,
   });
 
   @override
   String toString() =>
-      'ActiveCallInfo(ccid: $callControlId, from: $from, to: $to)';
+      'ActiveCallInfo(ccid: $callControlId, from: $from, to: $to, '
+      'session: $callSessionId, leg: $callLegId)';
 }
 
 /// Result of creating a conference bridge.
@@ -35,6 +40,30 @@ class ConferenceBridge {
   final String name;
 
   const ConferenceBridge({required this.conferenceId, required this.name});
+}
+
+/// A participant currently in a conference.
+class ConferenceParticipant {
+  final String callControlId;
+  final String? callLegId;
+  final String? callSessionId;
+  final bool muted;
+  final bool onHold;
+  final String? status;
+
+  const ConferenceParticipant({
+    required this.callControlId,
+    this.callLegId,
+    this.callSessionId,
+    this.muted = false,
+    this.onHold = false,
+    this.status,
+  });
+
+  @override
+  String toString() =>
+      'ConferenceParticipant(ccid: $callControlId, session: $callSessionId, '
+      'leg: $callLegId, status: $status)';
 }
 
 // ---------------------------------------------------------------------------
@@ -73,4 +102,7 @@ abstract class ConferenceProvider {
 
   /// Remove a participant from the conference (they stay on their own leg).
   Future<void> removeParticipant(String conferenceId, String callControlId);
+
+  /// List all current participants in the conference.
+  Future<List<ConferenceParticipant>> listParticipants(String conferenceId);
 }

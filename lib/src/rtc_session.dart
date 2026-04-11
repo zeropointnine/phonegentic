@@ -1863,6 +1863,7 @@ class RTCSession extends EventManager implements Owner {
           'emit "peerconnection:setlocaldescriptionfailed" [error:${error.toString()}]');
       emit(EventSetLocalDescriptionFailed(exception: error));
       completer.completeError(error);
+      return completer.future;
     }
 
     // Resolve right away if 'pc.iceGatheringState' is 'complete'.
@@ -3376,6 +3377,31 @@ class RTCSession extends EventManager implements Owner {
     }
     sdp['media'] = mediaList;
 
+    // Conference bridges (e.g. FreeSWITCH via Telnyx) may send re-INVITEs
+    // without a=group:BUNDLE even though media sections carry mid= values.
+    // Once BUNDLE has been negotiated on the peer connection, WebRTC refuses
+    // to create an answer that drops mids from the established BUNDLE group.
+    // Synthesise the missing BUNDLE group so the offer is compatible.
+    final List<String> mids = <String>[];
+    for (final Map<String, dynamic> m in mediaList) {
+      final dynamic mid = m['mid'];
+      if (mid != null) mids.add(mid.toString());
+    }
+    if (mids.isNotEmpty) {
+      final List<dynamic> groups =
+          (sdp['groups'] as List<dynamic>?) ?? <dynamic>[];
+      final bool hasBundleGroup = groups.any(
+        (dynamic g) =>
+            g is Map && (g['type'] as String?)?.toUpperCase() == 'BUNDLE',
+      );
+      if (!hasBundleGroup) {
+        groups.add(<String, dynamic>{
+          'type': 'BUNDLE',
+          'mids': mids.join(' '),
+        });
+        sdp['groups'] = groups;
+      }
+    }
     return sdp_transform.write(sdp, null);
   }
 

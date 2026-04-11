@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -164,7 +163,8 @@ class AgentService extends ChangeNotifier {
   /// Enforce stayMuted / stayUnmuted policy on startup or job function switch.
   /// Skipped when a call is active — [_applyMutePolicy] handles call phases.
   void _applyInitialMuteState() {
-    if (_callPhase.isActive || _callPhase.isSettling ||
+    if (_callPhase.isActive ||
+        _callPhase.isSettling ||
         _callPhase == CallPhase.onHold) {
       return;
     }
@@ -428,8 +428,7 @@ class AgentService extends ChangeNotifier {
 
   /// True when TTS is active and unmuted — used by the UI to slow down the
   /// typewriter reveal so text matches speech pace.
-  bool get ttsActiveForUi =>
-      _splitPipeline && _hasTts && !_ttsMuted && !_muted;
+  bool get ttsActiveForUi => _splitPipeline && _hasTts && !_ttsMuted && !_muted;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
   List<ChatMessage> get messages => List.unmodifiable(_messages);
@@ -797,7 +796,8 @@ class AgentService extends ChangeNotifier {
       }
     });
 
-    debugPrint('[AgentService] Kokoro TTS active: voice=${tc.kokoroVoiceStyle}');
+    debugPrint(
+        '[AgentService] Kokoro TTS active: voice=${tc.kokoroVoiceStyle}');
   }
 
   // -- Active TTS abstraction (ElevenLabs or Kokoro) --------------------------
@@ -843,8 +843,7 @@ class AgentService extends ChangeNotifier {
 
     final buf = StringBuffer();
     buf.writeln('\n## Calendar Schedule');
-    buf.writeln(
-        'You have make_call, end_call, and (when configured) SMS tools '
+    buf.writeln('You have make_call, end_call, and (when configured) SMS tools '
         '(send_sms, reply_sms, search_messages).');
     buf.writeln('When a calendar event starts, follow the job function '
         'instructions. If the event involves a call, use make_call to dial; '
@@ -873,7 +872,8 @@ class AgentService extends ChangeNotifier {
   }
 
   String _buildTextAgentInstructions() {
-    final hasTts = (_tts != null || _kokoroTts != null) && !_ttsMuted && !_muted;
+    final hasTts =
+        (_tts != null || _kokoroTts != null) && !_ttsMuted && !_muted;
     final ctx = AgentBootContext(
       name: _bootContext.name,
       role: _bootContext.role,
@@ -905,9 +905,29 @@ class AgentService extends ChangeNotifier {
 
   static String _buildDateTimeContext() {
     final now = DateTime.now();
-    final weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    final months = ['January', 'February', 'March', 'April', 'May', 'June',
-                    'July', 'August', 'September', 'October', 'November', 'December'];
+    final weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday'
+    ];
+    final months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December'
+    ];
     final day = weekdays[now.weekday - 1];
     final month = months[now.month - 1];
     final h = now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
@@ -984,10 +1004,9 @@ class AgentService extends ChangeNotifier {
     {
       'type': 'function',
       'name': 'lookup_flight',
-      'description':
-          'Look up real-time flight information by flight number. '
-              'Returns airline, origin, destination, departure/arrival times, '
-              'status, gate info.',
+      'description': 'Look up real-time flight information by flight number. '
+          'Returns airline, origin, destination, departure/arrival times, '
+          'status, gate info.',
       'parameters': {
         'type': 'object',
         'properties': {
@@ -1028,8 +1047,7 @@ class AgentService extends ChangeNotifier {
   static const _flightToolsClaude = [
     {
       'name': 'lookup_flight',
-      'description':
-          'Look up real-time flight information by flight number. '
+      'description': 'Look up real-time flight information by flight number. '
           'Returns airline, origin, destination, departure/arrival times, '
           'status, gate info.',
       'input_schema': {
@@ -1048,7 +1066,7 @@ class AgentService extends ChangeNotifier {
       'name': 'search_flights_by_route',
       'description':
           'Search all flights between two airports. Returns upcoming and '
-          'recent flights with airline, ident, aircraft, status, and times.',
+              'recent flights with airline, ident, aircraft, status, and times.',
       'input_schema': {
         'type': 'object',
         'properties': {
@@ -1073,8 +1091,7 @@ class AgentService extends ChangeNotifier {
     {
       'type': 'function',
       'name': 'send_gmail',
-      'description':
-          'Send an email via Gmail. Composes and sends immediately.',
+      'description': 'Send an email via Gmail. Composes and sends immediately.',
       'parameters': {
         'type': 'object',
         'properties': {
@@ -1139,8 +1156,7 @@ class AgentService extends ChangeNotifier {
   static const _gmailToolsClaude = [
     {
       'name': 'send_gmail',
-      'description':
-          'Send an email via Gmail. Composes and sends immediately.',
+      'description': 'Send an email via Gmail. Composes and sends immediately.',
       'input_schema': {
         'type': 'object',
         'properties': {
@@ -1164,7 +1180,7 @@ class AgentService extends ChangeNotifier {
       'name': 'search_gmail',
       'description':
           'Search the user\'s Gmail inbox. Returns matching emails with '
-          'sender, subject, snippet, and date.',
+              'sender, subject, snippet, and date.',
       'input_schema': {
         'type': 'object',
         'properties': {
@@ -1205,8 +1221,7 @@ class AgentService extends ChangeNotifier {
     {
       'type': 'function',
       'name': 'create_google_calendar_event',
-      'description':
-          'Create an event on Google Calendar.',
+      'description': 'Create an event on Google Calendar.',
       'parameters': {
         'type': 'object',
         'properties': {
@@ -1561,8 +1576,7 @@ class AgentService extends ChangeNotifier {
   void _flushPendingTranscripts() {
     if (_pendingTranscripts.isEmpty) return;
     if (_speaking) return; // still speaking, wait
-    final msSince =
-        DateTime.now().difference(_speakingEndTime).inMilliseconds;
+    final msSince = DateTime.now().difference(_speakingEndTime).inMilliseconds;
     if (msSince < _echoGuardMs) {
       _schedulePostSpeakFlush();
       return;
@@ -1692,7 +1706,8 @@ class AgentService extends ChangeNotifier {
     // Low-confidence transcripts from the mic are probably TV, TikTok, etc.
     if (_callPhase == CallPhase.idle) {
       if (confidence > 0.0 && confidence < 0.25) {
-        debugPrint('[AgentService] Ambient audio dropped (confidence=$confidence): "$text"');
+        debugPrint(
+            '[AgentService] Ambient audio dropped (confidence=$confidence): "$text"');
         return;
       }
     }
@@ -1706,9 +1721,11 @@ class AgentService extends ChangeNotifier {
       if (confidence >= 0.65) {
         speaker.name = voiceprintName;
         _pushInstructionsIfLive();
-        debugPrint('[AgentService] Voiceprint accepted: "$voiceprintName" (confidence=$confidence)');
+        debugPrint(
+            '[AgentService] Voiceprint accepted: "$voiceprintName" (confidence=$confidence)');
       } else {
-        debugPrint('[AgentService] Voiceprint rejected: "$voiceprintName" (confidence=$confidence < 0.65)');
+        debugPrint(
+            '[AgentService] Voiceprint rejected: "$voiceprintName" (confidence=$confidence < 0.65)');
       }
     }
 
@@ -1726,9 +1743,8 @@ class AgentService extends ChangeNotifier {
     );
 
     // Tag low-confidence transcripts so the agent can judge whether to respond
-    final label = lowConfidence
-        ? '${speaker.label} (low confidence)'
-        : speaker.label;
+    final label =
+        lowConfidence ? '${speaker.label} (low confidence)' : speaker.label;
     _textAgent?.addTranscript(label, text);
   }
 
@@ -2260,9 +2276,9 @@ class AgentService extends ChangeNotifier {
     // Wait for TTS to finish so the agent's message is fully delivered
     // before the line drops (e.g. voicemail, goodbyes).
     if (_speaking) {
-      debugPrint('[AgentService] end_call deferred — waiting for TTS to finish');
-      final speakingStream =
-          _kokoroTts?.speakingState ?? _tts?.speakingState;
+      debugPrint(
+          '[AgentService] end_call deferred — waiting for TTS to finish');
+      final speakingStream = _kokoroTts?.speakingState ?? _tts?.speakingState;
       if (speakingStream != null) {
         final completer = Completer<void>();
         late StreamSubscription<bool> sub;
@@ -2498,7 +2514,10 @@ class AgentService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Future<String> _handleStartVoiceSample(Map<String, dynamic> args) async {
-    if (_agentSampling) return 'Already sampling. Stop the current sample first.';
+    if (_agentSampling) {
+      return 'Already sampling. Stop the current sample first.';
+    }
+
     if (!_callPhase.isActive && _callPhase != CallPhase.settling) {
       return 'No active call to sample from.';
     }
@@ -2524,7 +2543,8 @@ class AgentService extends ChangeNotifier {
       _agentSampling = true;
       _messages.add(ChatMessage.system('Voice sampling started ($party)'));
       notifyListeners();
-      debugPrint('[AgentService] Agent-initiated voice sample → $_agentSamplePath ($party)');
+      debugPrint(
+          '[AgentService] Agent-initiated voice sample → $_agentSamplePath ($party)');
       return 'Voice sampling started for $party party. '
           'Let them speak for at least 10-15 seconds, then call stop_and_clone_voice.';
     } catch (e) {
@@ -2645,7 +2665,10 @@ class AgentService extends ChangeNotifier {
     }
     final origin = args['origin'] as String?;
     final destination = args['destination'] as String?;
-    if (origin == null || origin.isEmpty || destination == null || destination.isEmpty) {
+    if (origin == null ||
+        origin.isEmpty ||
+        destination == null ||
+        destination.isEmpty) {
       return 'Both origin and destination airport codes are required.';
     }
 
@@ -2776,7 +2799,8 @@ class AgentService extends ChangeNotifier {
       if (result == null || result.emails.isEmpty) {
         return 'No emails found for "$query".';
       }
-      final buf = StringBuffer('Found ${result.emails.length} email(s) for "$query":\n');
+      final buf = StringBuffer(
+          'Found ${result.emails.length} email(s) for "$query":\n');
       for (var i = 0; i < result.emails.length && i < 10; i++) {
         final e = result.emails[i];
         buf.write('${i + 1}. ');
@@ -2846,7 +2870,10 @@ class AgentService extends ChangeNotifier {
     final endTime = args['end_time'] as String?;
     if (title == null || title.isEmpty) return 'No event title provided.';
     if (date == null || date.isEmpty) return 'No date provided.';
-    if (startTime == null || startTime.isEmpty) return 'No start time provided.';
+    if (startTime == null || startTime.isEmpty) {
+      return 'No start time provided.';
+    }
+
     if (endTime == null || endTime.isEmpty) return 'No end time provided.';
 
     try {
@@ -3269,15 +3296,18 @@ class AgentService extends ChangeNotifier {
     }
 
     final demo = demoModeService;
-    final maskedRemoteId = (demo != null && demo.enabled && _remoteIdentity != null)
-        ? demo.maskPhone(_remoteIdentity!)
-        : _remoteIdentity;
-    final maskedRemoteName = (demo != null && demo.enabled && _remoteDisplayName != null)
-        ? demo.maskDisplayName(_remoteDisplayName!)
-        : _remoteDisplayName;
-    final maskedLocalId = (demo != null && demo.enabled && _localIdentity != null)
-        ? demo.maskPhone(_localIdentity!)
-        : _localIdentity;
+    final maskedRemoteId =
+        (demo != null && demo.enabled && _remoteIdentity != null)
+            ? demo.maskPhone(_remoteIdentity!)
+            : _remoteIdentity;
+    final maskedRemoteName =
+        (demo != null && demo.enabled && _remoteDisplayName != null)
+            ? demo.maskDisplayName(_remoteDisplayName!)
+            : _remoteDisplayName;
+    final maskedLocalId =
+        (demo != null && demo.enabled && _localIdentity != null)
+            ? demo.maskPhone(_localIdentity!)
+            : _localIdentity;
 
     final contextText = phase.contextMessage(
       partyCount: partyCount,
@@ -3354,14 +3384,16 @@ class AgentService extends ChangeNotifier {
         ? DateTime.now().difference(_settleStartTime!).inMilliseconds
         : 0;
     if (_whisper.vadActive && elapsed < _maxSettleMs) {
-      debugPrint('[AgentService] Settle timer fired but VAD active — deferring');
+      debugPrint(
+          '[AgentService] Settle timer fired but VAD active — deferring');
       _settleTimer = Timer(const Duration(milliseconds: 1000), () {
         _tryPromoteFromSettle();
       });
       return;
     }
     if (elapsed >= _maxSettleMs) {
-      debugPrint('[AgentService] Settle ceiling reached in VAD loop — force-promoting');
+      debugPrint(
+          '[AgentService] Settle ceiling reached in VAD loop — force-promoting');
     }
     _promoteToConnected();
   }
@@ -3413,8 +3445,7 @@ class AgentService extends ChangeNotifier {
     if (_callPhase != CallPhase.connected) return;
 
     _greetDeferStart ??= DateTime.now();
-    final elapsed =
-        DateTime.now().difference(_greetDeferStart!).inMilliseconds;
+    final elapsed = DateTime.now().difference(_greetDeferStart!).inMilliseconds;
 
     if (_whisper.vadActive && elapsed < _maxGreetDeferMs) {
       debugPrint('[AgentService] Greeting deferred — VAD still active');
@@ -3430,13 +3461,13 @@ class AgentService extends ChangeNotifier {
     // now so the LLM can respond to what the remote party actually said
     // instead of getting a generic "begin conversation" nudge.
     if (_settleTranscripts.isNotEmpty) {
-      debugPrint('[AgentService] Connected greeting — forwarding ${_settleTranscripts.length} settle transcript(s)');
+      debugPrint(
+          '[AgentService] Connected greeting — forwarding ${_settleTranscripts.length} settle transcript(s)');
       _drainSettleTranscripts();
       return;
     }
 
-    const prompt =
-        '[SYSTEM] The call is connected and the line is quiet. '
+    const prompt = '[SYSTEM] The call is connected and the line is quiet. '
         'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
         'Otherwise, begin the conversation per your job function instructions.';
     if (_splitPipeline && _textAgent != null) {

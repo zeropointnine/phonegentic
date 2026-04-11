@@ -157,7 +157,7 @@ class _AgentHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final jfService = context.watch<JobFunctionService>();
-    final tearSheet = context.watch<TearSheetService>();
+
     final selectedName = jfService.selected?.title ?? 'Phonegentic AI';
 
     return Container(

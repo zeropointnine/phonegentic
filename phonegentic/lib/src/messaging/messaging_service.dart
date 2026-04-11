@@ -19,6 +19,16 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   WebhookListener? _webhookListener;
   StreamSubscription<SmsMessage>? _incomingSub;
 
+  /// Register a handler for Telnyx call control webhook events (e.g. to
+  /// capture B-leg call_control_ids for conference merging).
+  set callControlHandler(void Function(Map<String, dynamic>)? handler) {
+    if (_webhookListener != null) {
+      _webhookListener!.onTelnyxCallControl = handler;
+    }
+    _pendingCallControlHandler = handler;
+  }
+  void Function(Map<String, dynamic>)? _pendingCallControlHandler;
+
   List<SmsConversation> _conversations = [];
   List<SmsMessage> _activeMessages = [];
   String? _selectedRemotePhone;
@@ -146,6 +156,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
             ? (f) =>
                 (_provider as TwilioMessagingProvider).handleWebhookForm(f)
             : null,
+        onTelnyxCallControl: _pendingCallControlHandler,
       );
       await _webhookListener!.start();
     }
