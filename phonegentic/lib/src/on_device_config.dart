@@ -13,7 +13,7 @@ class OnDeviceConfig {
     defaultValue: false,
   );
 
-  /// On-device models only work on Apple platforms (MLX / CoreML).
+  /// On-device models work on Apple platforms (MLX / CoreML) and Linux (ONNX).
   static bool get isSupported =>
-      enabled && (Platform.isMacOS || Platform.isIOS);
+      enabled && (Platform.isMacOS || Platform.isIOS || Platform.isLinux);
 }

@@ -7,6 +7,7 @@
 
 #include "audio_device_channel.h"
 #include "audio_tap_channel.h"
+#include "kokoro_tts_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
@@ -14,6 +15,7 @@ struct _MyApplication {
   char** dart_entrypoint_arguments;
   AudioDeviceChannel* audio_device_channel;
   AudioTapChannel* audio_tap_channel;
+  KokoroTtsChannel* kokoro_tts_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -85,6 +87,9 @@ static void my_application_activate(GApplication* application) {
   // Register audio tap channel
   self->audio_tap_channel = audio_tap_channel_new(messenger);
 
+  // Register Kokoro TTS channel
+  self->kokoro_tts_channel = kokoro_tts_channel_new(messenger);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -120,10 +125,23 @@ static void my_application_startup(GApplication* application) {
 static void my_application_shutdown(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
 
+  // Cleanup audio tap channel FIRST — stops PulseAudio capture/playback and
+  // the PA threaded mainloop before any GLib/GTK state is torn down.
+  if (self->audio_tap_channel) {
+    audio_tap_channel_dispose(self->audio_tap_channel);
+    self->audio_tap_channel = nullptr;
+  }
+
   // Cleanup audio device channel
   if (self->audio_device_channel) {
     audio_device_channel_dispose(self->audio_device_channel);
     self->audio_device_channel = nullptr;
+  }
+
+  // Cleanup Kokoro TTS channel
+  if (self->kokoro_tts_channel) {
+    kokoro_tts_channel_dispose(self->kokoro_tts_channel);
+    self->kokoro_tts_channel = nullptr;
   }
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);

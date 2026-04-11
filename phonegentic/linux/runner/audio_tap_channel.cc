@@ -3,8 +3,8 @@
 #include <flutter_linux/flutter_linux.h>
 #include <glib.h>
 #include <pulse/pulseaudio.h>
+#include <pulse/thread-mainloop.h>
 #include <string.h>
-#include <pthread.h>
 #include <vector>
 #include <sys/time.h>
 #include <cmath>
@@ -44,14 +44,21 @@ struct _AudioTapChannelClass {
 
 G_DEFINE_TYPE(AudioTapChannel, audio_tap_channel, G_TYPE_OBJECT)
 
-// PulseAudio context and stream for audio capture
-static pa_mainloop* g_mainloop = nullptr;
+// ── Thread-safe PulseAudio state ──────────────────────────────────────────────
+//
+// All PulseAudio operations are serialised through pa_threaded_mainloop_lock() /
+// unlock().  The threaded mainloop runs its own internal thread for capture
+// callbacks; every external call (from the Flutter/GLib thread) acquires the
+// lock first.  This prevents the assertion crash that occurred when pa_mainloop
+// was iterated on one thread while pa_stream_write() was called from another.
+
+static pa_threaded_mainloop* g_threaded_ml = nullptr;
 static pa_context* g_context = nullptr;
 static pa_stream* g_capture_stream = nullptr;
 static pa_stream* g_playback_stream = nullptr;
 static gboolean g_is_capturing = FALSE;
-static gboolean g_mainloop_running = FALSE;
-static pthread_t g_mainloop_thread;
+static gboolean g_context_ready = FALSE;
+static gboolean g_playback_ready = FALSE;
 static AudioTapChannel* g_tap_channel_instance = nullptr;
 
 static int64_t g_suppress_diag_count = 0;
@@ -60,22 +67,35 @@ static int64_t g_suppress_diag_count = 0;
 static void audio_tap_channel_dispose(GObject* object);
 static void audio_tap_channel_class_init(AudioTapChannelClass* klass);
 static void audio_tap_channel_init(AudioTapChannel* self);
+static void pulse_audio_cleanup();
 
-// PulseAudio context state callback
+// ═══════════════════════════════════════════════════════════════════════════════
+// PulseAudio context state callback — signals the threaded mainloop's condvar
+// so that the waiting thread can proceed once the context is READY.
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static void context_state_cb(pa_context* c, void* userdata) {
   switch (pa_context_get_state(c)) {
     case PA_CONTEXT_READY:
       g_debug("[AudioTap] PulseAudio context ready");
+      g_context_ready = TRUE;
+      pa_threaded_mainloop_signal(g_threaded_ml, 0);
       break;
     case PA_CONTEXT_FAILED:
     case PA_CONTEXT_TERMINATED:
       g_warning("[AudioTap] PulseAudio context failed/terminated");
-      g_mainloop_running = FALSE;
+      g_context_ready = FALSE;
+      pa_threaded_mainloop_signal(g_threaded_ml, 0);
       break;
     default:
       break;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Capture stream callbacks — run on the PA threaded mainloop thread.
+// We schedule Flutter event delivery via g_idle_add (GLib main thread).
+// ═══════════════════════════════════════════════════════════════════════════════
 
 struct AudioData {
   uint8_t* data;
@@ -98,7 +118,10 @@ static gboolean send_audio_idle(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-// Stream read callback - called when audio data is available
+// Stream read callback — called from the PA threaded mainloop thread.
+// NOTE: The PA lock is already held when this callback fires (PA guarantees
+// this for threaded mainloop callbacks).  We must not call any blocking PA
+// functions inside; just peek, copy, and schedule GLib delivery.
 static void stream_read_cb(pa_stream* s, size_t nbytes, void* userdata) {
   const void* data = nullptr;
   size_t bytes_read = 0;
@@ -109,11 +132,9 @@ static void stream_read_cb(pa_stream* s, size_t nbytes, void* userdata) {
     return;
   }
 
-  // Audio data for processing
   const uint8_t* processed_data = (const uint8_t*)data;
   size_t processed_bytes = bytes_read;
 
-  // Log periodically
   g_suppress_diag_count++;
   if (g_suppress_diag_count <= 5 || g_suppress_diag_count % 50 == 0) {
     g_debug("[AudioTap] capture check #%lld: bytes=%zu",
@@ -121,7 +142,6 @@ static void stream_read_cb(pa_stream* s, size_t nbytes, void* userdata) {
             processed_bytes);
   }
 
-  // Send audio data to Flutter if event channel is listening
   if (processed_data && processed_bytes > 0 && g_tap_channel_instance && g_tap_channel_instance->event_listening) {
     AudioData* audio = new AudioData();
     audio->data = (uint8_t*)g_malloc(processed_bytes);
@@ -130,119 +150,121 @@ static void stream_read_cb(pa_stream* s, size_t nbytes, void* userdata) {
     g_idle_add(send_audio_idle, audio);
   }
 
-  // Consume the data
   pa_stream_drop(s);
 }
 
-// Stream state callback
+// Stream state callback (shared by capture and playback streams).
 static void stream_state_cb(pa_stream* s, void* userdata) {
   switch (pa_stream_get_state(s)) {
     case PA_STREAM_READY:
-      g_debug("[AudioTap] Capture stream ready");
+      g_debug("[AudioTap] Stream ready");
+      // Signal so anyone waiting for playback ready can proceed.
+      g_playback_ready = TRUE;
+      pa_threaded_mainloop_signal(g_threaded_ml, 0);
       break;
     case PA_STREAM_FAILED:
     case PA_STREAM_TERMINATED:
-      g_warning("[AudioTap] Capture stream failed/terminated");
+      g_warning("[AudioTap] Stream failed/terminated");
       g_is_capturing = FALSE;
+      g_playback_ready = FALSE;
+      pa_threaded_mainloop_signal(g_threaded_ml, 0);
       break;
     default:
       break;
   }
 }
 
-// Mainloop thread function - runs PulseAudio event loop
-static void* mainloop_thread_func(void* userdata) {
-  g_debug("[AudioTap] Mainloop thread started");
+// ═══════════════════════════════════════════════════════════════════════════════
+// PulseAudio init / cleanup (thread-safe via pa_threaded_mainloop)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-  while (g_mainloop_running && g_mainloop) {
-    pa_mainloop_iterate(g_mainloop, TRUE, nullptr);
-  }
-
-  g_debug("[AudioTap] Mainloop thread exiting");
-  return nullptr;
-}
-
-// Initialize PulseAudio connection
 static gboolean pulse_audio_init() {
-  if (g_context != nullptr) {
-    return TRUE;  // Already initialized
+  if (g_context != nullptr && g_context_ready) {
+    return TRUE;  // Already initialized and ready
   }
 
-  // Note: WebRTC AEC disabled on Linux due to API compatibility.
-  // Playback-aware echo suppression (g_last_tts_time_ms) handles echo instead.
+  // If a previous init left a broken state, clean up first.
+  if (g_threaded_ml != nullptr && g_context != nullptr && !g_context_ready) {
+    pulse_audio_cleanup();  // defined below — safe to call conditionally
+  }
+
   g_debug("[AudioTap] Using playback-aware echo suppression instead of WebRTC AEC");
 
-  g_mainloop = pa_mainloop_new();
-  if (!g_mainloop) {
-    g_warning("[AudioTap] Failed to create PulseAudio mainloop");
+  g_threaded_ml = pa_threaded_mainloop_new();
+  if (!g_threaded_ml) {
+    g_warning("[AudioTap] Failed to create threaded PulseAudio mainloop");
     return FALSE;
   }
 
-  pa_mainloop_api* api = pa_mainloop_get_api(g_mainloop);
+  pa_mainloop_api* api = pa_threaded_mainloop_get_api(g_threaded_ml);
   g_context = pa_context_new(api, "phonegentic-audio-tap");
   if (!g_context) {
     g_warning("[AudioTap] Failed to create PulseAudio context");
-    pa_mainloop_free(g_mainloop);
-    g_mainloop = nullptr;
+    pa_threaded_mainloop_free(g_threaded_ml);
+    g_threaded_ml = nullptr;
     return FALSE;
   }
 
   pa_context_set_state_callback(g_context, context_state_cb, nullptr);
 
-  // Connect to PulseAudio server
+  // Start the threaded mainloop BEFORE connecting — the context state callback
+  // will fire on the mainloop thread and signal the condvar.
+  if (pa_threaded_mainloop_start(g_threaded_ml) < 0) {
+    g_warning("[AudioTap] Failed to start threaded mainloop");
+    pa_context_unref(g_context);
+    g_context = nullptr;
+    pa_threaded_mainloop_free(g_threaded_ml);
+    g_threaded_ml = nullptr;
+    return FALSE;
+  }
+
+  // Connect to PulseAudio server (must hold the lock).
+  pa_threaded_mainloop_lock(g_threaded_ml);
+
   if (pa_context_connect(g_context, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0) {
     g_warning("[AudioTap] Failed to connect to PulseAudio: %s",
               pa_strerror(pa_context_errno(g_context)));
+    pa_threaded_mainloop_unlock(g_threaded_ml);
+    pa_threaded_mainloop_stop(g_threaded_ml);
     pa_context_unref(g_context);
     g_context = nullptr;
-    pa_mainloop_free(g_mainloop);
-    g_mainloop = nullptr;
+    pa_threaded_mainloop_free(g_threaded_ml);
+    g_threaded_ml = nullptr;
     return FALSE;
   }
 
-  // Wait for context to be ready
-  pa_context_state_t state;
-  int iterations = 0;
-  while (iterations < 100) {  // Timeout after ~10 seconds
-    pa_mainloop_iterate(g_mainloop, TRUE, nullptr);
-    state = pa_context_get_state(g_context);
-    if (state == PA_CONTEXT_READY) {
-      break;
+  // Wait for the context to become READY (signalled by context_state_cb).
+  g_context_ready = FALSE;
+  while (!g_context_ready) {
+    pa_threaded_mainloop_wait(g_threaded_ml);
+    if (!g_context_ready) {
+      pa_context_state_t state = pa_context_get_state(g_context);
+      if (!PA_CONTEXT_IS_GOOD(state)) {
+        g_warning("[AudioTap] PulseAudio connection failed: %s",
+                  pa_strerror(pa_context_errno(g_context)));
+        pa_threaded_mainloop_unlock(g_threaded_ml);
+        pa_threaded_mainloop_stop(g_threaded_ml);
+        pa_context_unref(g_context);
+        g_context = nullptr;
+        pa_threaded_mainloop_free(g_threaded_ml);
+        g_threaded_ml = nullptr;
+        return FALSE;
+      }
     }
-    if (!PA_CONTEXT_IS_GOOD(state)) {
-      g_warning("[AudioTap] PulseAudio connection failed: %s",
-                pa_strerror(pa_context_errno(g_context)));
-      pa_context_disconnect(g_context);
-      pa_context_unref(g_context);
-      g_context = nullptr;
-      pa_mainloop_free(g_mainloop);
-      g_mainloop = nullptr;
-      return FALSE;
-    }
-    iterations++;
-    g_usleep(100000);  // 100ms
   }
 
-  // Start the mainloop thread
-  g_mainloop_running = TRUE;
-  if (pthread_create(&g_mainloop_thread, nullptr, mainloop_thread_func, nullptr) != 0) {
-    g_warning("[AudioTap] Failed to create mainloop thread");
-    g_mainloop_running = FALSE;
-    pa_context_disconnect(g_context);
-    pa_context_unref(g_context);
-    g_context = nullptr;
-    pa_mainloop_free(g_mainloop);
-    g_mainloop = nullptr;
-    return FALSE;
-  }
-
+  pa_threaded_mainloop_unlock(g_threaded_ml);
+  g_debug("[AudioTap] PulseAudio initialized (threaded mainloop)");
   return TRUE;
 }
 
-// Cleanup PulseAudio connection
 static void pulse_audio_cleanup() {
+  // Stop capturing first.
   g_is_capturing = FALSE;
-  g_mainloop_running = FALSE;
+
+  if (!g_threaded_ml) return;
+
+  pa_threaded_mainloop_lock(g_threaded_ml);
 
   if (g_capture_stream) {
     pa_stream_disconnect(g_capture_stream);
@@ -262,20 +284,23 @@ static void pulse_audio_cleanup() {
     g_context = nullptr;
   }
 
-  if (g_mainloop) {
-    // Wait for mainloop thread to finish
-    if (pthread_join(g_mainloop_thread, nullptr) == 0) {
-      g_debug("[AudioTap] Mainloop thread joined");
-    }
-    pa_mainloop_free(g_mainloop);
-    g_mainloop = nullptr;
-  }
+  g_context_ready = FALSE;
+  g_playback_ready = FALSE;
 
-  // Reset suppression state
+  pa_threaded_mainloop_unlock(g_threaded_ml);
+
+  // Stop the mainloop thread and free resources.
+  pa_threaded_mainloop_stop(g_threaded_ml);
+  pa_threaded_mainloop_free(g_threaded_ml);
+  g_threaded_ml = nullptr;
+
   g_suppress_diag_count = 0;
 }
 
-// Start audio capture
+// ═══════════════════════════════════════════════════════════════════════════════
+// Audio capture
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static FlMethodResponse* start_capture() {
   if (g_is_capturing) {
     g_debug("[AudioTap] Already capturing");
@@ -287,6 +312,8 @@ static FlMethodResponse* start_capture() {
         "PULSEAUDIO_ERROR", "Failed to initialize PulseAudio", nullptr));
   }
 
+  pa_threaded_mainloop_lock(g_threaded_ml);
+
   // Create audio specification
   pa_sample_spec sample_spec;
   sample_spec.format = PA_SAMPLE_S16LE;
@@ -296,6 +323,7 @@ static FlMethodResponse* start_capture() {
   // Create stream
   g_capture_stream = pa_stream_new(g_context, "audio_tap_capture", &sample_spec, nullptr);
   if (!g_capture_stream) {
+    pa_threaded_mainloop_unlock(g_threaded_ml);
     return FL_METHOD_RESPONSE(fl_method_error_response_new(
         "STREAM_ERROR", "Failed to create stream", nullptr));
   }
@@ -316,22 +344,28 @@ static FlMethodResponse* start_capture() {
               pa_strerror(pa_context_errno(g_context)));
     pa_stream_unref(g_capture_stream);
     g_capture_stream = nullptr;
+    pa_threaded_mainloop_unlock(g_threaded_ml);
     return FL_METHOD_RESPONSE(fl_method_error_response_new(
         "CONNECT_ERROR", "Failed to connect stream", nullptr));
   }
 
+  g_is_capturing = TRUE;
+  pa_threaded_mainloop_unlock(g_threaded_ml);
+
   // Reset suppression state on capture start
   g_suppress_diag_count = 0;
 
-  g_is_capturing = TRUE;
   g_debug("[AudioTap] Audio capture started");
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 
-// Stop audio capture
 static FlMethodResponse* stop_capture() {
   if (!g_is_capturing) {
     return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+  }
+
+  if (g_threaded_ml) {
+    pa_threaded_mainloop_lock(g_threaded_ml);
   }
 
   if (g_capture_stream) {
@@ -341,9 +375,18 @@ static FlMethodResponse* stop_capture() {
   }
 
   g_is_capturing = FALSE;
+
+  if (g_threaded_ml) {
+    pa_threaded_mainloop_unlock(g_threaded_ml);
+  }
+
   g_debug("[AudioTap] Audio capture stopped");
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Audio playback
+// ═══════════════════════════════════════════════════════════════════════════════
 
 static gboolean notify_playback_complete_idle(gpointer user_data) {
   if (g_tap_channel_instance && g_tap_channel_instance->channel) {
@@ -356,16 +399,17 @@ static gboolean notify_playback_complete_idle(gpointer user_data) {
 
 static void stream_underflow_cb(pa_stream* s, void* userdata) {
   g_debug("[AudioTap] Playback stream underflow - playback complete");
+  // Schedule on GLib main thread — do NOT call Flutter from PA thread directly.
   g_idle_add(notify_playback_complete_idle, nullptr);
 }
 
-// Playback stream write callback
+// Playback stream write callback — PulseAudio requests more data.
 static void stream_write_cb(pa_stream* s, size_t nbytes, void* userdata) {
-  // This is called when PulseAudio is ready for more data
-  // We don't need to do anything here as we write data directly
+  // No-op: we push data via play_audio_response() instead of letting PA pull.
 }
 
-// Play audio response
+/// Play audio response — called from the Flutter/GLib thread.
+/// All PA operations are serialised with the threaded mainloop lock.
 static FlMethodResponse* play_audio_response(FlValue* args) {
   if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_UINT8_LIST) {
     return FL_METHOD_RESPONSE(fl_method_error_response_new(
@@ -380,12 +424,14 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
   }
 
   // Initialize PulseAudio if not already initialized
-  if (!g_context) {
+  if (!g_context || !g_context_ready) {
     if (!pulse_audio_init()) {
       return FL_METHOD_RESPONSE(fl_method_error_response_new(
           "PULSEAUDIO_ERROR", "Failed to initialize PulseAudio", nullptr));
     }
   }
+
+  pa_threaded_mainloop_lock(g_threaded_ml);
 
   // Create playback stream if it doesn't exist
   if (!g_playback_stream) {
@@ -396,6 +442,7 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
 
     g_playback_stream = pa_stream_new(g_context, "audio_tap_playback", &sample_spec, nullptr);
     if (!g_playback_stream) {
+      pa_threaded_mainloop_unlock(g_threaded_ml);
       return FL_METHOD_RESPONSE(fl_method_error_response_new(
           "STREAM_ERROR", "Failed to create playback stream", nullptr));
     }
@@ -412,49 +459,34 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
     buffer_attr.minreq = (uint32_t)-1;
     buffer_attr.fragsize = (uint32_t)-1;
 
+    g_playback_ready = FALSE;
+
     if (pa_stream_connect_playback(g_playback_stream, nullptr, &buffer_attr,
                                    PA_STREAM_ADJUST_LATENCY, nullptr, nullptr) < 0) {
       g_warning("[AudioTap] Failed to connect playback stream: %s",
                 pa_strerror(pa_context_errno(g_context)));
       pa_stream_unref(g_playback_stream);
       g_playback_stream = nullptr;
+      pa_threaded_mainloop_unlock(g_threaded_ml);
       return FL_METHOD_RESPONSE(fl_method_error_response_new(
           "CONNECT_ERROR", "Failed to connect playback stream", nullptr));
     }
 
-    // Wait for playback stream to become ready before writing data.
-    // pa_stream_connect_playback() is asynchronous — the stream must
-    // transition to PA_STREAM_READY before pa_stream_write() can succeed.
-    // Without this wait, the first audio chunk fails with "Bad state".
-    pa_stream_state_t stream_state;
-    int wait_iterations = 0;
-    while (wait_iterations < 100) {
-      stream_state = pa_stream_get_state(g_playback_stream);
-      if (stream_state == PA_STREAM_READY) {
-        break;
+    // Wait for the playback stream to become READY (signalled by stream_state_cb).
+    while (!g_playback_ready) {
+      pa_threaded_mainloop_wait(g_threaded_ml);
+      if (!g_playback_ready) {
+        pa_stream_state_t stream_state = pa_stream_get_state(g_playback_stream);
+        if (!PA_STREAM_IS_GOOD(stream_state)) {
+          g_warning("[AudioTap] Playback stream connection failed: %s",
+                    pa_strerror(pa_context_errno(g_context)));
+          pa_stream_unref(g_playback_stream);
+          g_playback_stream = nullptr;
+          pa_threaded_mainloop_unlock(g_threaded_ml);
+          return FL_METHOD_RESPONSE(fl_method_error_response_new(
+              "CONNECT_ERROR", "Playback stream failed to become ready", nullptr));
+        }
       }
-      if (!PA_STREAM_IS_GOOD(stream_state)) {
-        g_warning("[AudioTap] Playback stream connection failed: %s",
-                  pa_strerror(pa_context_errno(g_context)));
-        pa_stream_unref(g_playback_stream);
-        g_playback_stream = nullptr;
-        return FL_METHOD_RESPONSE(fl_method_error_response_new(
-            "CONNECT_ERROR", "Playback stream failed to become ready", nullptr));
-      }
-      // Sleep briefly — the dedicated mainloop thread processes state
-      // transitions. We must NOT call pa_mainloop_iterate() here because
-      // the mainloop thread is already iterating it (pa_mainloop is not
-      // thread-safe).
-      g_usleep(10000);  // 10ms
-      wait_iterations++;
-    }
-
-    if (pa_stream_get_state(g_playback_stream) != PA_STREAM_READY) {
-      g_warning("[AudioTap] Playback stream timed out waiting for READY state");
-      pa_stream_unref(g_playback_stream);
-      g_playback_stream = nullptr;
-      return FL_METHOD_RESPONSE(fl_method_error_response_new(
-          "CONNECT_ERROR", "Playback stream timed out", nullptr));
     }
 
     g_debug("[AudioTap] Playback stream created and connected");
@@ -465,9 +497,12 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
   if (result < 0) {
     g_warning("[AudioTap] Failed to write audio data: %s",
               pa_strerror(pa_context_errno(g_context)));
+    pa_threaded_mainloop_unlock(g_threaded_ml);
     return FL_METHOD_RESPONSE(fl_method_error_response_new(
         "WRITE_ERROR", "Failed to write audio data", nullptr));
   }
+
+  pa_threaded_mainloop_unlock(g_threaded_ml);
 
   g_debug("[AudioTap] Wrote %zu bytes to playback stream", length);
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
@@ -475,18 +510,33 @@ static FlMethodResponse* play_audio_response(FlValue* args) {
 
 // Stop audio playback
 static FlMethodResponse* stop_audio_playback() {
-  if (!g_playback_stream) {
+  if (!g_playback_stream && !g_threaded_ml) {
     return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   }
 
-  pa_stream_disconnect(g_playback_stream);
-  pa_stream_unref(g_playback_stream);
-  g_playback_stream = nullptr;
+  if (g_threaded_ml) {
+    pa_threaded_mainloop_lock(g_threaded_ml);
+  }
+
+  if (g_playback_stream) {
+    pa_stream_disconnect(g_playback_stream);
+    pa_stream_unref(g_playback_stream);
+    g_playback_stream = nullptr;
+    g_playback_ready = FALSE;
+  }
+
+  if (g_threaded_ml) {
+    pa_threaded_mainloop_unlock(g_threaded_ml);
+  }
+
   g_debug("[AudioTap] Playback stopped");
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
 }
 
-// Stub implementations for speaker identification methods (not implemented on Linux yet)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Stub implementations for speaker identification (not implemented on Linux)
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static FlMethodResponse* init_speaker_identifier() {
   g_debug("[AudioTap] initSpeakerIdentifier - not implemented on Linux");
   return FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
@@ -517,7 +567,10 @@ static FlMethodResponse* get_dominant_speaker() {
   return FL_METHOD_RESPONSE(fl_method_success_response_new(result));
 }
 
-// Method call handler
+// ═══════════════════════════════════════════════════════════════════════════════
+// Method call dispatcher
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static void method_call_handler(FlMethodChannel* channel, FlMethodCall* method_call,
                                 gpointer user_data) {
   const gchar* method = fl_method_call_get_name(method_call);
@@ -552,7 +605,10 @@ static void method_call_handler(FlMethodChannel* channel, FlMethodCall* method_c
   fl_method_call_respond(method_call, response, nullptr);
 }
 
-// Event channel stream handler - onListen
+// ═══════════════════════════════════════════════════════════════════════════════
+// EventChannel handlers
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static FlMethodErrorResponse* on_listen_cb(FlEventChannel* channel, FlValue* args,
                                          gpointer user_data) {
   AudioTapChannel* self = AUDIO_TAP_CHANNEL(user_data);
@@ -562,7 +618,6 @@ static FlMethodErrorResponse* on_listen_cb(FlEventChannel* channel, FlValue* arg
   return nullptr;
 }
 
-// Event channel stream handler - onCancel
 static FlMethodErrorResponse* on_cancel_cb(FlEventChannel* channel, FlValue* args,
                                          gpointer user_data) {
   AudioTapChannel* self = AUDIO_TAP_CHANNEL(user_data);
@@ -571,7 +626,10 @@ static FlMethodErrorResponse* on_cancel_cb(FlEventChannel* channel, FlValue* arg
   return nullptr;
 }
 
-// Dispose implementation
+// ═══════════════════════════════════════════════════════════════════════════════
+// GObject lifecycle
+// ═══════════════════════════════════════════════════════════════════════════════
+
 static void audio_tap_channel_dispose(GObject* object) {
   AudioTapChannel* self = AUDIO_TAP_CHANNEL(object);
 
@@ -590,19 +648,20 @@ static void audio_tap_channel_dispose(GObject* object) {
   G_OBJECT_CLASS(audio_tap_channel_parent_class)->dispose(object);
 }
 
-// Class initialization
 static void audio_tap_channel_class_init(AudioTapChannelClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = audio_tap_channel_dispose;
 }
 
-// Instance initialization
 static void audio_tap_channel_init(AudioTapChannel* self) {
   self->channel = nullptr;
   self->event_channel = nullptr;
   self->event_listening = FALSE;
 }
 
-// Create a new AudioTapChannel
+// ═══════════════════════════════════════════════════════════════════════════════
+// Public API
+// ═══════════════════════════════════════════════════════════════════════════════
+
 AudioTapChannel* audio_tap_channel_new(FlBinaryMessenger* messenger) {
   AudioTapChannel* self = AUDIO_TAP_CHANNEL(g_object_new(audio_tap_channel_get_type(), nullptr));
 
@@ -625,11 +684,13 @@ AudioTapChannel* audio_tap_channel_new(FlBinaryMessenger* messenger) {
         nullptr);
   }
 
+  // Release the local codec ref — the channels hold their own refs.
+  g_clear_object(&codec);
+
   g_debug("[AudioTap] AudioTapChannel created");
   return self;
 }
 
-// Dispose function (public)
 void audio_tap_channel_dispose(AudioTapChannel* self) {
   if (self) {
     g_clear_object(&self->channel);
