@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../demo_mode_service.dart';
 import '../theme_provider.dart';
+import 'dialpad_contact_preview.dart';
 
 class ContactCard extends StatefulWidget {
   final Map<String, dynamic> contact;
@@ -43,12 +44,6 @@ class _ContactCardState extends State<ContactCard> {
 
   String _displayName(DemoModeService demo) =>
       demo.maskDisplayName(_rawDisplayName);
-
-  String _initial(DemoModeService demo) {
-    final name = _displayName(demo);
-    final cleaned = name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-    return cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
-  }
 
   void _startEditing(String field, String currentValue) {
     setState(() {
@@ -148,61 +143,56 @@ class _ContactCardState extends State<ContactCard> {
         children: [
           const SizedBox(height: 24),
           // Avatar
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              color: AppColors.accent.withValues(alpha: 0.12),
-              border: Border.all(
-                  color: AppColors.accent.withValues(alpha: 0.25), width: 0.5),
-            ),
-            child: Center(
-              child: Text(
-                _initial(demo),
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.accent,
-                ),
-              ),
-            ),
-          ),
+          ContactIdenticon(seed: _rawDisplayName, size: 72),
           const SizedBox(height: 12),
           // Name
-          HoverButton(
-            onTap: () =>
-                _startEditing('display_name', _rawDisplayName),
-            child: _editingField == 'display_name'
-                  ? Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 40),
-                      child: TextField(
-                        controller: _editController,
-                        autofocus: true,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: HoverButton(
+              onTap: () =>
+                  _startEditing('display_name', _rawDisplayName),
+              child: _editingField == 'display_name'
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: TextField(
+                          controller: _editController,
+                          autofocus: true,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            isDense: true,
+                          ),
+                          onSubmitted: (_) => _finishEditing(),
+                          onTapOutside: (_) => _finishEditing(),
+                        ),
+                      )
+                    : Text(
+                        _displayName(demo),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textPrimary,
+                          letterSpacing: -0.3,
                         ),
-                        decoration: const InputDecoration(
-                          border: InputBorder.none,
-                          isDense: true,
-                        ),
-                        onSubmitted: (_) => _finishEditing(),
-                        onTapOutside: (_) => _finishEditing(),
                       ),
-                    )
-                  : Text(
-                      _displayName(demo),
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                        letterSpacing: -0.3,
-                      ),
-                    ),
+            ),
           ),
+          if ((widget.contact['phone_number'] as String? ?? '').isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              demo.maskPhone(widget.contact['phone_number'] as String),
+              style: TextStyle(
+                fontSize: 14,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           // Action buttons
           Row(

@@ -8,6 +8,7 @@ import '../demo_mode_service.dart';
 import '../messaging/phone_numbers.dart';
 import '../theme_provider.dart';
 import 'contact_card.dart';
+import 'dialpad_contact_preview.dart';
 
 class ContactListPanel extends StatefulWidget {
   const ContactListPanel({super.key});
@@ -289,10 +290,6 @@ class _ContactTile extends StatelessWidget {
     final rawPhone = contact['phone_number'] as String? ?? '';
     final name = demo.maskDisplayName(rawName);
     final phone = rawPhone.isNotEmpty ? demo.maskPhone(rawPhone) : '';
-    final cleaned = name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-    final initial =
-        cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
-
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
@@ -308,26 +305,7 @@ class _ContactTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(9),
-                  color: AppColors.accent.withValues(alpha: 0.12),
-                  border: Border.all(
-                      color: AppColors.accent.withValues(alpha: 0.25), width: 0.5),
-                ),
-                child: Center(
-                  child: Text(
-                    initial,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.accent,
-                    ),
-                  ),
-                ),
-              ),
+              ContactIdenticon(seed: rawName, size: 34),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(

@@ -12,6 +12,7 @@ import '../demo_mode_service.dart';
 import '../messaging/phone_numbers.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
+import 'dialpad_contact_preview.dart';
 
 class CallHistoryPanel extends StatefulWidget {
   const CallHistoryPanel({super.key});
@@ -364,12 +365,6 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     return demo.maskPhone(rawName);
   }
 
-  String _initial(DemoModeService demo) {
-    final n = _name(demo);
-    final cleaned = n.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-    return cleaned.isEmpty ? '?' : cleaned.substring(0, 1).toUpperCase();
-  }
-
   bool get _isOutbound => widget.record['direction'] == 'outbound';
 
   bool get _hasRecording {
@@ -645,26 +640,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
             borderRadius: BorderRadius.circular(8),
             child: Row(
               children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(9),
-                    color: _statusColor.withValues(alpha: 0.12),
-                    border: Border.all(
-                        color: _statusColor.withValues(alpha: 0.25), width: 0.5),
-                  ),
-                  child: Center(
-                    child: Text(
-                      _initial(demo),
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: _statusColor,
-                      ),
-                    ),
-                  ),
-                ),
+                ContactIdenticon(seed: _name(demo), size: 34),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(

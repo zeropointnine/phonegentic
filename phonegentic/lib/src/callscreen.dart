@@ -1221,12 +1221,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final contactName = rawContactName != null
           ? demoMode.maskDisplayName(rawContactName)
           : null;
-      final displayInitial = (contactName ?? remoteIdentity ?? '?')
-          .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-      final initial = displayInitial.isEmpty
-          ? '?'
-          : displayInitial.substring(0, 1).toUpperCase();
-
       final formattedRemote = remoteIdentity != null
           ? demoMode.maskPhone(remoteIdentity!)
           : null;
@@ -1237,32 +1231,10 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (matchedContact != null)
-                  ContactIdenticon(
-                    seed: rawContactName ?? '',
-                    size: 88,
-                  )
-                else
-                  Container(
-                    width: 88,
-                    height: 88,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.accent.withValues(alpha: 0.15),
-                      border: Border.all(
-                          color: AppColors.accent.withValues(alpha: 0.3), width: 1.5),
-                    ),
-                    child: Center(
-                      child: Text(
-                        initial,
-                        style: TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.w300,
-                          color: AppColors.accentLight,
-                        ),
-                      ),
-                    ),
-                  ),
+                ContactIdenticon(
+                  seed: rawContactName ?? remoteIdentity ?? '?',
+                  size: 88,
+                ),
                 const SizedBox(height: 20),
                 if (contactName != null) ...[
                   Text(
