@@ -1,13 +1,13 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'agent_config_service.dart';
+import 'text_segmenter.dart';
 
 // =============================================================================
-// Kokoro On-Device TTS Service
+// Kokoro On-Device TTS Service — Streaming Sentence Pipeline
 // =============================================================================
 //
 // Bridges to the native KokoroTTS Swift library via MethodChannel.
@@ -17,10 +17,19 @@ import 'agent_config_service.dart';
 // The native side loads the Kokoro model on init, then generates audio
 // from text synchronously (runs ~3.3x real-time on Apple Silicon).
 //
-// Unlike ElevenLabs, Kokoro is NOT a streaming API — it generates the
-// full utterance at once. To match the streaming interface expected by
-// AgentService, we buffer text until endGeneration() and then synthesise
-// the complete response in one shot, emitting the audio as chunks.
+// ## Streaming architecture
+//
+// Kokoro's native API is NOT streaming — it generates a full utterance at
+// once. To avoid waiting for Claude's entire response before speaking, we
+// use a TextSegmenter to detect sentence boundaries in the streaming text
+// deltas and synthesize each sentence independently:
+//
+//   Claude delta → TextSegmenter → sentence queue → native synthesize loop
+//
+// This means audio for the first sentence starts playing as soon as that
+// sentence is complete (~0.5-2s), while later sentences are queued and
+// synthesized serially. The pipeline overlaps: while sentence N's audio
+// plays through AudioTap, sentence N+1 is being synthesized.
 // =============================================================================
 
 class KokoroTtsService {
@@ -30,7 +39,11 @@ class KokoroTtsService {
   final TtsConfig _config;
   bool _initialized = false;
   bool _generating = false;
-  final StringBuffer _textBuffer = StringBuffer();
+
+  final TextSegmenter _segmenter = TextSegmenter();
+  final List<String> _sentenceQueue = [];
+  bool _synthesizing = false;
+  Completer<void>? _drainCompleter;
 
   final _audioController = StreamController<Uint8List>.broadcast();
   Stream<Uint8List> get audioChunks => _audioController.stream;
@@ -82,7 +95,6 @@ class KokoroTtsService {
       final result = await _channel.invokeMethod<bool>('initialize');
       _initialized = result == true;
 
-      // Listen for audio chunks from the native side via EventChannel
       _audioEventSub = _audioChannel.receiveBroadcastStream().listen(
         (data) {
           if (data is Uint8List && data.isNotEmpty) {
@@ -124,64 +136,130 @@ class KokoroTtsService {
     }
   }
 
+  /// Prime MLX / Kokoro on the native queue with a discarded `.` synthesis so
+  /// the first user-visible sentence does not pay full cold-start latency.
+  Future<void> warmUpSynthesis() async {
+    if (!_initialized) return;
+    try {
+      await _channel.invokeMethod('warmup', {
+        'voice': _config.kokoroVoiceStyle,
+      });
+      debugPrint('[KokoroTTS] Native warmup finished');
+    } on PlatformException catch (e) {
+      debugPrint('[KokoroTTS] warmUpSynthesis: ${e.message}');
+    } on MissingPluginException {
+      // Older macOS builds without `warmup` — ignore.
+    }
+  }
+
   void startGeneration() {
     if (_generating) {
       endGeneration();
     }
     _generating = true;
-    _textBuffer.clear();
+    _segmenter.reset();
+    _sentenceQueue.clear();
     _speakingController.add(true);
     debugPrint('[KokoroTTS] Generation started');
   }
 
-  /// Buffer text for synthesis. Unlike ElevenLabs streaming, Kokoro
-  /// generates full utterances — text is accumulated until endGeneration().
+  /// Stream a text chunk. The TextSegmenter accumulates deltas and detects
+  /// sentence boundaries. Each complete sentence is queued for immediate
+  /// synthesis rather than waiting for the full response.
   void sendText(String text) {
     if (!_generating || text.isEmpty) return;
-    _textBuffer.write(text);
+
+    final sentences = _segmenter.addText(text);
+    if (sentences.isNotEmpty) {
+      _sentenceQueue.addAll(sentences);
+      _pumpQueue();
+    }
   }
 
-  /// Flush accumulated text and generate audio.
+  /// Flush remaining text and wait for the synthesis queue to drain.
   Future<void> endGeneration() async {
     if (!_generating) return;
     _generating = false;
 
-    final text = _textBuffer.toString().trim();
-    _textBuffer.clear();
+    final remainder = _segmenter.flush();
+    if (remainder != null) {
+      _sentenceQueue.add(remainder);
+    }
 
-    if (text.isEmpty) {
+    if (_sentenceQueue.isEmpty && !_synthesizing) {
       _speakingController.add(false);
       debugPrint('[KokoroTTS] endGeneration: no text to synthesize');
       return;
     }
 
-    debugPrint('[KokoroTTS] Synthesizing ${text.length} chars...');
+    // Kick the queue in case it's idle with new items from flush.
+    _pumpQueue();
 
-    if (!_initialized) {
-      debugPrint('[KokoroTTS] Not initialized, dropping text');
-      _speakingController.add(false);
-      return;
-    }
-
-    try {
-      // The native side generates audio and pushes chunks via the EventChannel.
-      // This call blocks until generation is complete.
-      await _channel.invokeMethod('synthesize', {
-        'text': text,
-        'voice': _config.kokoroVoiceStyle,
-      });
-    } on PlatformException catch (e) {
-      debugPrint('[KokoroTTS] Synthesis failed: ${e.message}');
+    // Wait for the queue to fully drain before signalling done.
+    if (_synthesizing || _sentenceQueue.isNotEmpty) {
+      _drainCompleter = Completer<void>();
+      await _drainCompleter!.future;
+      _drainCompleter = null;
     }
 
     _speakingController.add(false);
     debugPrint('[KokoroTTS] Generation complete');
   }
 
+  // ───────────────────── synthesis queue pump ─────────────────────
+
+  /// Process queued sentences one at a time. Runs as a microtask chain —
+  /// each native synthesize call is awaited before the next starts.
+  void _pumpQueue() {
+    if (_synthesizing) return;
+    if (_sentenceQueue.isEmpty) return;
+    if (!_initialized) {
+      debugPrint('[KokoroTTS] Not initialized, dropping ${_sentenceQueue.length} queued sentences');
+      _sentenceQueue.clear();
+      _finishDrain();
+      return;
+    }
+
+    _synthesizing = true;
+    _synthesizeLoop();
+  }
+
+  Future<void> _synthesizeLoop() async {
+    while (_sentenceQueue.isNotEmpty) {
+      final text = _sentenceQueue.removeAt(0);
+      debugPrint('[KokoroTTS] Synthesizing sentence '
+          '(${text.length} chars, ${_sentenceQueue.length} queued): '
+          '"${text.length > 60 ? text.substring(0, 60) : text}"');
+
+      try {
+        await _channel.invokeMethod('synthesize', {
+          'text': text,
+          'voice': _config.kokoroVoiceStyle,
+        });
+      } on PlatformException catch (e) {
+        debugPrint('[KokoroTTS] Synthesis failed: ${e.message}');
+      }
+
+      // If generation was cancelled (new startGeneration or dispose), bail.
+      if (!_generating && _sentenceQueue.isEmpty) break;
+    }
+
+    _synthesizing = false;
+    _finishDrain();
+  }
+
+  void _finishDrain() {
+    if (_drainCompleter != null && !_drainCompleter!.isCompleted) {
+      _drainCompleter!.complete();
+    }
+  }
+
   Future<void> dispose() async {
     _generating = false;
-    _textBuffer.clear();
+    _segmenter.reset();
+    _sentenceQueue.clear();
     _speakingController.add(false);
+    _finishDrain();
     _audioEventSub?.cancel();
     _audioEventSub = null;
 

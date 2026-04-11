@@ -5,6 +5,7 @@ import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../job_function_service.dart';
+import '../kokoro_tts_service.dart';
 import '../models/job_function.dart';
 import '../theme_provider.dart';
 
@@ -38,6 +39,9 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   bool _voiceListLoading = false;
   String? _selectedVoiceId;
 
+  // Kokoro voice selection
+  String? _selectedKokoroVoice;
+
   // Mute policy override (null = use global, 0 = autoToggle, 1 = stayMuted)
   int? _mutePolicyOverride;
 
@@ -56,6 +60,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       _descController.text = _existing!.jobDescription;
       _whisperByDefault = _existing!.whisperByDefault;
       _selectedVoiceId = _existing!.elevenLabsVoiceId;
+      _selectedKokoroVoice = _existing!.kokoroVoiceStyle;
       _mutePolicyOverride = _existing!.mutePolicyOverride;
       _speakers = _existing!.speakers
           .map((s) => _SpeakerRow(
@@ -160,6 +165,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       guardrails: guardrails.isEmpty ? null : guardrails,
       whisperByDefault: _whisperByDefault,
       elevenLabsVoiceId: _selectedVoiceId,
+      kokoroVoiceStyle: _selectedKokoroVoice,
       mutePolicyOverride: _mutePolicyOverride,
       createdAt: _existing?.createdAt,
     );
@@ -335,6 +341,11 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                             _ttsConfig!.elevenLabsApiKey.isNotEmpty) ...[
                           const SizedBox(height: 14),
                           _buildVoiceSelector(),
+                        ],
+                        if (_ttsConfig != null &&
+                            _ttsConfig!.provider == TtsProvider.kokoro) ...[
+                          const SizedBox(height: 14),
+                          _buildKokoroVoiceSelector(),
                         ],
                         const SizedBox(height: 14),
                         _buildSpeakersSection(),
@@ -680,6 +691,60 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
         const SizedBox(height: 4),
         Text(
           'Override the TTS voice for this job function. '
+          'Leave as default to use the voice from settings.',
+          style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKokoroVoiceSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Kokoro Voice'),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+          ),
+          child: DropdownButton<String>(
+            value: _selectedKokoroVoice != null &&
+                    KokoroTtsService.voiceStyles
+                        .contains(_selectedKokoroVoice)
+                ? _selectedKokoroVoice
+                : null,
+            hint: Text('Default (from settings)',
+                style: TextStyle(
+                    fontSize: 12, color: AppColors.textTertiary)),
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            dropdownColor: AppColors.surface,
+            style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
+            icon: Icon(Icons.unfold_more_rounded,
+                size: 14, color: AppColors.textTertiary),
+            items: [
+              DropdownMenuItem<String>(
+                value: null,
+                child: Text('Default (from settings)',
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.textTertiary)),
+              ),
+              ...KokoroTtsService.voiceStyles.map((v) =>
+                  DropdownMenuItem<String>(
+                    value: v,
+                    child: Text(v, overflow: TextOverflow.ellipsis),
+                  )),
+            ],
+            onChanged: (v) => setState(() => _selectedKokoroVoice = v),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Override the Kokoro voice for this job function. '
           'Leave as default to use the voice from settings.',
           style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
         ),

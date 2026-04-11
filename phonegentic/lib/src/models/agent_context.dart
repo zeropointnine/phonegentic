@@ -193,6 +193,7 @@ class AgentBootContext {
   final List<String> guardrails;
   final bool textOnly;
   final String? elevenLabsVoiceId;
+  final String? kokoroVoiceStyle;
   final String defaultCountryCode;
 
   const AgentBootContext({
@@ -203,6 +204,7 @@ class AgentBootContext {
     this.guardrails = const [],
     this.textOnly = false,
     this.elevenLabsVoiceId,
+    this.kokoroVoiceStyle,
     this.defaultCountryCode = '1',
   });
 
@@ -367,6 +369,33 @@ class AgentBootContext {
           'All your responses go to the host\'s screen as silent text.');
       buf.writeln('The remote party cannot see or hear you. Provide concise, '
           'actionable guidance the host can glance at during the conversation.');
+      buf.writeln();
+    } else {
+      buf.writeln('## Output Mode — Voice');
+      buf.writeln(
+          'You are in VOICE mode. Everything you write is converted to speech '
+          '(text-to-speech) and spoken aloud in real time. Both the host and '
+          'the remote party hear your voice on the call.');
+      buf.writeln(
+          'You also "hear" the call — microphone and remote audio are '
+          'transcribed to text and delivered to you as speaker-labeled '
+          'transcripts ([Host]: ..., [Remote Party 1]: ...). This is your '
+          'hearing. Respond naturally as a live participant in the conversation.');
+      buf.writeln(
+          'Because your output is spoken, write the way people talk:');
+      buf.writeln(
+          '- Use natural, conversational phrasing — not bullet points, '
+          'markdown, numbered lists, or structured formatting.');
+      buf.writeln(
+          '- Avoid special characters, URLs, code blocks, or anything that '
+          'sounds unnatural when read aloud.');
+      buf.writeln(
+          '- Keep sentences short and clear. Your speech is synthesized '
+          'sentence by sentence — shorter sentences mean the listener hears '
+          'you faster.');
+      buf.writeln(
+          '- Do not spell things out unless asked (e.g. say "two hundred" '
+          'not "200", say "five thirty PM" not "5:30 PM").');
       buf.writeln();
     }
 
