@@ -12,6 +12,12 @@ import 'package:flutter/foundation.dart';
 class WebhookListener {
   final void Function(Map<String, dynamic> json)? onTelnyxJson;
   final void Function(Map<String, String> form)? onTwilioForm;
+
+  /// Optional handler for Telnyx call control events (conference, call.initiated,
+  /// etc.).  The messaging handler runs first; this fires for any JSON payload
+  /// so call-control-specific consumers can inspect the event_type.
+  void Function(Map<String, dynamic> json)? onTelnyxCallControl;
+
   final int port;
 
   HttpServer? _server;
@@ -19,6 +25,7 @@ class WebhookListener {
   WebhookListener({
     this.onTelnyxJson,
     this.onTwilioForm,
+    this.onTelnyxCallControl,
     this.port = 4190,
   });
 
@@ -59,7 +66,9 @@ class WebhookListener {
       } else if (mime.contains('json') ||
           body.trimLeft().startsWith('{') ||
           body.trimLeft().startsWith('[')) {
-        onTelnyxJson?.call(jsonDecode(body) as Map<String, dynamic>);
+        final json = jsonDecode(body) as Map<String, dynamic>;
+        onTelnyxJson?.call(json);
+        onTelnyxCallControl?.call(json);
       } else if (onTwilioForm != null) {
         onTwilioForm!(_parseFormBody(body));
       }

@@ -34,6 +34,7 @@ class TelnyxConferenceProvider implements ConferenceProvider {
   /// original value is a credential-connection ID.
   String? _resolvedId;
   bool _resolutionAttempted = false;
+  bool _parkingEnabled = false;
 
   static const _base = 'https://api.telnyx.com/v2';
 
@@ -198,6 +199,8 @@ class TelnyxConferenceProvider implements ConferenceProvider {
           to: to,
           durationSeconds: map['call_duration'] as int?,
           createdAt: (map['created_at'] ?? map['start_time']) as String?,
+          callSessionId: map['call_session_id'] as String?,
+          callLegId: map['call_leg_id'] as String?,
         ));
       }
 
@@ -247,9 +250,13 @@ class TelnyxConferenceProvider implements ConferenceProvider {
         final to = _extractPhoneField(data['to']) ?? ac.to;
         final created = (data['start_time'] ?? data['created_at']) as String?
             ?? ac.createdAt;
+        final sessionId =
+            (data['call_session_id'] as String?) ?? ac.callSessionId;
+        final legId = (data['call_leg_id'] as String?) ?? ac.callLegId;
         debugPrint(
           '[TelnyxConf]   enriched ${ac.callControlId}: '
-          'from=$from to=$to created=$created keys=${data.keys.toList()}',
+          'from=$from to=$to created=$created '
+          'session=$sessionId leg=$legId keys=${data.keys.toList()}',
         );
         return ActiveCallInfo(
           callControlId: ac.callControlId,
@@ -257,6 +264,8 @@ class TelnyxConferenceProvider implements ConferenceProvider {
           to: to,
           durationSeconds: ac.durationSeconds,
           createdAt: created,
+          callSessionId: sessionId,
+          callLegId: legId,
         );
       }
       debugPrint(
@@ -323,6 +332,7 @@ class TelnyxConferenceProvider implements ConferenceProvider {
     debugPrint('[TelnyxConf] joined $callControlId → conference $conferenceId');
   }
 
+
   @override
   Future<void> holdParticipant(
       String conferenceId, String callControlId) async {
@@ -355,6 +365,101 @@ class TelnyxConferenceProvider implements ConferenceProvider {
     );
     _checkResponse(resp, 'removeParticipant');
   }
+
+  // -----------------------------------------------------------------------
+  // Call parking — enables discovery of B-legs via webhook
+  // -----------------------------------------------------------------------
+
+  /// Enable call parking on the credential connection so that outbound B-legs
+  /// are parked on answer, firing a webhook with their call_control_id.  This
+  /// is a one-time PATCH; the flag is remembered for the session.
+  Future<bool> enableCallParking() async {
+    if (_parkingEnabled) return true;
+    if (webhookUrl.isEmpty) {
+      debugPrint('[TelnyxConf] Cannot enable parking — no webhook URL');
+      return false;
+    }
+    try {
+      final resp = await http.patch(
+        Uri.parse('$_base/credential_connections/$_connectionId'),
+        headers: _headers,
+        body: jsonEncode({
+          'outbound': {
+            'call_parking': {'call_parking_enabled': true},
+          },
+          'webhook_event_url': webhookUrl,
+          'webhook_api_version': '2',
+        }),
+      );
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        _parkingEnabled = true;
+        debugPrint(
+          '[TelnyxConf] Call parking enabled on $_connectionId',
+        );
+        return true;
+      }
+      debugPrint(
+        '[TelnyxConf] Call parking PATCH failed '
+        '${resp.statusCode}: ${resp.body}',
+      );
+    } catch (e) {
+      debugPrint('[TelnyxConf] enableCallParking error: $e');
+    }
+    return false;
+  }
+
+  /// Invoked by the webhook listener for each Telnyx call control event.
+  /// Returns the B-leg call_control_id if this is a `call.initiated` event
+  /// for the terminator side (direction = "outgoing", i.e. the PSTN leg).
+  static String? extractBLegFromWebhook(Map<String, dynamic> payload) {
+    final data = payload['data'] as Map<String, dynamic>?;
+    if (data == null) return null;
+    final eventType = data['event_type'] as String?;
+    final eventPayload = data['payload'] as Map<String, dynamic>?;
+    if (eventPayload == null) return null;
+
+    // call.initiated with direction "outgoing" is the B-leg being created.
+    if (eventType == 'call.initiated') {
+      final direction = eventPayload['direction'] as String?;
+      if (direction == 'outgoing') {
+        final ccid = eventPayload['call_control_id'] as String?;
+        final sessionId = eventPayload['call_session_id'] as String?;
+        debugPrint(
+          '[TelnyxConf] Webhook B-leg detected: ccid=$ccid '
+          'session=$sessionId direction=$direction',
+        );
+        return ccid;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<ConferenceParticipant>> listParticipants(
+      String conferenceId) async {
+    final resp = await http.get(
+      Uri.parse('$_base/conferences/$conferenceId/participants'),
+      headers: _headers,
+    );
+    _checkResponse(resp, 'listParticipants');
+
+    final body = jsonDecode(resp.body) as Map<String, dynamic>;
+    final data = body['data'] as List<dynamic>? ?? [];
+    final participants = <ConferenceParticipant>[];
+    for (final item in data) {
+      final map = item as Map<String, dynamic>;
+      participants.add(ConferenceParticipant(
+        callControlId: map['call_control_id'] as String? ?? '',
+        callLegId: map['call_leg_id'] as String?,
+        callSessionId: map['call_session_id'] as String?,
+        muted: map['muted'] as bool? ?? false,
+        onHold: map['on_hold'] as bool? ?? false,
+        status: map['status'] as String?,
+      ));
+    }
+    return participants;
+  }
+
 }
 
 // ---------------------------------------------------------------------------

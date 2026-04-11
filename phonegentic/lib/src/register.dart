@@ -542,8 +542,11 @@ class _MyRegisterWidget extends State<RegisterWidget>
                     style:
                         TextStyle(fontSize: 13, color: AppColors.textPrimary),
                     decoration: InputDecoration(
-                      labelText: 'Webhook URL (optional)',
+                      labelText: 'Webhook Relay URL',
                       labelStyle: TextStyle(color: AppColors.textTertiary),
+                      hintText: 'https://phonegentic.ai/web_hooks/telnyx',
+                      hintStyle: TextStyle(
+                          fontSize: 12, color: AppColors.textTertiary),
                       isDense: true,
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8)),
@@ -553,7 +556,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                             BorderSide(color: AppColors.border, width: 0.5),
                       ),
                       helperText:
-                          'Auto-enables Call Control on credential connections',
+                          'Enables call parking + B-leg relay for conferencing',
                       helperStyle: TextStyle(
                           fontSize: 10, color: AppColors.textTertiary),
                     ),

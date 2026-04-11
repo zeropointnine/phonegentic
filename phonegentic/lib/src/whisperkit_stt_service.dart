@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -65,8 +64,7 @@ class WhisperKitSttService {
       });
       _initialized = result == true;
 
-      _transcriptSub =
-          _transcriptChannel.receiveBroadcastStream().listen(
+      _transcriptSub = _transcriptChannel.receiveBroadcastStream().listen(
         (data) {
           if (data is Map) {
             _transcriptionController.add(WhisperKitTranscription(

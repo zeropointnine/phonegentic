@@ -9,7 +9,8 @@
 //!   (`SMS_LOG_FILE` / `HELP_LOG_FILE`) so nothing is ever lost.
 
 use axum::body::Bytes;
-use axum::extract::Form;
+use axum::extract::{Form, State, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -17,12 +18,14 @@ use axum::routing::{get, post};
 use axum::Json;
 use axum::Router;
 use chrono::Utc;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::process::{Command, Stdio};
+use tokio::sync::broadcast;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -33,6 +36,13 @@ const MAX_NOTE_LEN: usize = 2000;
 const DEFAULT_SMS_LOG: &str = "/var/log/sms_submissions.log";
 const DEFAULT_HELP_LOG: &str = "/var/log/help_submissions.log";
 const MAX_MESSAGE_LEN: usize = 5000;
+
+/// Shared state: broadcast channel for relaying Telnyx call-control webhook
+/// events to connected WebSocket clients (the Flutter app).
+#[derive(Clone)]
+struct AppState {
+    call_control_tx: broadcast::Sender<String>,
+}
 
 fn sms_log_path() -> String {
     std::env::var("SMS_LOG_FILE").unwrap_or_else(|_| DEFAULT_SMS_LOG.to_string())
@@ -103,8 +113,11 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let (call_control_tx, _) = broadcast::channel::<String>(64);
+    let state = AppState { call_control_tx };
+
     let root = web_root();
-    let app = router(root.clone());
+    let app = router(root.clone(), state);
 
     let addr: SocketAddr = BIND_ADDR.parse().expect("Invalid bind address");
     tracing::info!("Listening on http://{}", addr);
@@ -114,7 +127,7 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn router(web_root: String) -> Router {
+fn router(web_root: String, state: AppState) -> Router {
     let images_dir = format!("{}/images", web_root);
     Router::new()
         .route("/api/health", get(health_handler))
@@ -124,22 +137,86 @@ fn router(web_root: String) -> Router {
         .nest_service("/images", ServeDir::new(images_dir))
         .route("/web_hooks/telnyx", post(telnyx_webhook_handler))
         .route("/web_hooks/telnyx_fail", post(telnyx_fail_handler))
+        .route("/ws/call_control", get(ws_call_control_handler))
         .fallback_service(ServeDir::new(web_root))
         .layer(TraceLayer::new_for_http())
+        .with_state(state)
 }
 
 async fn health_handler() -> &'static str {
     r#"{"status":"ok","server":"axum"}"#
 }
 
-async fn telnyx_webhook_handler() -> StatusCode {
-    tracing::info!("Telnyx webhook received");
+async fn telnyx_webhook_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> StatusCode {
+    let event_type = payload
+        .pointer("/data/event_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    tracing::info!(event_type, "Telnyx webhook received");
+
+    let forward = match event_type {
+        "call.initiated" | "call.answered" | "call.bridged" | "call.hangup"
+        | "conference.participant.joined" | "conference.participant.left" => true,
+        _ => false,
+    };
+
+    if forward {
+        let msg = payload.to_string();
+        let receivers = state.call_control_tx.receiver_count();
+        if receivers > 0 {
+            if let Err(e) = state.call_control_tx.send(msg) {
+                tracing::warn!("WS broadcast failed: {}", e);
+            } else {
+                tracing::info!(event_type, receivers, "broadcast to WS clients");
+            }
+        }
+    }
+
     StatusCode::OK
 }
 
 async fn telnyx_fail_handler() -> StatusCode {
     tracing::info!("Telnyx fail webhook received");
     StatusCode::OK
+}
+
+async fn ws_call_control_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Response {
+    tracing::info!("WebSocket upgrade request for /ws/call_control");
+    ws.on_upgrade(move |socket| ws_call_control_session(socket, state))
+}
+
+async fn ws_call_control_session(socket: WebSocket, state: AppState) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut rx = state.call_control_tx.subscribe();
+
+    tracing::info!("WS call_control client connected");
+
+    let send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Drain incoming frames (pings handled automatically); close on any error.
+    let recv_task = tokio::spawn(async move {
+        while let Some(Ok(_)) = ws_rx.next().await {}
+    });
+
+    tokio::select! {
+        _ = send_task => {},
+        _ = recv_task => {},
+    }
+
+    tracing::info!("WS call_control client disconnected");
 }
 
 fn env_email(key: &str) -> Option<String> {

@@ -1555,14 +1555,10 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void onNewReinvite(ReInvite event) {
     if (event.accept == null || event.reject == null) return;
 
-    // Auto-accept audio-only re-INVITEs (session timer refresh, conference
-    // media redirect, hold/unhold from remote). Without this the 200 OK is
-    // never sent and Telnyx tears down the call after the INVITE timeout.
-    if (!(event.hasVideo ?? false)) {
-      debugPrint('[CallScreen] Auto-accepting audio re-INVITE');
-      event.accept!({});
-      return;
-    }
+    // Audio-only re-INVITEs are handled globally by DialPadWidget so they
+    // are accepted even when no CallScreen is mounted. Only handle video
+    // re-INVITEs here (user prompt / auto-accept when already in video).
+    if (!(event.hasVideo ?? false)) return;
 
     if (voiceOnly) {
       showDialog(
