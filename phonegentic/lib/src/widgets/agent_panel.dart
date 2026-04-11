@@ -1957,41 +1957,45 @@ class _TranscriptBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            margin: const EdgeInsets.only(top: 3),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: _pillColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              message.speakerName ??
-                  (message.role == ChatRole.host ? 'Host' : 'RP1'),
-              style: TextStyle(
-                  fontSize: 9, fontWeight: FontWeight.w600, color: _pillColor),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message.text,
-              style: TextStyle(
-                fontSize: 12,
-                color: AppColors.textSecondary.withValues(alpha: 0.85),
-                fontStyle: FontStyle.italic,
-                height: 1.4,
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: _pillColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  message.speakerName ??
+                      (message.role == ChatRole.host ? 'Host' : 'RP1'),
+                  style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                      color: _pillColor),
+                ),
               ),
-            ),
+              const Spacer(),
+              Text(
+                _formatTime(message.timestamp),
+                style: TextStyle(
+                    fontSize: 9,
+                    color: AppColors.textTertiary.withValues(alpha: 0.6)),
+              ),
+            ],
           ),
-          const SizedBox(width: 6),
+          const SizedBox(height: 4),
           Text(
-            _formatTime(message.timestamp),
+            message.text,
             style: TextStyle(
-                fontSize: 9,
-                color: AppColors.textTertiary.withValues(alpha: 0.6)),
+              fontSize: 12,
+              color: AppColors.textSecondary.withValues(alpha: 0.85),
+              fontStyle: FontStyle.italic,
+              height: 1.4,
+            ),
           ),
         ],
       ),

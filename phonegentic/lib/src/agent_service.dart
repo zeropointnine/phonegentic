@@ -1717,7 +1717,19 @@ class AgentService extends ChangeNotifier {
     // If voiceprint identified a name with reasonable confidence and the
     // speaker doesn't have one yet, update the label.  A threshold of 0.65
     // avoids false positives from ambient audio or dissimilar voices.
-    if (voiceprintName.isNotEmpty && speaker.name.isEmpty) {
+    //
+    // For the remote speaker on outbound calls, only apply voiceprint naming
+    // when the dialed number already resolved to a contact (i.e. the contact
+    // lookup set the name first).  Otherwise a false-positive voice match
+    // labels a stranger (e.g. a call-center agent) with a known contact's
+    // name — exactly the "Stan Cell ≠ Delta Airlines" bug.
+    final skipVoiceprint = isRemote &&
+        _isOutbound &&
+        speaker.name.isEmpty &&
+        _remoteIdentity != null &&
+        contactService?.lookupByPhone(_remoteIdentity!) == null;
+
+    if (voiceprintName.isNotEmpty && speaker.name.isEmpty && !skipVoiceprint) {
       if (confidence >= 0.65) {
         speaker.name = voiceprintName;
         _pushInstructionsIfLive();
@@ -1727,6 +1739,10 @@ class AgentService extends ChangeNotifier {
         debugPrint(
             '[AgentService] Voiceprint rejected: "$voiceprintName" (confidence=$confidence < 0.65)');
       }
+    } else if (skipVoiceprint && voiceprintName.isNotEmpty) {
+      debugPrint(
+          '[AgentService] Voiceprint skipped for remote on outbound call to unrecognized number: '
+          '"$voiceprintName" (confidence=$confidence)');
     }
 
     _messages.add(ChatMessage.transcript(
