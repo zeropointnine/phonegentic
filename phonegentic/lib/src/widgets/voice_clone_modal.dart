@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
 
 import '../elevenlabs_api_service.dart';
 import '../theme_provider.dart';
@@ -51,9 +51,10 @@ class _VoiceCloneDialog extends StatefulWidget {
 }
 
 class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
+  static const _tapControl =
+      MethodChannel('com.agentic_ai/audio_tap_control');
   final _nameCtrl = TextEditingController();
   final _player = AudioPlayer();
-  final _recorder = AudioRecorder();
 
   String? _recordingPath;
   bool _isRecording = false;
@@ -97,23 +98,19 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
 
   @override
   void dispose() {
+    if (_isRecording) {
+      _tapControl.invokeMethod('stopVoiceSample').catchError((_) {});
+    }
     _recTimer?.cancel();
     _positionSub?.cancel();
     _playerStateSub?.cancel();
     _player.dispose();
-    _recorder.dispose();
     _nameCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _startRecording() async {
     if (_isRecording) return;
-
-    final hasPermission = await _recorder.hasPermission();
-    if (!hasPermission) {
-      setState(() => _error = 'Microphone permission denied');
-      return;
-    }
 
     final dir = await getApplicationDocumentsDirectory();
     final recDir =
@@ -123,15 +120,16 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final path = p.join(recDir.path, 'mic_sample_$timestamp.wav');
 
-    await _recorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.wav,
-        numChannels: 1,
-        sampleRate: 24000,
-      ),
-      path: path,
-    );
+    try {
+      await _tapControl.invokeMethod(
+          'startVoiceSample', {'path': path, 'party': 'host'});
+    } catch (e) {
+      debugPrint('[VoiceClone] Failed to start native recording: $e');
+      setState(() => _error = 'Failed to start recording');
+      return;
+    }
 
+    _recordingPath = path;
     _recSeconds = 0;
     _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _recSeconds++;
@@ -149,10 +147,14 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     _recTimer?.cancel();
     _recTimer = null;
 
-    final path = await _recorder.stop();
+    try {
+      await _tapControl.invokeMethod('stopVoiceSample');
+    } catch (e) {
+      debugPrint('[VoiceClone] Failed to stop native recording: $e');
+    }
+
     setState(() {
       _isRecording = false;
-      _recordingPath = path;
     });
   }
 

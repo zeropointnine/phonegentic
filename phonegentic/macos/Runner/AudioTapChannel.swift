@@ -773,6 +773,10 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
 
             if !inData.isEmpty {
                 dataToSend = inData
+
+                if voiceSampleFileHandle != nil {
+                    writeVoiceSampleData(inData)
+                }
             }
 
             diagCounter += 1

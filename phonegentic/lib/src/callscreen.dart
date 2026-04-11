@@ -27,6 +27,7 @@ import 'models/agent_context.dart';
 import 'theme_provider.dart';
 import 'widgets/action_button.dart';
 import 'widgets/add_call_modal.dart';
+import 'widgets/dialpad_contact_preview.dart';
 import 'widgets/audio_device_sheet.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/voice_clone_modal.dart';
@@ -1236,26 +1237,32 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 88,
-                  height: 88,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.accent.withValues(alpha: 0.15),
-                    border: Border.all(
-                        color: AppColors.accent.withValues(alpha: 0.3), width: 1.5),
-                  ),
-                  child: Center(
-                    child: Text(
-                      initial,
-                      style: TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.w300,
-                        color: AppColors.accentLight,
+                if (matchedContact != null)
+                  ContactIdenticon(
+                    seed: rawContactName ?? '',
+                    size: 88,
+                  )
+                else
+                  Container(
+                    width: 88,
+                    height: 88,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.accent.withValues(alpha: 0.15),
+                      border: Border.all(
+                          color: AppColors.accent.withValues(alpha: 0.3), width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        initial,
+                        style: TextStyle(
+                          fontSize: 36,
+                          fontWeight: FontWeight.w300,
+                          color: AppColors.accentLight,
+                        ),
                       ),
                     ),
                   ),
-                ),
                 const SizedBox(height: 20),
                 if (contactName != null) ...[
                   Text(

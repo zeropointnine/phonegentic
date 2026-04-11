@@ -621,31 +621,30 @@ class _CallRecordTileState extends State<_CallRecordTile> {
   @override
   Widget build(BuildContext context) {
     final demo = context.watch<DemoModeService>();
-    return HoverButton(
-      onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: widget.isExpanded
+            ? AppColors.surface
+            : AppColors.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
           color: widget.isExpanded
-              ? AppColors.surface
-              : AppColors.card,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: widget.isExpanded
-                ? AppColors.accent.withValues(alpha: 0.3)
-                : AppColors.border.withValues(alpha: 0.4),
-            width: 0.5,
-          ),
+              ? AppColors.accent.withValues(alpha: 0.3)
+              : AppColors.border.withValues(alpha: 0.4),
+          width: 0.5,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          HoverButton(
+            onTap: widget.onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: Row(
               children: [
-                // Avatar
                 Container(
                   width: 34,
                   height: 34,
@@ -667,7 +666,6 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                // Details
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -738,7 +736,6 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                     ],
                   ),
                 ),
-                // Redial + Timestamp
                 HoverButton(
                   onTap: () => _redial(context),
                   child: Container(
@@ -772,19 +769,16 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                 ),
               ],
             ),
-            if (widget.isExpanded) ...[
-              const SizedBox(height: 12),
-              // Expanded header: call details + redial
-              _buildExpandedHeader(context),
-              const SizedBox(height: 10),
-              // Recording section (always shown)
-              _buildRecordingSection(),
-              const SizedBox(height: 10),
-              // Transcript section
-              _buildTranscriptSection(),
-            ],
+          ),
+          if (widget.isExpanded) ...[
+            const SizedBox(height: 12),
+            _buildExpandedHeader(context),
+            const SizedBox(height: 10),
+            _buildRecordingSection(),
+            const SizedBox(height: 10),
+            _buildTranscriptSection(),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -807,6 +801,8 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _playing = false;
+  bool _dragging = false;
+  double _dragValue = 0.0;
 
   @override
   void initState() {
@@ -826,7 +822,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
     }
 
     _player.positionStream.listen((pos) {
-      if (mounted) setState(() => _position = pos);
+      if (mounted && !_dragging) setState(() => _position = pos);
     });
     _player.durationStream.listen((dur) {
       if (mounted && dur != null) setState(() => _duration = dur);
@@ -859,6 +855,7 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
         _duration.inMilliseconds > 0
             ? _position.inMilliseconds / _duration.inMilliseconds
             : 0.0;
+    final sliderValue = _dragging ? _dragValue : progress.clamp(0.0, 1.0);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -894,20 +891,41 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 6),
           Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: progress.clamp(0.0, 1.0),
-                minHeight: 3,
-                backgroundColor: AppColors.border.withValues(alpha: 0.3),
-                valueColor:
-                    AlwaysStoppedAnimation<Color>(AppColors.accent),
+            child: SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 3,
+                activeTrackColor: AppColors.accent,
+                inactiveTrackColor: AppColors.border.withValues(alpha: 0.3),
+                thumbColor: AppColors.accent,
+                overlayColor: AppColors.accent.withValues(alpha: 0.12),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                trackShape: const RoundedRectSliderTrackShape(),
+              ),
+              child: Slider(
+                value: sliderValue,
+                onChangeStart: (v) {
+                  setState(() {
+                    _dragging = true;
+                    _dragValue = v;
+                  });
+                },
+                onChanged: (v) {
+                  setState(() => _dragValue = v);
+                },
+                onChangeEnd: (v) {
+                  final target = Duration(
+                    milliseconds: (v * _duration.inMilliseconds).round(),
+                  );
+                  _player.seek(target);
+                  setState(() => _dragging = false);
+                },
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 6),
           Text(
             '${_formatDuration(_position)} / ${_formatDuration(_duration)}',
             style: TextStyle(

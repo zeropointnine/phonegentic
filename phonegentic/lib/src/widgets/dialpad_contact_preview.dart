@@ -46,7 +46,7 @@ class DialpadContactPreview extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _ContactIdenticon(seed: _rawName, size: 56),
+          ContactIdenticon(seed: _rawName, size: 56),
           const SizedBox(height: 10),
           Text(
             displayName,
@@ -78,24 +78,24 @@ class DialpadContactPreview extends StatelessWidget {
   }
 }
 
-/// Generates a symmetric 5x5 identicon grid from [seed], styled to look like
-/// a miniature QR-code / data-matrix pattern.  The pattern is mirrored
-/// horizontally so it always feels "designed".
-class _ContactIdenticon extends StatelessWidget {
+/// Circular identicon with a symmetric pattern clipped to a circle.
+/// Uses monochrome tones derived from the theme accent so it feels cohesive
+/// rather than random-colored.
+class ContactIdenticon extends StatelessWidget {
   final String seed;
   final double size;
 
-  const _ContactIdenticon({required this.seed, required this.size});
+  const ContactIdenticon({super.key, required this.seed, required this.size});
 
   @override
   Widget build(BuildContext context) {
     final hash = _hashSeed(seed);
-    const gridSize = 5;
+    const gridSize = 7;
     final cellSize = size / gridSize;
 
-    final filled = List.generate(gridSize, (_) => List.filled(gridSize, false));
+    final filled =
+        List.generate(gridSize, (_) => List.filled(gridSize, false));
 
-    // Fill left half + center column, then mirror.
     int bit = 0;
     for (int row = 0; row < gridSize; row++) {
       for (int col = 0; col <= gridSize ~/ 2; col++) {
@@ -104,22 +104,20 @@ class _ContactIdenticon extends StatelessWidget {
         bit++;
       }
     }
-
-    // Always fill the center cell for visual balance.
     filled[gridSize ~/ 2][gridSize ~/ 2] = true;
 
-    final accentHue = (hash % 360).toDouble();
-    final baseColor = HSLColor.fromAHSL(1, accentHue, 0.55, 0.50).toColor();
-    final dimColor = baseColor.withValues(alpha: 0.12);
+    final accent = AppColors.accent;
+    final fillColor = accent.withValues(alpha: 0.7);
+    final dimColor = accent.withValues(alpha: 0.08);
 
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.22),
+        shape: BoxShape.circle,
         color: AppColors.surface,
         border: Border.all(
-          color: baseColor.withValues(alpha: 0.25),
+          color: accent.withValues(alpha: 0.2),
           width: 0.5,
         ),
       ),
@@ -129,9 +127,8 @@ class _ContactIdenticon extends StatelessWidget {
         painter: _IdenticonPainter(
           filled: filled,
           cellSize: cellSize,
-          fillColor: baseColor,
+          fillColor: fillColor,
           dimColor: dimColor,
-          borderRadius: cellSize * 0.25,
         ),
       ),
     );
@@ -152,21 +149,19 @@ class _IdenticonPainter extends CustomPainter {
   final double cellSize;
   final Color fillColor;
   final Color dimColor;
-  final double borderRadius;
 
   _IdenticonPainter({
     required this.filled,
     required this.cellSize,
     required this.fillColor,
     required this.dimColor,
-    required this.borderRadius,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final fillPaint = Paint()..color = fillColor;
     final dimPaint = Paint()..color = dimColor;
-    final gap = cellSize * 0.12;
+    final gap = cellSize * 0.1;
 
     for (int row = 0; row < filled.length; row++) {
       for (int col = 0; col < filled[row].length; col++) {
@@ -177,7 +172,7 @@ class _IdenticonPainter extends CustomPainter {
             cellSize - gap * 2,
             cellSize - gap * 2,
           ),
-          Radius.circular(borderRadius),
+          Radius.circular(cellSize * 0.2),
         );
         canvas.drawRRect(rect, filled[row][col] ? fillPaint : dimPaint);
       }
