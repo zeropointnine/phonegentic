@@ -81,16 +81,18 @@ class TextAgentService {
 
   /// Submit the result of a tool call so the model can continue.
   void addToolResult(String toolUseId, String result) {
-    _history.add({
-      'role': 'user',
-      'content': [
-        {
-          'type': 'tool_result',
-          'tool_use_id': toolUseId,
-          'content': result,
-        }
-      ],
+    _debounceTimer?.cancel();
+    final blocks = <Map<String, dynamic>>[];
+    if (_pendingContext.isNotEmpty) {
+      blocks.add({'type': 'text', 'text': _pendingContext.join('\n')});
+      _pendingContext.clear();
+    }
+    blocks.add({
+      'type': 'tool_result',
+      'tool_use_id': toolUseId,
+      'content': result,
     });
+    _history.add({'role': 'user', 'content': blocks});
     _respond();
   }
 
@@ -498,6 +500,21 @@ class TextAgentService {
     while (_history.length > _maxHistory) {
       _history.removeAt(0);
     }
+    while (_history.isNotEmpty) {
+      final first = _history.first;
+      if (first['role'] == 'assistant') {
+        _history.removeAt(0);
+        continue;
+      }
+      final content = first['content'];
+      if (content is List &&
+          (content).any(
+              (b) => b is Map && b['type'] == 'tool_result')) {
+        _history.removeAt(0);
+        continue;
+      }
+      break;
+    }
   }
 
   /// Claude requires strictly alternating user / assistant roles.
@@ -508,21 +525,28 @@ class TextAgentService {
     for (final m in _history) {
       final role = m['role'] as String;
       final content = m['content'];
-      final isStructured = content is List;
 
-      if (!isStructured &&
-          out.isNotEmpty &&
-          out.last['role'] == role &&
-          out.last['content'] is String) {
-        out.last = {
-          'role': role,
-          'content': '${out.last['content']}\n\n$content',
-        };
+      if (out.isNotEmpty && out.last['role'] == role) {
+        final prev = out.last['content'];
+        if (prev is String && content is String) {
+          out.last = {'role': role, 'content': '$prev\n\n$content'};
+        } else {
+          out.last = {
+            'role': role,
+            'content': [..._toBlocks(prev), ..._toBlocks(content)],
+          };
+        }
       } else {
         out.add(Map<String, dynamic>.of(m));
       }
     }
     return out;
+  }
+
+  static List<Map<String, dynamic>> _toBlocks(dynamic content) {
+    if (content is String) return [{'type': 'text', 'text': content}];
+    if (content is List) return List<Map<String, dynamic>>.from(content);
+    return [];
   }
 
   void reset() {
