@@ -58,7 +58,7 @@ class WhisperRealtimeService {
   bool _vadActive = false;
   bool _isTtsPlaying = false;
   DateTime _ttsSuppressedUntil = DateTime(0);
-  static const int _ttsEchoCooldownMs = 1500;
+  static const int _ttsEchoCooldownMs = 100;
 
   final _transcriptionController =
       StreamController<TranscriptionEvent>.broadcast();
