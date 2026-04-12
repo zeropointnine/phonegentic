@@ -716,6 +716,40 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
   }
 
+  void _handleAddContact() async {
+    if (remoteIdentity == null || remoteIdentity!.isEmpty) return;
+    final contactService = context.read<ContactService>();
+    final existing = contactService.lookupByPhone(remoteIdentity!);
+    if (existing != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                '${existing['display_name'] ?? remoteIdentity} is already a contact'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+    await contactService.quickAdd(remoteIdentity!);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Contact saved'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _handleSendMessage() {
+    final messaging = context.read<MessagingService>();
+    if (!messaging.isOpen) {
+      messaging.toggleOpen();
+    }
+  }
+
   void _handleDtmf(String tone) => call!.sendDTMF(tone);
 
   void _handleKeyPad() => setState(() => _showNumPad = !_showNumPad);
@@ -1225,6 +1259,47 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ? demoMode.maskPhone(remoteIdentity!)
           : null;
 
+      // Top bar: status + timer
+      stackWidgets.add(
+        Positioned(
+          top: 12,
+          left: 0,
+          right: 0,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _stateLabel +
+                    (_hold
+                        ? ' by ${_holdOriginator?.name ?? 'unknown'}'
+                        : ''),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textTertiary,
+                ),
+              ),
+              const SizedBox(width: 8),
+              ValueListenableBuilder<String>(
+                valueListenable: _timeLabel,
+                builder: (context, value, _) {
+                  if (value.isEmpty) return const SizedBox.shrink();
+                  return Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textSecondary,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      );
+
+      // Center: avatar + name + phone
       stackWidgets.add(
         Center(
           child: SingleChildScrollView(
@@ -1264,32 +1339,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                       letterSpacing: -0.5,
                     ),
                   ),
-                const SizedBox(height: 8),
-                Text(
-                  _stateLabel +
-                      (_hold
-                          ? ' by ${_holdOriginator?.name ?? 'unknown'}'
-                          : ''),
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.textTertiary,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ValueListenableBuilder<String>(
-                  valueListenable: _timeLabel,
-                  builder: (context, value, _) {
-                    return Text(
-                      value,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w400,
-                        color: AppColors.textSecondary,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    );
-                  },
-                ),
               ],
             ),
           ),
@@ -1322,6 +1371,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
       case CallStateEnum.ACCEPTED:
       case CallStateEnum.CONFIRMED:
+        // Row 1: Mute - Hold - Record - Transfer - Add Call
         actions.addAll([
           ActionButton(
             title: _softMute ? 'Unmute' : 'Mute',
@@ -1330,18 +1380,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             onPressed: _softMuteAudio,
             onLongPress: _muteAudio,
           ),
-          if (voiceOnly)
-            ActionButton(
-              title: 'Keypad',
-              icon: Icons.dialpad,
-              onPressed: _handleKeyPad,
-            )
-          else
-            ActionButton(
-              title: 'Flip',
-              icon: Icons.switch_video,
-              onPressed: _switchCamera,
-            ),
+          ActionButton(
+            title: _hold ? 'Resume' : 'Hold',
+            icon: _hold ? Icons.play_arrow : Icons.pause,
+            checked: _hold,
+            onPressed: _handleHold,
+          ),
           if (voiceOnly)
             ActionButton(
               title: _isRecording ? _recLabel : 'Record',
@@ -1357,54 +1401,55 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               checked: _videoMuted,
               onPressed: _muteVideo,
             ),
-        ]);
-        if (voiceOnly && _ttsConfig != null && _ttsConfig!.isConfigured) {
-          actions.addAll([
-            ActionButton(
-              title: _isSampling && _sampleParty == 'host'
-                  ? _sampleLabel
-                  : 'Sample Me',
-              icon: _isSampling && _sampleParty == 'host'
-                  ? Icons.stop_rounded
-                  : Icons.person_rounded,
-              checked: _isSampling && _sampleParty == 'host',
-              fillColor: _isSampling && _sampleParty == 'host'
-                  ? AppColors.accent
-                  : null,
-              onPressed: () => _toggleVoiceSample('host'),
-            ),
-            ActionButton(
-              title: _isSampling && _sampleParty == 'remote'
-                  ? _sampleLabel
-                  : 'Sample Them',
-              icon: _isSampling && _sampleParty == 'remote'
-                  ? Icons.stop_rounded
-                  : Icons.group_rounded,
-              checked: _isSampling && _sampleParty == 'remote',
-              fillColor: _isSampling && _sampleParty == 'remote'
-                  ? AppColors.accent
-                  : null,
-              onPressed: () => _toggleVoiceSample('remote'),
-            ),
-          ]);
-        }
-        bottomRow.addAll([
           ActionButton(
-            title: _hold ? 'Resume' : 'Hold',
-            icon: _hold ? Icons.play_arrow : Icons.pause,
-            checked: _hold,
-            onPressed: _handleHold,
+            title: 'Transfer',
+            icon: Icons.phone_forwarded,
+            onPressed: _handleTransfer,
           ),
           ActionButton(
             title: 'Add Call',
             icon: Icons.person_add,
             onPressed: _addCallReady ? _handleAddCall : null,
           ),
-          _circleBtn(Icons.call_end, AppColors.red, '', _handleHangup),
+        ]);
+        // Row 2: Add Contact - Keypad - [Hangup] - Clone - Message
+        bottomRow.addAll([
           ActionButton(
-            title: 'Transfer',
-            icon: Icons.phone_forwarded,
-            onPressed: _handleTransfer,
+            title: 'Contact',
+            icon: Icons.contact_phone_rounded,
+            onPressed: _handleAddContact,
+          ),
+          if (voiceOnly)
+            ActionButton(
+              title: 'Keypad',
+              icon: Icons.dialpad,
+              onPressed: _handleKeyPad,
+            )
+          else
+            ActionButton(
+              title: 'Flip',
+              icon: Icons.switch_video,
+              onPressed: _switchCamera,
+            ),
+          _circleBtn(Icons.call_end, AppColors.red, '', _handleHangup),
+          if (voiceOnly && _ttsConfig != null && _ttsConfig!.isConfigured)
+            _isSampling
+                ? ActionButton(
+                    title: _sampleLabel,
+                    icon: Icons.stop_rounded,
+                    checked: true,
+                    fillColor: AppColors.accent,
+                    onPressed: () => _stopVoiceSample(),
+                  )
+                : _VoiceCloneMouthButton(
+                    onSelected: (party) => _toggleVoiceSample(party),
+                  )
+          else
+            const SizedBox(width: 48),
+          ActionButton(
+            title: 'Message',
+            icon: Icons.message_rounded,
+            onPressed: _handleSendMessage,
           ),
         ]);
         break;
@@ -1423,21 +1468,25 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         break;
     }
 
+    Widget wrapRow(List<Widget> items) {
+      return Row(
+        children: items
+            .map((w) => Expanded(child: Center(child: w)))
+            .toList(),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (actions.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
-              child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: actions),
+              child: wrapRow(actions),
             ),
-          Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: bottomRow),
+          wrapRow(bottomRow),
         ],
       ),
     );
@@ -1575,4 +1624,117 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   void onNewNotify(Notify ntf) {}
+}
+
+class _VoiceCloneMouthButton extends StatelessWidget {
+  final ValueChanged<String> onSelected;
+  const _VoiceCloneMouthButton({required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PopupMenuButton<String>(
+          tooltip: 'Clone voice',
+          offset: const Offset(0, -100),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          color: AppColors.surface,
+          onSelected: onSelected,
+          itemBuilder: (_) => [
+            _item('host', Icons.person_rounded, 'Sample Me'),
+            _item('remote', Icons.group_rounded, 'Sample Them'),
+          ],
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.card,
+              border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+            ),
+            child: Center(
+              child: CustomPaint(
+                size: const Size(24, 20),
+                painter: _CallScreenMouthPainter(color: AppColors.accent),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Clone',
+          style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+        ),
+      ],
+    );
+  }
+
+  static PopupMenuEntry<String> _item(
+      String value, IconData icon, String label) {
+    return PopupMenuItem<String>(
+      value: value,
+      height: 40,
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: AppColors.accent),
+          const SizedBox(width: 10),
+          Text(label,
+              style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Open mouth icon: upper lip with cupid's bow, lower lip curve, tongue hint.
+class _CallScreenMouthPainter extends CustomPainter {
+  final Color color;
+  _CallScreenMouthPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final w = size.width;
+    final h = size.height;
+
+    // Upper lip with cupid's bow dip in the center
+    final upper = Path()
+      ..moveTo(w * 0.02, h * 0.38)
+      ..quadraticBezierTo(w * 0.15, h * 0.05, w * 0.35, h * 0.15)
+      ..quadraticBezierTo(w * 0.42, h * 0.22, w * 0.5, h * 0.28)
+      ..quadraticBezierTo(w * 0.58, h * 0.22, w * 0.65, h * 0.15)
+      ..quadraticBezierTo(w * 0.85, h * 0.05, w * 0.98, h * 0.38);
+
+    // Lower lip — open mouth curve
+    final lower = Path()
+      ..moveTo(w * 0.02, h * 0.38)
+      ..quadraticBezierTo(w * 0.5, h * 1.15, w * 0.98, h * 0.38);
+
+    // Horizontal line across the mouth opening (teeth line)
+    final teeth = Path()
+      ..moveTo(w * 0.12, h * 0.42)
+      ..lineTo(w * 0.88, h * 0.42);
+
+    // Tongue hint — small bump at bottom center
+    final tongue = Path()
+      ..moveTo(w * 0.32, h * 0.72)
+      ..quadraticBezierTo(w * 0.5, h * 0.88, w * 0.68, h * 0.72);
+
+    canvas.drawPath(upper, paint);
+    canvas.drawPath(lower, paint);
+    canvas.drawPath(teeth, paint);
+    canvas.drawPath(tongue, paint);
+  }
+
+  @override
+  bool shouldRepaint(_CallScreenMouthPainter old) => old.color != color;
 }

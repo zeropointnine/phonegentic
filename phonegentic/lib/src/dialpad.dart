@@ -38,8 +38,6 @@ import 'widgets/phonegentic_logo.dart';
 import 'widgets/quick_add_overlay.dart';
 import 'widgets/tear_sheet_editor.dart';
 import 'widgets/tear_sheet_strip.dart';
-import 'widgets/voice_clone_modal.dart';
-import 'agent_config_service.dart';
 
 class DialPadWidget extends StatefulWidget {
   final SIPUAHelper? _helper;
@@ -1106,7 +1104,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   checked: _audioMuted,
                   onPressed: _handleMute,
                 )
-              : _VoiceCloneDropdown(),
+              : const SizedBox.shrink(),
         ),
         _CallButton(onTap: () => _handleCall(context)),
         SizedBox(
@@ -1394,79 +1392,3 @@ class _CallButtonState extends State<_CallButton>
   }
 }
 
-class _VoiceCloneDropdown extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 56,
-      height: 56,
-      child: Center(
-        child: PopupMenuButton<String>(
-          tooltip: 'Clone voice',
-          offset: const Offset(0, -120),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          color: AppColors.surface,
-          onSelected: (value) => _onSelected(context, value),
-          itemBuilder: (_) => [
-            _item('host', Icons.person_rounded, 'Sample Me'),
-            _item('remote', Icons.group_rounded, 'Sample Them'),
-          ],
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.accent.withValues(alpha: 0.12),
-              border: Border.all(
-                  color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
-            ),
-            child: Icon(Icons.add_rounded, size: 20, color: AppColors.accent),
-          ),
-        ),
-      ),
-    );
-  }
-
-  PopupMenuEntry<String> _item(String value, IconData icon, String label) {
-    return PopupMenuItem<String>(
-      value: value,
-      height: 40,
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: AppColors.accent),
-          const SizedBox(width: 10),
-          Text(label,
-              style: TextStyle(fontSize: 13, color: AppColors.textPrimary)),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _onSelected(BuildContext context, String party) async {
-    final tts = await AgentConfigService.loadTtsConfig();
-    if (!context.mounted) return;
-    if (tts.elevenLabsApiKey.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('ElevenLabs API key not configured'),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
-      return;
-    }
-    final result = await showVoiceCloneModal(
-      context,
-      apiKey: tts.elevenLabsApiKey,
-      sampleParty: party,
-    );
-    if (result != null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Voice "${result.name}" created'),
-          backgroundColor: AppColors.green,
-        ),
-      );
-    }
-  }
-}
