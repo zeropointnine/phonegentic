@@ -402,6 +402,7 @@ class AgentService extends ChangeNotifier {
   final List<TranscriptionEvent> _pendingTranscripts = [];
   Timer? _postSpeakFlushTimer;
   Timer? _playbackEndDebounce;
+  Timer? _ttsGenEndTimer;
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -675,6 +676,9 @@ class AgentService extends ChangeNotifier {
         // In split pipeline mode, ignore OpenAI's speaking state — we're
         // throwing away its audio. ElevenLabs controls _speaking instead.
         if (_splitPipeline) return;
+        if (isSpeaking) {
+          _ttsGenEndTimer?.cancel();
+        }
         _speaking = isSpeaking;
         _statusText = isSpeaking
             ? 'Speaking'
@@ -682,6 +686,7 @@ class AgentService extends ChangeNotifier {
         if (!isSpeaking) {
           _speakingEndTime = DateTime.now();
           _schedulePostSpeakFlush();
+          _onTtsGenerationDone();
         }
         notifyListeners();
       });
@@ -801,15 +806,15 @@ class AgentService extends ChangeNotifier {
     });
 
     _ttsSpeakingSub = _tts!.speakingState.listen((speaking) {
-      // Only set _speaking = true here; playback outlasts generation, so
-      // _speaking = false is deferred to onPlaybackComplete to keep the
-      // echo guard active until audio actually stops.
       if (speaking) {
+        _ttsGenEndTimer?.cancel();
         _speaking = true;
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
         }
+      } else {
+        _onTtsGenerationDone();
       }
     });
 
@@ -850,11 +855,14 @@ class AgentService extends ChangeNotifier {
 
     _ttsSpeakingSub = kokoro.speakingState.listen((speaking) {
       if (speaking) {
+        _ttsGenEndTimer?.cancel();
         _speaking = true;
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
         }
+      } else {
+        _onTtsGenerationDone();
       }
     });
 
@@ -1622,6 +1630,28 @@ class AgentService extends ChangeNotifier {
       }
     }
     return false;
+  }
+
+  /// TTS generation finished — all audio chunks have been emitted to native.
+  /// Start a short timer for the last chunk to drain through native playback,
+  /// then transition to listening.  This replaces the slow native-callback
+  /// chain (2s native timer + 2s Flutter debounce) with a fast known-done
+  /// path.  Native echo suppression still protects against mic echo
+  /// independently.
+  void _onTtsGenerationDone() {
+    _ttsGenEndTimer?.cancel();
+    _ttsGenEndTimer = Timer(const Duration(milliseconds: 200), () {
+      _playbackEndDebounce?.cancel();
+      _whisper.isTtsPlaying = false;
+      if (_speaking) {
+        _speaking = false;
+        _speakingEndTime = DateTime.now();
+        _statusText = _muted ? 'Not Listening...' : 'Listening';
+        notifyListeners();
+        _schedulePostSpeakFlush();
+      }
+      debugPrint('[AgentService] Fast listen transition: gen-done + 500ms drain');
+    });
   }
 
   /// Schedule a flush of buffered transcripts after the echo guard window.
@@ -3329,6 +3359,7 @@ class AgentService extends ChangeNotifier {
       _settleTranscripts.clear();
       _postSpeakFlushTimer?.cancel();
       _playbackEndDebounce?.cancel();
+      _ttsGenEndTimer?.cancel();
       _stopTtsLevelDrain();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
@@ -3644,11 +3675,16 @@ class AgentService extends ChangeNotifier {
   Future<dynamic> _handleNativeTapCall(MethodCall call) async {
     switch (call.method) {
       case 'onPlaybackComplete':
+        if (!_speaking && !_whisper.isTtsPlaying) {
+          // Generation-done timer already handled the transition.
+          break;
+        }
         if (_splitPipeline) {
-          // AudioTap fires this per-buffer drain, not once at the end.
-          // Debounce: keep the echo guard open until 2s after the LAST event.
+          // Safety fallback: if _ttsGenEndTimer hasn't fired yet (e.g.
+          // long streaming response still generating), debounce native
+          // callbacks and transition when they stop.
           _playbackEndDebounce?.cancel();
-          _playbackEndDebounce = Timer(const Duration(seconds: 2), () {
+          _playbackEndDebounce = Timer(const Duration(milliseconds: 800), () {
             _whisper.isTtsPlaying = false;
             if (_speaking) {
               _speaking = false;
@@ -3746,6 +3782,7 @@ class AgentService extends ChangeNotifier {
     _cancelConnectedGreeting();
     _postSpeakFlushTimer?.cancel();
     _playbackEndDebounce?.cancel();
+    _ttsGenEndTimer?.cancel();
     _stopTtsLevelDrain();
     _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();

@@ -522,16 +522,17 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func schedulePlaybackEnd() {
         playbackEndTimer?.invalidate()
         playbackEndTimer = Timer.scheduledTimer(
-            withTimeInterval: 0.35, repeats: false
+            withTimeInterval: 0.10, repeats: false
         ) { [weak self] _ in
             guard let self = self else { return }
             self.bufferLock.lock()
             self.inputBuffer.removeAll(keepingCapacity: true)
             self.bufferLock.unlock()
             
-            // In direct mode TTS plays through speakers and the mic picks up the echo 
-            // — allow a 1.0s window for room reverberation to settle.
-            let suppressionSeconds: TimeInterval = 1.0
+            // Brief suppression for speaker-to-mic reverb tail.
+            // Native echo stripping in call mode is independent (callModeTTSSuppression).
+            // Server-side VAD (threshold 0.5) won't trigger on faint reverb.
+            let suppressionSeconds: TimeInterval = 0.20
             self.outputSuppressedUntil = Date().timeIntervalSince1970 + suppressionSeconds
             self.isPlayingResponse = false
             self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
