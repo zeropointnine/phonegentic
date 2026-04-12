@@ -30,6 +30,7 @@ class TextAgentService {
 
   HttpClient? _httpClient;
   bool _responding = false;
+  final Set<String> _pendingToolUseIds = {};
 
   final _responseController = StreamController<ResponseTextEvent>.broadcast();
   Stream<ResponseTextEvent> get responses => _responseController.stream;
@@ -82,6 +83,7 @@ class TextAgentService {
   /// Submit the result of a tool call so the model can continue.
   void addToolResult(String toolUseId, String result) {
     _debounceTimer?.cancel();
+    _pendingToolUseIds.remove(toolUseId);
     final blocks = <Map<String, dynamic>>[];
     if (_pendingContext.isNotEmpty) {
       blocks.add({'type': 'text', 'text': _pendingContext.join('\n')});
@@ -115,6 +117,7 @@ class TextAgentService {
 
   void _flushAndRespond() {
     if (_pendingContext.isEmpty) return;
+    if (_pendingToolUseIds.isNotEmpty) return;
     _flushPendingToHistory();
     _respond();
   }
@@ -123,6 +126,7 @@ class TextAgentService {
 
   Future<void> _respond() async {
     if (_responding) return;
+    if (_pendingToolUseIds.isNotEmpty) return;
     _responding = true;
 
     try {
@@ -488,10 +492,12 @@ class TextAgentService {
     }
 
     for (final tool in toolBlocks) {
+      final id = tool['id'] as String;
+      _pendingToolUseIds.add(id);
       debugPrint('[TextAgent] Tool call: ${tool['name']} '
-          'id=${tool['id']} input=${tool['input']}');
+          'id=$id input=${tool['input']}');
       _toolCallController.add(ToolCallRequest(
-        id: tool['id'] as String,
+        id: id,
         name: tool['name'] as String,
         arguments: tool['input'] as Map<String, dynamic>,
       ));
@@ -540,7 +546,59 @@ class TextAgentService {
         out.add(Map<String, dynamic>.of(m));
       }
     }
+    _stripDanglingToolUse(out);
     return out;
+  }
+
+  /// Remove tool_use blocks from assistant messages when the next message
+  /// doesn't contain the matching tool_result.  This prevents a permanently
+  /// stuck history if a tool_result was never delivered or a transcript
+  /// was flushed between the tool_use and its result.
+  static void _stripDanglingToolUse(List<Map<String, dynamic>> messages) {
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      if (m['role'] != 'assistant') continue;
+      final content = m['content'];
+      if (content is! List) continue;
+
+      final toolUseIds = <String>{};
+      for (final block in content) {
+        if (block is Map && block['type'] == 'tool_use') {
+          toolUseIds.add(block['id'] as String);
+        }
+      }
+      if (toolUseIds.isEmpty) continue;
+
+      // Collect tool_result IDs from the next message (if it's a user message).
+      final resultIds = <String>{};
+      if (i + 1 < messages.length && messages[i + 1]['role'] == 'user') {
+        final next = messages[i + 1]['content'];
+        if (next is List) {
+          for (final block in next) {
+            if (block is Map && block['type'] == 'tool_result') {
+              resultIds.add(block['tool_use_id'] as String);
+            }
+          }
+        }
+      }
+
+      final dangling = toolUseIds.difference(resultIds);
+      if (dangling.isEmpty) continue;
+
+      final cleaned = content
+          .where((b) =>
+              b is! Map ||
+              b['type'] != 'tool_use' ||
+              !dangling.contains(b['id']))
+          .toList();
+
+      if (cleaned.isEmpty) {
+        messages.removeAt(i);
+        i--;
+      } else {
+        messages[i] = {'role': 'assistant', 'content': cleaned};
+      }
+    }
   }
 
   static List<Map<String, dynamic>> _toBlocks(dynamic content) {
@@ -553,6 +611,7 @@ class TextAgentService {
     _debounceTimer?.cancel();
     _pendingContext.clear();
     _history.clear();
+    _pendingToolUseIds.clear();
     _responding = false;
   }
 
