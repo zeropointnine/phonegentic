@@ -385,6 +385,8 @@ class TextAgentService {
   Future<void> _callClaude() async {
     if (_history.isEmpty) return;
 
+    final merged = _mergedHistory();
+
     final uri = Uri.parse('https://api.anthropic.com/v1/messages');
     final request = await _httpClient!.postUrl(uri);
 
@@ -396,7 +398,7 @@ class TextAgentService {
       'model': _config.activeModel,
       'max_tokens': 1024,
       'system': _systemInstructions,
-      'messages': _mergedHistory(),
+      'messages': merged,
       'tools': _allTools,
       'stream': true,
     });
@@ -404,8 +406,13 @@ class TextAgentService {
 
     final response = await request.close();
     if (response.statusCode != 200) {
-      final body = await response.transform(utf8.decoder).join();
-      throw Exception('Claude API ${response.statusCode}: $body');
+      final respBody = await response.transform(utf8.decoder).join();
+      if (response.statusCode == 400 &&
+          respBody.contains('tool_use')) {
+        _dumpMergedHistory(merged);
+        _repairHistory();
+      }
+      throw Exception('Claude API ${response.statusCode}: $respBody');
     }
 
     final fullText = StringBuffer();
@@ -605,6 +612,78 @@ class TextAgentService {
     if (content is String) return [{'type': 'text', 'text': content}];
     if (content is List) return List<Map<String, dynamic>>.from(content);
     return [];
+  }
+
+  /// Dump merged history structure for debugging 400 errors.
+  static void _dumpMergedHistory(List<Map<String, dynamic>> merged) {
+    debugPrint('[TextAgent] === MERGED HISTORY DUMP (${merged.length} msgs) ===');
+    for (var i = 0; i < merged.length; i++) {
+      final m = merged[i];
+      final role = m['role'];
+      final content = m['content'];
+      if (content is String) {
+        debugPrint('  [$i] $role: String(${content.length} chars)');
+      } else if (content is List) {
+        final types = (content)
+            .map((b) {
+              if (b is Map) {
+                final t = b['type'] ?? '?';
+                if (t == 'tool_use') return 'tool_use(${b['id']})';
+                if (t == 'tool_result') return 'tool_result(${b['tool_use_id']})';
+                return '$t';
+              }
+              return '${b.runtimeType}';
+            })
+            .join(', ');
+        debugPrint('  [$i] $role: [$types]');
+      } else {
+        debugPrint('  [$i] $role: ${content.runtimeType}');
+      }
+    }
+    debugPrint('[TextAgent] === END DUMP ===');
+  }
+
+  /// Repair _history directly by stripping tool_use blocks that have no
+  /// matching tool_result anywhere after them.  Called on 400 errors to
+  /// break the stuck-error loop.
+  void _repairHistory() {
+    final allResultIds = <String>{};
+    for (final m in _history) {
+      final content = m['content'];
+      if (content is! List) continue;
+      for (final b in content) {
+        if (b is Map && b['type'] == 'tool_result') {
+          allResultIds.add(b['tool_use_id'] as String);
+        }
+      }
+    }
+
+    for (var i = _history.length - 1; i >= 0; i--) {
+      final m = _history[i];
+      if (m['role'] != 'assistant') continue;
+      final content = m['content'];
+      if (content is! List) continue;
+
+      final hasToolUse =
+          (content).any((b) => b is Map && b['type'] == 'tool_use');
+      if (!hasToolUse) continue;
+
+      final cleaned = (content)
+          .where((b) {
+            if (b is! Map || b['type'] != 'tool_use') return true;
+            return allResultIds.contains(b['id'] as String);
+          })
+          .toList();
+
+      if (cleaned.isEmpty) {
+        _history.removeAt(i);
+        debugPrint('[TextAgent] _repairHistory: removed empty assistant msg at $i');
+      } else if (cleaned.length != content.length) {
+        _history[i] = {'role': 'assistant', 'content': cleaned};
+        debugPrint('[TextAgent] _repairHistory: stripped dangling tool_use at $i');
+      }
+    }
+    _pendingToolUseIds.clear();
   }
 
   void reset() {
