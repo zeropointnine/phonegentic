@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../contact_service.dart';
 import '../demo_mode_service.dart';
 import '../theme_provider.dart';
 import 'dialpad_contact_preview.dart';
@@ -10,7 +11,6 @@ class ContactCard extends StatefulWidget {
   final void Function(String field, String value) onFieldChanged;
   final VoidCallback? onDelete;
   final VoidCallback? onCall;
-  final bool autoFocusName;
 
   const ContactCard({
     super.key,
@@ -18,7 +18,6 @@ class ContactCard extends StatefulWidget {
     required this.onFieldChanged,
     this.onDelete,
     this.onCall,
-    this.autoFocusName = false,
   });
 
   @override
@@ -28,28 +27,53 @@ class ContactCard extends StatefulWidget {
 class _ContactCardState extends State<ContactCard> {
   String? _editingField;
   late TextEditingController _editController;
+  final FocusNode _nameFocusNode = FocusNode();
+  bool _didAutoFocus = false;
 
   @override
   void initState() {
     super.initState();
     _editController = TextEditingController();
-    if (widget.autoFocusName) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+  }
+
+  @override
+  void didUpdateWidget(covariant ContactCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_didAutoFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+    }
+  }
+
+  void _tryAutoFocus() {
+    if (_didAutoFocus || !mounted) return;
+    final service = context.read<ContactService>();
+    if (!service.autoFocusName) return;
+    _didAutoFocus = true;
+    service.consumeAutoFocusName();
+    debugPrint('[ContactCard] autoFocus triggered, nameIsPhone=$_nameIsPhone');
+
+    setState(() {
       _editingField = 'display_name';
       _editController.text = _nameIsPhone ? '' : _rawDisplayName;
-      if (!_nameIsPhone) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _editController.selection = TextSelection(
-            baseOffset: 0,
-            extentOffset: _editController.text.length,
-          );
-        });
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      debugPrint('[ContactCard] requesting focus, attached=${_nameFocusNode.context != null}');
+      FocusScope.of(context).requestFocus(_nameFocusNode);
+      if (!_nameIsPhone && _editController.text.isNotEmpty) {
+        _editController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _editController.text.length,
+        );
       }
-    }
+    });
   }
 
   @override
   void dispose() {
     _editController.dispose();
+    _nameFocusNode.dispose();
     super.dispose();
   }
 
@@ -166,35 +190,35 @@ class _ContactCardState extends State<ContactCard> {
           ContactIdenticon(seed: _rawDisplayName, size: 72),
           const SizedBox(height: 12),
           // Name
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+          FractionallySizedBox(
+            widthFactor: 0.65,
             child: HoverButton(
               onTap: () => _startEditing(
                   'display_name', _nameIsPhone ? '' : _rawDisplayName),
               child: _editingField == 'display_name'
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: TextField(
-                          controller: _editController,
-                          autofocus: true,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Add Name',
-                            hintStyle: TextStyle(
-                              color: AppColors.textTertiary.withValues(alpha: 0.5),
-                              fontWeight: FontWeight.w400,
-                            ),
-                            border: InputBorder.none,
-                            isDense: true,
-                          ),
-                          onSubmitted: (_) => _finishEditing(),
-                          onTapOutside: (_) => _finishEditing(),
+                    ? TextField(
+                        controller: _editController,
+                        focusNode: _nameFocusNode,
+                        autofocus: true,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
                         ),
+                        decoration: InputDecoration(
+                          hintText: 'Add Name',
+                          hintStyle: TextStyle(
+                            color: AppColors.textTertiary.withValues(alpha: 0.5),
+                            fontWeight: FontWeight.w400,
+                          ),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                        ),
+                        onSubmitted: (_) => _finishEditing(),
+                        onTapOutside: (_) => _finishEditing(),
                       )
                     : Text(
                         _nameIsPhone ? 'Add Name' : _displayName(demo),

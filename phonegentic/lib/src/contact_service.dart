@@ -165,10 +165,12 @@ class ContactService extends ChangeNotifier {
   /// - One match: navigates straight to that contact's detail card.
   /// - Multiple matches: selects the first match and shows a warning banner.
   Future<void> openContactForPhone(String phoneNumber) async {
+    debugPrint('[ContactService] openContactForPhone($phoneNumber)');
     _multipleMatchMessage = null;
     _autoFocusName = false;
 
     final matches = lookupAllByPhone(phoneNumber);
+    debugPrint('[ContactService] matches=${matches.length} names=${matches.map((m) => m['display_name']).toList()}');
 
     if (matches.isEmpty) {
       final id = await CallHistoryDb.insertContact(
@@ -187,10 +189,14 @@ class ContactService extends ChangeNotifier {
       _autoFocusName = true;
     } else if (matches.length == 1) {
       _selectedContact = matches.first;
+      final name = (matches.first['display_name'] as String? ?? '').trim();
+      _autoFocusName = name.isEmpty || _looksLikePhone(name);
     } else {
       _multipleMatchMessage =
           '${matches.length} contacts share this number';
       _selectedContact = matches.first;
+      final name = (matches.first['display_name'] as String? ?? '').trim();
+      _autoFocusName = name.isEmpty || _looksLikePhone(name);
     }
 
     _isOpen = true;

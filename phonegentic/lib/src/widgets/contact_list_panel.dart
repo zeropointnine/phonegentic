@@ -244,8 +244,6 @@ class _ContactListPanelState extends State<ContactListPanel> {
 
   Widget _buildContactDetail(ContactService service) {
     final contact = service.selectedContact!;
-    final autoFocus = service.autoFocusName;
-    if (autoFocus) service.consumeAutoFocusName();
     return SingleChildScrollView(
       child: Column(
         children: [
@@ -253,7 +251,6 @@ class _ContactListPanelState extends State<ContactListPanel> {
             _buildMultipleMatchBanner(service),
           ContactCard(
             contact: contact,
-            autoFocusName: autoFocus,
             onFieldChanged: (field, value) {
               service.updateField(contact['id'] as int, field, value);
             },

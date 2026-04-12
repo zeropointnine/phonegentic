@@ -734,9 +734,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   void _handleAddContact() async {
+    debugPrint('[CallScreen] _handleAddContact tapped, remoteIdentity=$remoteIdentity');
     if (remoteIdentity == null || remoteIdentity!.isEmpty) return;
     final contactService = context.read<ContactService>();
     await contactService.openContactForPhone(remoteIdentity!);
+    debugPrint('[CallScreen] openContactForPhone done, isOpen=${contactService.isOpen} autoFocus=${contactService.autoFocusName}');
   }
 
   void _handleSendMessage() {
