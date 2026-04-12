@@ -35,13 +35,15 @@ class _ContactCardState extends State<ContactCard> {
     _editController = TextEditingController();
     if (widget.autoFocusName) {
       _editingField = 'display_name';
-      _editController.text = _rawDisplayName;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _editController.selection = TextSelection(
-          baseOffset: 0,
-          extentOffset: _editController.text.length,
-        );
-      });
+      _editController.text = _nameIsPhone ? '' : _rawDisplayName;
+      if (!_nameIsPhone) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _editController.selection = TextSelection(
+            baseOffset: 0,
+            extentOffset: _editController.text.length,
+          );
+        });
+      }
     }
   }
 
@@ -53,6 +55,12 @@ class _ContactCardState extends State<ContactCard> {
 
   String get _rawDisplayName =>
       widget.contact['display_name'] as String? ?? 'Unknown';
+
+  bool get _nameIsPhone {
+    final digits = _rawDisplayName.replaceAll(RegExp(r'[^\d]'), '');
+    return digits.length >= 7 &&
+        RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(_rawDisplayName);
+  }
 
   String _displayName(DemoModeService demo) =>
       demo.maskDisplayName(_rawDisplayName);
@@ -161,8 +169,8 @@ class _ContactCardState extends State<ContactCard> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: HoverButton(
-              onTap: () =>
-                  _startEditing('display_name', _rawDisplayName),
+              onTap: () => _startEditing(
+                  'display_name', _nameIsPhone ? '' : _rawDisplayName),
               child: _editingField == 'display_name'
                     ? Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -175,7 +183,12 @@ class _ContactCardState extends State<ContactCard> {
                             fontWeight: FontWeight.w600,
                             color: AppColors.textPrimary,
                           ),
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
+                            hintText: 'Add Name',
+                            hintStyle: TextStyle(
+                              color: AppColors.textTertiary.withValues(alpha: 0.5),
+                              fontWeight: FontWeight.w400,
+                            ),
                             border: InputBorder.none,
                             isDense: true,
                           ),
@@ -184,12 +197,14 @@ class _ContactCardState extends State<ContactCard> {
                         ),
                       )
                     : Text(
-                        _displayName(demo),
+                        _nameIsPhone ? 'Add Name' : _displayName(demo),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
+                          color: _nameIsPhone
+                              ? AppColors.textTertiary.withValues(alpha: 0.5)
+                              : AppColors.textPrimary,
                           letterSpacing: -0.3,
                         ),
                       ),

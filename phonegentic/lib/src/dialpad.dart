@@ -286,6 +286,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
   String get _statusText {
     final name = helper?.registerState.state?.name ?? '';
     if (name.isEmpty) return 'Disconnected';
+    if (name.toLowerCase() == 'registered') return 'Ready';
     return name[0].toUpperCase() + name.substring(1).toLowerCase();
   }
 

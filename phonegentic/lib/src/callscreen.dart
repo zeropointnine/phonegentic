@@ -1237,9 +1237,13 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           : null;
       final rawContactName =
           matchedContact?['display_name'] as String?;
-      final contactName = rawContactName != null
-          ? demoMode.maskDisplayName(rawContactName)
-          : null;
+      final nameIsPhone = rawContactName != null &&
+          rawContactName.replaceAll(RegExp(r'[^\d]'), '').length >= 7 &&
+          RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(rawContactName);
+      final contactName =
+          (rawContactName != null && !nameIsPhone)
+              ? demoMode.maskDisplayName(rawContactName)
+              : null;
       final formattedRemote = remoteIdentity != null
           ? demoMode.maskPhone(remoteIdentity!)
           : null;
