@@ -9,4 +9,4 @@ if [ ! -f "$CRED_FILE" ]; then
   echo ""
 fi
 
-exec flutter run "$@"
+exec fvm flutter run "$@"

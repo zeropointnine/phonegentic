@@ -33,6 +33,7 @@ import 'models/chat_message.dart';
 import 'tear_sheet_service.dart';
 import 'elevenlabs_tts_service.dart';
 import 'kokoro_tts_service.dart';
+import 'on_device_config.dart';
 import 'text_agent_service.dart';
 import 'whisper_realtime_service.dart';
 
@@ -549,6 +550,19 @@ class AgentService extends ChangeNotifier {
       _echoGuardMs = config.echoGuardMs;
       _textAgentConfig = await AgentConfigService.loadTextConfig();
       _ttsConfig = await AgentConfigService.loadTtsConfig();
+
+      // ── Kokoro TTS diagnostic ──
+      debugPrint('[KokoroTTS-DIAG] OnDeviceConfig.enabled=${OnDeviceConfig.enabled}');
+      debugPrint('[KokoroTTS-DIAG] OnDeviceConfig.isSupported=${OnDeviceConfig.isSupported}');
+      debugPrint('[KokoroTTS-DIAG] TTS config loaded: provider=${_ttsConfig?.provider.name} '
+          'configured=${_ttsConfig?.isConfigured} '
+          'kokoroVoice=${_ttsConfig?.kokoroVoiceStyle}');
+      debugPrint('[KokoroTTS-DIAG] TextAgent config: '
+          'enabled=${_textAgentConfig?.enabled} '
+          'provider=${_textAgentConfig?.provider.name} '
+          'configured=${_textAgentConfig?.isConfigured}');
+      debugPrint('[KokoroTTS-DIAG] VoiceAgent config: '
+          'enabled=${config.enabled} configured=${config.isConfigured}');
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
         _messages.clear();
@@ -678,12 +692,20 @@ class AgentService extends ChangeNotifier {
 
   void _initTextAgent() {
     final tc = _textAgentConfig;
-    debugPrint('[AgentService] TextAgent config: '
+    debugPrint('[KokoroTTS-DIAG] _initTextAgent: '
         'enabled=${tc?.enabled} '
         'provider=${tc?.provider.name} '
         'configured=${tc?.isConfigured}');
-    if (tc == null || !tc.enabled || !tc.isConfigured) return;
-    if (tc.provider == TextAgentProvider.openai) return;
+    if (tc == null || !tc.enabled || !tc.isConfigured) {
+      debugPrint('[KokoroTTS-DIAG] _initTextAgent BAILING: '
+          'text agent not configured — Kokoro TTS requires a Claude text agent');
+      return;
+    }
+    if (tc.provider == TextAgentProvider.openai) {
+      debugPrint('[KokoroTTS-DIAG] _initTextAgent BAILING: '
+          'provider is OpenAI (not Claude) — split pipeline not active');
+      return;
+    }
 
     _textAgent = TextAgentService(
       config: tc,
@@ -705,19 +727,25 @@ class AgentService extends ChangeNotifier {
 
   void _initTts() {
     final tc = _ttsConfig;
-    debugPrint('[AgentService] TTS config: '
+    debugPrint('[KokoroTTS-DIAG] _initTts: '
         'provider=${tc?.provider.name} '
         'configured=${tc?.isConfigured}');
-    if (tc == null || !tc.isConfigured) return;
+    if (tc == null || !tc.isConfigured) {
+      debugPrint('[KokoroTTS-DIAG] _initTts BAILING: TTS not configured');
+      return;
+    }
 
     switch (tc.provider) {
       case TtsProvider.elevenlabs:
+        debugPrint('[KokoroTTS-DIAG] _initTts: using ElevenLabs (not Kokoro)');
         _initElevenLabsTts(tc);
         return;
       case TtsProvider.kokoro:
+        debugPrint('[KokoroTTS-DIAG] _initTts: → _initKokoroTts()');
         _initKokoroTts(tc);
         return;
       case TtsProvider.none:
+        debugPrint('[KokoroTTS-DIAG] _initTts: provider is none, skipping');
         return;
     }
   }

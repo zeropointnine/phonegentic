@@ -14,6 +14,8 @@ add_executable(${BINARY_NAME}
   "my_application.cc"
   "audio_device_channel.cc"
   "audio_tap_channel.cc"
+  "kokoro_tts_channel.cc"
+  "kokoro_onnx_engine.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 
@@ -28,6 +30,33 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::PULSEAUDIO)
+
+# Find ONNX Runtime (optional — enables Kokoro TTS when available)
+find_library(ONNXRUNTIME_LIB NAMES onnxruntime)
+find_path(ONNXRUNTIME_INCLUDE NAMES onnxruntime_cxx_api.h)
+
+if(ONNXRUNTIME_LIB AND ONNXRUNTIME_INCLUDE)
+  target_link_libraries(${BINARY_NAME} PRIVATE ${ONNXRUNTIME_LIB})
+  target_include_directories(${BINARY_NAME} PRIVATE ${ONNXRUNTIME_INCLUDE})
+  target_compile_definitions(${BINARY_NAME} PRIVATE HAS_ONNXRUNTIME)
+  message(STATUS "ONNX Runtime found: ${ONNXRUNTIME_LIB}")
+else()
+  message(WARNING "ONNX Runtime not found — Kokoro TTS will be disabled")
+endif()
+
+# Find espeak-ng (optional — enables G2P for Kokoro TTS when available)
+pkg_check_modules(ESPEAKNG QUIET IMPORTED_TARGET espeak-ng)
+
+if(ESPEAKNG_FOUND)
+  target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::ESPEAKNG)
+  target_compile_definitions(${BINARY_NAME} PRIVATE HAS_ESPEAK_NG)
+  message(STATUS "espeak-ng found")
+else()
+  message(WARNING "espeak-ng not found — Kokoro TTS phonemization will be disabled")
+endif()
+
+# Link dl for dlopen/dlsym (used by kokoro_onnx_engine.cc for dynamic espeak loading)
+target_link_libraries(${BINARY_NAME} PRIVATE dl)
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 target_include_directories(${BINARY_NAME} PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})

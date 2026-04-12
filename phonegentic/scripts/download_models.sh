@@ -169,33 +169,106 @@ print('Download complete.')
     ok "whisper.cpp GGML model ready at $target"
 }
 
-# ─── Linux: Kokoro TTS (ONNX for future TTS.cpp) ─────────────────────
+# ─── Linux: Kokoro TTS (ONNX via PyTorch export) ──────────────────────
+#
+# The HuggingFace repo hexgrad/Kokoro-82M only ships PyTorch .pth weights.
+# We must export to ONNX locally using the kokoro Python package.
+#
+# Prerequisites: pip install kokoro torch onnxruntime
+# (kokoro pulls in huggingface_hub, misaki, numpy, transformers)
+
+# Default voices to download (English voices for en-us pipeline).
+# Full list: https://huggingface.co/hexgrad/Kokoro-82M/tree/main/voices
+KOKORO_VOICES="${KOKORO_VOICES:-af_heart af_bella af_nicole af_nova af_river af_sky af_sarah af_kore af_alloy af_aoede af_jessica am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa}"
 
 download_kokoro_linux() {
-    info "Downloading Kokoro TTS model (ONNX, for TTS.cpp)..."
-    mkdir -p "$KOKORO_DIR"
+    info "Setting up Kokoro TTS model (ONNX export + voice conversion)..."
+    mkdir -p "$KOKORO_DIR/voices"
 
-    local target="$KOKORO_DIR/kokoro-v0_19.onnx"
+    # ── Step 1: Export ONNX model ──────────────────────────────────────
+    local onnx_target="$KOKORO_DIR/kokoro-v1_0.onnx"
     local fsize=0
-    if [ -f "$target" ]; then
-        fsize=$(file_size_bytes "$target")
+    if [ -f "$onnx_target" ]; then
+        fsize=$(file_size_bytes "$onnx_target")
     fi
 
     if [ "$fsize" -gt 1000000 ]; then
-        ok "kokoro-v0_19.onnx already exists ($(( fsize / 1048576 ))MB), skipping."
+        ok "kokoro-v1_0.onnx already exists ($(( fsize / 1048576 ))MB), skipping export."
     else
-        echo "    Source: hexgrad/Kokoro-82M (ONNX)"
+        echo "    Exporting PyTorch → ONNX (this may take a few minutes)..."
+        echo "    Source: hexgrad/Kokoro-82M (kokoro-v1_0.pth)"
         python3 -c "
-from huggingface_hub import snapshot_download
-snapshot_download(
-    'hexgrad/Kokoro-82M',
-    local_dir=r'''$KOKORO_DIR''',
-    allow_patterns=['kokoro-v0_19.onnx', 'config.json', 'voices/*.bin'],
+import os, warnings, torch
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore')
+
+from kokoro import KModel
+from kokoro.model import KModelForONNX
+
+print('  Loading KModel with disable_complex=True (ONNX-safe iSTFT)...')
+model = KModel(repo_id='hexgrad/Kokoro-82M', disable_complex=True).to('cpu').eval()
+
+onnx_model = KModelForONNX(model)
+onnx_model.eval()
+
+# Dummy inputs for tracing
+N = 50
+dummy_input_ids = torch.randint(1, 150, (1, N), dtype=torch.long)
+dummy_ref_s = torch.randn(1, 256, dtype=torch.float32)
+dummy_speed = torch.tensor(1.0, dtype=torch.float64)
+
+print('  Testing forward pass...')
+with torch.no_grad():
+    audio, dur = onnx_model(dummy_input_ids, dummy_ref_s, dummy_speed)
+    print(f'  Forward pass OK: audio={audio.shape}, dur={dur.shape}')
+
+print('  Exporting to ONNX (opset 17)...')
+torch.onnx.export(
+    onnx_model,
+    (dummy_input_ids, dummy_ref_s, dummy_speed),
+    r'''$onnx_target''',
+    input_names=['input_ids', 'ref_s', 'speed'],
+    output_names=['audio', 'duration'],
+    dynamic_axes={
+        'input_ids': {1: 'seq_len'},
+        'audio': {0: 'audio_len'},
+        'duration': {0: 'dur_len'},
+    },
+    opset_version=17,
+    do_constant_folding=True,
 )
-print('Download complete.')
-"
+print('  ONNX export complete!')
+" || { err "ONNX export failed. Install deps: pip install kokoro torch"; exit 1; }
     fi
-    ok "Kokoro TTS (ONNX) model ready at $KOKORO_DIR"
+
+    # ── Step 2: Convert voice .pt → .npy ──────────────────────────────
+    local voices_converted=0
+    for voice in $KOKORO_VOICES; do
+        local npy_file="$KOKORO_DIR/voices/${voice}.npy"
+        if [ -f "$npy_file" ]; then
+            voices_converted=$((voices_converted + 1))
+        else
+            if [ "$voices_converted" -eq 0 ]; then
+                echo "    Converting voice .pt files → .npy..."
+            fi
+            python3 -c "
+import os, warnings, torch, numpy as np
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore')
+from huggingface_hub import hf_hub_download
+
+voice = '$voice'
+npy_path = r'''$npy_file'''
+pt_path = hf_hub_download(repo_id='hexgrad/Kokoro-82M', filename=f'voices/{voice}.pt')
+pack = torch.load(pt_path, weights_only=True)
+np.save(npy_path, pack.numpy())
+print(f'  Converted {voice}: {pack.shape} → {npy_path}')
+" || warn "Failed to convert voice: $voice"
+            voices_converted=$((voices_converted + 1))
+        fi
+    done
+
+    ok "Kokoro TTS (ONNX) model ready at $KOKORO_DIR ($voices_converted voices)"
 }
 
 # ─── Platform dispatch ────────────────────────────────────────────────
@@ -231,9 +304,9 @@ show_status() {
         else
             warn "Kokoro TTS (MLX):      CORRUPT (re-run download)"
         fi
-    elif [ "$OS" = "Linux" ] && [ -f "$KOKORO_DIR/kokoro-v0_19.onnx" ]; then
+    elif [ "$OS" = "Linux" ] && [ -f "$KOKORO_DIR/kokoro-v1_0.onnx" ]; then
         local fsize
-        fsize=$(file_size_bytes "$KOKORO_DIR/kokoro-v0_19.onnx")
+        fsize=$(file_size_bytes "$KOKORO_DIR/kokoro-v1_0.onnx")
         if [ "$fsize" -gt 1000000 ]; then
             ok "Kokoro TTS (ONNX):     READY ($(dir_size_human "$KOKORO_DIR"))"
         else

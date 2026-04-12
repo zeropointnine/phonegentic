@@ -126,3 +126,14 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Install Kokoro TTS model files if they exist (from download_models.sh)
+set(KOKORO_MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../models/kokoro")
+if(EXISTS "${KOKORO_MODELS_DIR}")
+  install(DIRECTORY "${KOKORO_MODELS_DIR}"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/flutter_assets/models"
+    COMPONENT Runtime
+    PATTERN ".gitignore" EXCLUDE
+  )
+  message(STATUS "Kokoro TTS models will be bundled from: ${KOKORO_MODELS_DIR}")
+endif()
