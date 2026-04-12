@@ -1,0 +1,34 @@
+---
+alwaysApply: true
+---
+
+## Task Documentation Rule
+
+Every task, bug fix, or feature I work on **must** have a corresponding markdown readme. Before starting implementation, either create a new file or append to an existing one in the appropriate directory:
+
+| Category | Directory | When to use |
+|----------|-----------|-------------|
+| **Features** | `readmes/features/` | Bigger stories that span 3+ file additions/changes |
+| **Tasks** | `readmes/tasks/` | Smaller, scoped work (< 3 files changed) |
+| **Bugs** | `readmes/bugs/` | Bug investigations and fixes |
+
+### File naming
+
+Use lowercase kebab-case: `readmes/{category}/{short-descriptive-name}.md`
+
+### Required sections
+
+Each readme must contain at minimum:
+
+1. **Title** (`# ...`) — concise name of the work
+2. **Problem** — what's broken, missing, or needed and why
+3. **Solution** — the approach taken, key design decisions, and trade-offs
+4. **Files** — list of files created and modified
+
+Optionally include: architecture diagrams, timing tables, token cost budgets, status/phase tracking, or anything else that helps a future reader understand the work.
+
+### Workflow
+
+- **Before coding**: create the file with the Problem section filled in. This forces clear thinking about what we're solving.
+- **After coding**: fill in the Solution and Files sections.
+- **Existing file**: if the work extends a previously documented task/feature, append a new phase/section rather than creating a duplicate file.
