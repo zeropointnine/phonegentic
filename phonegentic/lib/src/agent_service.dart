@@ -25,6 +25,7 @@ import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
 import 'elevenlabs_api_service.dart';
+import 'ivr_detector.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
@@ -413,10 +414,26 @@ class AgentService extends ChangeNotifier {
   Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
   final List<TranscriptionEvent> _settleTranscripts = [];
+  final List<String> _settleAccumulatedTexts = [];
   static const _settleWindowMs = 4000;
   static const _settleExtendMs = 8000;
   static const _maxSettleMs = 20000;
   DateTime? _settleStartTime;
+
+  // Beep-watch: after IVR detected and speech stops, wait for a beep.
+  Timer? _beepWatchTimer;
+  static const _beepWatchTimeoutMs = 3000;
+  static const _beepWatchSilenceMs = 1500;
+  Timer? _beepWatchSilenceTimer;
+  bool _inBeepWatchMode = false;
+
+  // Cadence tracking: monitor speech patterns during settling to detect
+  // automated greetings vs. human responses.
+  Timer? _cadenceTimer;
+  DateTime? _vadSpeechStartTime;
+  int _cumulativeSpeechMs = 0;
+  int _settleWordCount = 0;
+  static const _cadenceCheckIntervalMs = 500;
 
   // Deferred greeting: nudge the agent to begin if the line stays quiet
   // after transitioning to connected.
@@ -1705,28 +1722,61 @@ class AgentService extends ChangeNotifier {
       if (!(_splitPipeline && _callPhase == CallPhase.idle)) return;
     }
 
-    // During settling, check for IVR patterns. If detected, extend the
-    // settle window. If clean human speech arrives instead, promote to
-    // connected — but DON'T forward the transcript to the LLM yet.
-    // Buffer it so the VAD-aware connected greeting can forward it once
-    // the remote party stops speaking, preventing the agent from talking
-    // over them.
+    // During settling, classify each transcript to decide whether this is a
+    // human answering or an automated IVR/voicemail greeting. Buffer all
+    // transcripts — they are forwarded after promotion to connected.
     if (_callPhase.isSettling) {
-      final text = event.text.trim();
-      if (IvrDetector.isIvr(text)) {
+      final String text = event.text.trim();
+      _settleTranscripts.add(event);
+      _settleAccumulatedTexts.add(text);
+      _settleWordCount += text.split(RegExp(r'\s+')).where((String w) => w.isNotEmpty).length;
+
+      final IvrConfidence c = IvrDetector.confidence(text);
+      debugPrint(
+          '[AgentService] Settle transcript: "$text" → $c');
+
+      if (c.mailboxFull) {
+        debugPrint(
+            '[AgentService] Mailbox full detected — notifying host');
+        _ivrHeard = true;
+        _ivrHitsInSettle++;
+        _handleMailboxFull(text);
+        return;
+      }
+
+      if (c.type == CallPartyType.ivr) {
         _ivrHitsInSettle++;
         _ivrHeard = true;
         _extendSettleTimer();
-        debugPrint(
-            '[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
+        if (c.ivrEnding) {
+          debugPrint(
+              '[AgentService] IVR ending phrase detected — entering beep watch');
+          _enterBeepWatchMode();
+        }
         return;
       }
-      _settleTranscripts.add(event);
-      if (text.length >= 3 && _ivrHitsInSettle == 0) {
-        debugPrint(
-            '[AgentService] Human speech during settle: "$text" — promoting (transcript buffered)');
-        _promoteToConnected();
+
+      if (c.type == CallPartyType.human && c.score >= 0.7) {
+        if (_ivrHitsInSettle == 0) {
+          debugPrint(
+              '[AgentService] Human speech during settle: "$text" — promoting');
+          _promoteToConnected();
+          return;
+        }
+        // IVR was heard before but now human-sounding text — could be the
+        // tail of a voicemail greeting. Check accumulated context.
+        final IvrConfidence acc =
+            IvrDetector.accumulatedConfidence(_settleAccumulatedTexts);
+        if (acc.type == CallPartyType.human) {
+          debugPrint(
+              '[AgentService] Accumulated context is human — promoting');
+          _promoteToConnected();
+          return;
+        }
       }
+
+      // Ambiguous — let more text arrive. If the initial settle timer hasn't
+      // been extended by IVR, it will fire naturally and promote.
       return;
     }
 
@@ -3358,12 +3408,18 @@ class AgentService extends ChangeNotifier {
       _voicemailPromptSent = false;
       _ivrHeard = false;
       _hasConnectedBefore = false;
+      _inBeepWatchMode = false;
+      _settleWordCount = 0;
+      _cumulativeSpeechMs = 0;
       _clearRemotePartyName();
       _cancelSettleTimer();
+      _cancelBeepWatch();
+      _stopCadenceTracking();
       _cancelConnectedGreeting();
       _recentAgentTexts.clear();
       _pendingTranscripts.clear();
       _settleTranscripts.clear();
+      _settleAccumulatedTexts.clear();
       _postSpeakFlushTimer?.cancel();
       _playbackEndDebounce?.cancel();
       _ttsGenEndTimer?.cancel();
@@ -3475,7 +3531,10 @@ class AgentService extends ChangeNotifier {
     _settleTimer?.cancel();
     _preGreetTimer?.cancel();
     _ivrHitsInSettle = 0;
+    _settleAccumulatedTexts.clear();
     _settleStartTime = DateTime.now();
+    _cancelBeepWatch();
+    _startCadenceTracking();
     _settleTimer = Timer(const Duration(milliseconds: _settleWindowMs), () {
       _tryPromoteFromSettle();
     });
@@ -3501,9 +3560,12 @@ class AgentService extends ChangeNotifier {
   /// Only promote to connected if no one is currently speaking (VAD inactive).
   /// If speech is ongoing (e.g. voicemail greeting still playing), reschedule
   /// — but honour the hard ceiling so we never stay in settling forever.
+  ///
+  /// When IVR has been detected, instead of promoting immediately on silence,
+  /// enter beep-watch mode to wait for the voicemail recording tone.
   void _tryPromoteFromSettle() {
     if (_callPhase != CallPhase.settling) return;
-    final elapsed = _settleStartTime != null
+    final int elapsed = _settleStartTime != null
         ? DateTime.now().difference(_settleStartTime!).inMilliseconds
         : 0;
     if (_whisper.vadActive && elapsed < _maxSettleMs) {
@@ -3517,7 +3579,19 @@ class AgentService extends ChangeNotifier {
     if (elapsed >= _maxSettleMs) {
       debugPrint(
           '[AgentService] Settle ceiling reached in VAD loop — force-promoting');
+      _promoteToConnected();
+      return;
     }
+
+    // If we heard IVR content and speech just stopped, enter beep-watch
+    // instead of promoting immediately — the voicemail beep may be imminent.
+    if (_ivrHeard && !_inBeepWatchMode) {
+      debugPrint(
+          '[AgentService] Settle timer fired with IVR heard — entering beep watch');
+      _enterBeepWatchMode();
+      return;
+    }
+
     _promoteToConnected();
   }
 
@@ -3527,6 +3601,9 @@ class AgentService extends ChangeNotifier {
     _preGreetTimer?.cancel();
     _preGreetTimer = null;
     _ivrHitsInSettle = 0;
+    _settleAccumulatedTexts.clear();
+    _cancelBeepWatch();
+    _stopCadenceTracking();
   }
 
   void _promoteToConnected() {
@@ -3663,6 +3740,157 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] Voicemail prompt triggered immediately');
   }
 
+  // MARK: - Beep-watch mode
+
+  /// Enter beep-watch: after IVR content is detected and speech stops, wait
+  /// up to [_beepWatchTimeoutMs] for the native Goertzel filter to detect a
+  /// recording tone. If no beep arrives, trigger the voicemail prompt anyway
+  /// (many systems don't produce a detectable beep).
+  void _enterBeepWatchMode() {
+    if (_inBeepWatchMode) return;
+    _inBeepWatchMode = true;
+    _beepWatchTimer?.cancel();
+    _beepWatchSilenceTimer?.cancel();
+
+    // If VAD is still active, wait for silence first before starting the
+    // beep timeout. Otherwise start immediately.
+    if (_whisper.vadActive) {
+      debugPrint('[AgentService] Beep-watch: waiting for silence');
+      _beepWatchSilenceTimer =
+          Timer(const Duration(milliseconds: _beepWatchSilenceMs), () {
+        if (_whisper.vadActive) {
+          // Still speaking — recheck in 500ms, up to settle ceiling.
+          final int elapsed = _settleStartTime != null
+              ? DateTime.now().difference(_settleStartTime!).inMilliseconds
+              : 0;
+          if (elapsed < _maxSettleMs) {
+            _beepWatchSilenceTimer =
+                Timer(const Duration(milliseconds: 500), () {
+              _enterBeepWatchMode();
+            });
+            _inBeepWatchMode = false;
+            return;
+          }
+        }
+        _startBeepWatchTimeout();
+      });
+    } else {
+      _startBeepWatchTimeout();
+    }
+  }
+
+  void _startBeepWatchTimeout() {
+    debugPrint('[AgentService] Beep-watch: started ${_beepWatchTimeoutMs}ms timeout');
+    _beepWatchTimer?.cancel();
+    _beepWatchTimer =
+        Timer(const Duration(milliseconds: _beepWatchTimeoutMs), () {
+      debugPrint('[AgentService] Beep-watch: timeout — no beep detected');
+      _inBeepWatchMode = false;
+      // Promote to connected so the voicemail prompt can fire.
+      if (_callPhase == CallPhase.settling) {
+        _promoteToConnected();
+      }
+      // Trigger voicemail even without a beep — many systems don't beep.
+      if (!_voicemailPromptSent && _ivrHeard) {
+        _triggerVoicemailPrompt();
+      }
+    });
+  }
+
+  void _cancelBeepWatch() {
+    _beepWatchTimer?.cancel();
+    _beepWatchTimer = null;
+    _beepWatchSilenceTimer?.cancel();
+    _beepWatchSilenceTimer = null;
+    _inBeepWatchMode = false;
+  }
+
+  // MARK: - Cadence tracking
+
+  /// Start periodic cadence checks during settling. Monitors cumulative
+  /// VAD-active time and word count to detect long automated greetings.
+  void _startCadenceTracking() {
+    _cadenceTimer?.cancel();
+    _cumulativeSpeechMs = 0;
+    _settleWordCount = 0;
+    _vadSpeechStartTime = _whisper.vadActive ? DateTime.now() : null;
+    _cadenceTimer = Timer.periodic(
+      const Duration(milliseconds: _cadenceCheckIntervalMs),
+      (_) => _cadenceTick(),
+    );
+  }
+
+  void _cadenceTick() {
+    if (_callPhase != CallPhase.settling) {
+      _stopCadenceTracking();
+      return;
+    }
+
+    // Accumulate VAD-active time.
+    if (_whisper.vadActive) {
+      _vadSpeechStartTime ??= DateTime.now();
+    } else if (_vadSpeechStartTime != null) {
+      _cumulativeSpeechMs +=
+          DateTime.now().difference(_vadSpeechStartTime!).inMilliseconds;
+      _vadSpeechStartTime = null;
+    }
+
+    final int totalSpeechMs = _cumulativeSpeechMs +
+        (_vadSpeechStartTime != null
+            ? DateTime.now().difference(_vadSpeechStartTime!).inMilliseconds
+            : 0);
+
+    // Long continuous speech (>5s) with many words and no IVR keyword hits
+    // yet — run accumulated confidence check.
+    if (totalSpeechMs > 5000 && _settleWordCount >= 15 && !_ivrHeard) {
+      final IvrConfidence acc =
+          IvrDetector.accumulatedConfidence(_settleAccumulatedTexts);
+      if (acc.type == CallPartyType.ivr) {
+        debugPrint(
+            '[AgentService] Cadence: long speech (${totalSpeechMs}ms, $_settleWordCount words) '
+            'classified as IVR by accumulated analysis');
+        _ivrHeard = true;
+        _ivrHitsInSettle++;
+        _extendSettleTimer();
+        if (acc.ivrEnding) {
+          _enterBeepWatchMode();
+        }
+      }
+    }
+  }
+
+  void _stopCadenceTracking() {
+    _cadenceTimer?.cancel();
+    _cadenceTimer = null;
+    _vadSpeechStartTime = null;
+  }
+
+  // MARK: - Mailbox full / undeliverable
+
+  /// Handle "mailbox is full" or "not in service" detections. These mean
+  /// leaving a voicemail is not possible — notify the host via a system
+  /// message instead of attempting to record.
+  void _handleMailboxFull(String transcriptText) {
+    _cancelSettleTimer();
+    _cancelBeepWatch();
+
+    if (_callPhase == CallPhase.settling) {
+      _promoteToConnected();
+    }
+    _voicemailPromptSent = true; // prevent normal voicemail prompt
+
+    const String prompt =
+        '[SYSTEM] The voicemail box is full or the number is not accepting '
+        'messages. You cannot leave a voicemail. Inform the host briefly '
+        'and do NOT attempt to record a message.';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(prompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(prompt);
+    }
+    debugPrint('[AgentService] Mailbox full — voicemail skipped');
+  }
+
   // MARK: - Native beep tone detection (Goertzel)
 
   /// Whether the beep arrived in a plausible voicemail window: during
@@ -3711,6 +3939,8 @@ class AgentService extends ChangeNotifier {
           break;
         }
         _beepDetected = true;
+        // Cancel beep-watch timeout — we found the beep.
+        _beepWatchTimer?.cancel();
         debugPrint('[AgentService] Native beep tone DETECTED (IVR confirmed)');
         if (_callPhase == CallPhase.settling) {
           _promoteToConnected();
@@ -3719,8 +3949,12 @@ class AgentService extends ChangeNotifier {
       case 'onBeepEnded':
         if (!_beepDetected) break;
         debugPrint('[AgentService] Native beep tone ENDED');
+        _cancelBeepWatch();
         if (_callPhase == CallPhase.connected) {
           _cancelConnectedGreeting();
+          _triggerVoicemailPrompt();
+        } else if (_callPhase == CallPhase.settling) {
+          _promoteToConnected();
           _triggerVoicemailPrompt();
         }
         _beepDetected = false;

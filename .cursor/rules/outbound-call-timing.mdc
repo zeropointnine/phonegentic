@@ -1,0 +1,61 @@
+---
+description: Outbound call timing, IVR/voicemail detection, beep-watch, and settle-phase logic
+globs: "**/agent_service.dart,**/BeepDetector.swift,**/AudioTapChannel.swift"
+alwaysApply: false
+---
+# Outbound Call Timing & AMD
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `phonegentic/lib/src/ivr_detector.dart` | Text-based IVR/voicemail/human classifier |
+| `phonegentic/lib/src/agent_service.dart` | Settle phase state machine, beep-watch, cadence tracking |
+| `phonegentic/macos/Runner/WebRTCAudioProcessor.swift` | macOS Goertzel beep detection (inline in RenderPreProcessor) |
+| `phonegentic/ios/Runner/BeepDetector.swift` | iOS standalone Goertzel beep detector |
+| `phonegentic/ios/Runner/AudioTapChannel.swift` | iOS MethodChannel bridge for beep callbacks |
+| `readmes/features/outbound-call-timing.md` | Full feature documentation |
+
+## Settle Phase State Machine
+
+After SIP CONFIRMED on outbound calls, the settle phase classifies what answered:
+
+1. Each transcript → `IvrDetector.confidence(text)` → human / ivr / ambiguous
+2. Human (score >= 0.7, no prior IVR) → promote to connected immediately
+3. IVR → extend settle, track, enter beep-watch when speech ends
+4. Ambiguous → buffer, let cadence analyzer resolve with accumulated context
+5. Mailbox full → promote + skip voicemail + notify host
+
+## Critical Timers
+
+- `_settleWindowMs = 4000` — initial settle duration
+- `_settleExtendMs = 8000` — extended for IVR
+- `_maxSettleMs = 20000` — hard ceiling
+- `_beepWatchTimeoutMs = 3000` — max wait for beep after silence
+- `_beepWatchSilenceMs = 1500` — wait for VAD silence before beep timeout
+- `_connectedGreetDelayMs = 1500` — delay before agent speaks (VAD-aware)
+- `_cadenceCheckIntervalMs = 500` — periodic cadence analysis tick
+
+## IvrDetector Design
+
+- Keyword-based, no ML — fast and deterministic
+- `isIvr()` is the legacy boolean API; prefer `confidence()` for new code
+- `accumulatedConfidence()` analyzes multiple transcripts together
+- `mailboxFull` flag triggers a skip-voicemail path
+- `ivrEnding` flag triggers early beep-watch entry
+
+## Beep Detection (Goertzel)
+
+- Scans 7 frequencies: 440, 480, 620, 850, 950, 1000, 1400 Hz
+- 60% energy concentration threshold per frequency
+- 40 consecutive frames (400ms) to confirm
+- Callbacks: `onBeepDetected` / `onBeepEnded` → Flutter MethodChannel
+- Only acts if `_ivrHeard = true` (prevents false positives from hold music)
+
+## Testing Considerations
+
+- Voicemail greetings vary enormously in length (3s to 30s)
+- Some systems don't produce any beep tone
+- Whisper transcription lag means text arrives ~1-2s after speech
+- VAD `silence_duration_ms = 1800` affects when "speech stopped" fires
+- The 20s hard ceiling prevents infinite settling on looping IVR menus

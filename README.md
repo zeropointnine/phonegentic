@@ -184,7 +184,7 @@ flowchart TB
 4. OpenAI transcribes the speech, generates a response (or, in split pipeline mode, forwards transcripts to Claude), and returns TTS audio.
 5. The TTS audio is played back into the call so both the host and the remote caller hear the agent.
 6. Transcripts and agent messages appear in a side-panel chat UI in real time.
-7. An IVR/auto-attendant detector suppresses transcripts during the settling window after a call connects, preventing robotic prompts from polluting the conversation.
+7. An IVR/voicemail/answering-machine detector classifies incoming transcripts during the settle phase using keyword analysis, cadence tracking, and acoustic beep detection (Goertzel). It distinguishes human answers from automated greetings and handles voicemail timing, mailbox-full detection, and beep-watch sequencing.
 8. Speaker identification via on-device voiceprint embeddings labels transcripts with known contact names.
 
 ### Echo cancellation, VAD & turn-taking
@@ -251,6 +251,32 @@ VAD parameters (WhisperRealtimeService session config):
 | `threshold` | Less sensitive — ignores quiet speech and background noise, but may miss soft-spoken callers |
 | `silence_duration_ms` | Agent waits longer before responding — more natural for speakers who pause, but feels sluggish for quick back-and-forth |
 | `prefix_padding_ms` | More lead-in audio is captured — better transcription of first words, but increases buffered audio size |
+
+#### Outbound call timing & answering machine detection
+
+On outbound calls, the agent must distinguish between a human answering ("Hello?") and an automated system (voicemail greeting, IVR menu, full-mailbox announcement). Getting this wrong means either talking over someone or sitting silently while a human waits.
+
+The **settle phase** begins at SIP CONFIRMED and runs a multi-signal classifier:
+
+1. **Transcript analysis** (`IvrDetector`) — each incoming transcript is classified as human, IVR, or ambiguous using keyword/phrase matching against ~60 patterns (voicemail phrases, IVR menus, carrier messages, human greetings).
+2. **Cadence tracking** — a 500ms periodic timer monitors cumulative VAD-active time and word count. Long continuous speech (>5s, 15+ words) without IVR keywords triggers accumulated-text re-analysis.
+3. **Beep detection** (Goertzel) — native-layer acoustic filter scans incoming audio for sustained pure tones at voicemail beep frequencies (440–1400 Hz). 400ms of concentrated energy at one frequency = confirmed beep.
+4. **Beep-watch mode** — after IVR content is detected and speech stops, the system waits up to 3s for a beep. If detected, the voicemail prompt fires after the beep ends. If no beep, the prompt fires anyway.
+5. **Mailbox-full detection** — phrases like "mailbox is full" or "not in service" trigger a skip-voicemail path, notifying the host instead of attempting to record.
+
+| Scenario | Agent response time |
+|----------|-------------------|
+| Human says "Hello?" | ~1.5s (promote immediately + VAD-aware greeting delay) |
+| Voicemail with beep | Speaks within ~200ms of beep end |
+| Voicemail without beep | Speaks ~3s after greeting silence detected |
+| Mailbox full | Notifies host immediately, no voicemail attempt |
+
+| Knob | File | Default | Effect |
+|------|------|---------|--------|
+| `_settleWindowMs` | `agent_service.dart` | `4000` | Initial settle window — longer catches more IVR, but delays human promotion if classifier is uncertain |
+| `_beepWatchTimeoutMs` | `agent_service.dart` | `3000` | Max wait for beep after silence — longer catches slow beeps, but delays voicemail start on beepless systems |
+| `_maxSettleMs` | `agent_service.dart` | `20000` | Hard ceiling — prevents infinite settling on looping IVR menus |
+| `toneConfirmFrames` | `WebRTCAudioProcessor.swift` | `40` (400ms) | Beep confirmation threshold — lower catches short beeps but risks false positives from DTMF |
 
 #### TTS text pipeline (split pipeline mode)
 
