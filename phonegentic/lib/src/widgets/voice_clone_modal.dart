@@ -141,8 +141,14 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
   @override
   void dispose() {
     if (_didMuteAgent && _agentService != null && _agentService!.muted) {
-      _agentService!.toggleMute();
-      debugPrint('[VoiceClone] Restored agent mute state');
+      // Defer — dispose runs while the widget tree is locked.
+      final AgentService agent = _agentService!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (agent.muted) {
+          agent.toggleMute();
+          debugPrint('[VoiceClone] Restored agent mute state');
+        }
+      });
     }
     if (_isPlaying) {
       _tapControl
