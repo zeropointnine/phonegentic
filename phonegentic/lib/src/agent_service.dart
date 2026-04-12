@@ -403,6 +403,7 @@ class AgentService extends ChangeNotifier {
   Timer? _postSpeakFlushTimer;
   Timer? _playbackEndDebounce;
   Timer? _ttsGenEndTimer;
+  Timer? _playbackSafetyTimer;
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -1633,16 +1634,12 @@ class AgentService extends ChangeNotifier {
   }
 
   /// TTS generation finished — all audio chunks have been emitted to native.
-  /// Start a short timer for the last chunk to drain through native playback,
-  /// then transition to listening.  This replaces the slow native-callback
-  /// chain (2s native timer + 2s Flutter debounce) with a fast known-done
-  /// path.  Native echo suppression still protects against mic echo
-  /// independently.
+  /// Transition UI to "Listening" quickly, but keep isTtsPlaying gated until
+  /// native confirms playback is done (onPlaybackComplete).  This gives a
+  /// responsive UI without letting Whisper hear the still-playing TTS audio.
   void _onTtsGenerationDone() {
     _ttsGenEndTimer?.cancel();
     _ttsGenEndTimer = Timer(const Duration(milliseconds: 200), () {
-      _playbackEndDebounce?.cancel();
-      _whisper.isTtsPlaying = false;
       if (_speaking) {
         _speaking = false;
         _speakingEndTime = DateTime.now();
@@ -1650,7 +1647,17 @@ class AgentService extends ChangeNotifier {
         notifyListeners();
         _schedulePostSpeakFlush();
       }
-      debugPrint('[AgentService] Fast listen transition: gen-done + 500ms drain');
+      debugPrint('[AgentService] Gen-done UI transition (isTtsPlaying still gated)');
+
+      // Safety: if native never sends onPlaybackComplete (e.g. no audio was
+      // queued, or direct-mode with no tap channel), force-clear after 3s.
+      _playbackSafetyTimer?.cancel();
+      _playbackSafetyTimer = Timer(const Duration(milliseconds: 3000), () {
+        if (_whisper.isTtsPlaying) {
+          _whisper.isTtsPlaying = false;
+          debugPrint('[AgentService] Safety timeout: forced isTtsPlaying=false');
+        }
+      });
     });
   }
 
@@ -3360,6 +3367,7 @@ class AgentService extends ChangeNotifier {
       _postSpeakFlushTimer?.cancel();
       _playbackEndDebounce?.cancel();
       _ttsGenEndTimer?.cancel();
+      _playbackSafetyTimer?.cancel();
       _stopTtsLevelDrain();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
@@ -3675,17 +3683,14 @@ class AgentService extends ChangeNotifier {
   Future<dynamic> _handleNativeTapCall(MethodCall call) async {
     switch (call.method) {
       case 'onPlaybackComplete':
-        if (!_speaking && !_whisper.isTtsPlaying) {
-          // Generation-done timer already handled the transition.
-          break;
-        }
         if (_splitPipeline) {
-          // Safety fallback: if _ttsGenEndTimer hasn't fired yet (e.g.
-          // long streaming response still generating), debounce native
-          // callbacks and transition when they stop.
           _playbackEndDebounce?.cancel();
           _playbackEndDebounce = Timer(const Duration(milliseconds: 800), () {
-            _whisper.isTtsPlaying = false;
+            _playbackSafetyTimer?.cancel();
+            if (_whisper.isTtsPlaying) {
+              _whisper.isTtsPlaying = false;
+              debugPrint('[AgentService] Native playback done → isTtsPlaying=false');
+            }
             if (_speaking) {
               _speaking = false;
               _speakingEndTime = DateTime.now();
@@ -3695,6 +3700,7 @@ class AgentService extends ChangeNotifier {
             }
           });
         } else {
+          _playbackSafetyTimer?.cancel();
           _whisper.isTtsPlaying = false;
         }
         break;
@@ -3783,6 +3789,7 @@ class AgentService extends ChangeNotifier {
     _postSpeakFlushTimer?.cancel();
     _playbackEndDebounce?.cancel();
     _ttsGenEndTimer?.cancel();
+    _playbackSafetyTimer?.cancel();
     _stopTtsLevelDrain();
     _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();
