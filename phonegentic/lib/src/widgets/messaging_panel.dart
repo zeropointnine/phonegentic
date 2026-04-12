@@ -6,6 +6,7 @@ import '../messaging/messaging_service.dart';
 import '../messaging/models/sms_conversation.dart';
 import '../theme_provider.dart';
 import 'conversation_view.dart';
+import 'dialpad_contact_preview.dart';
 
 class MessagingPanel extends StatefulWidget {
   const MessagingPanel({super.key});
@@ -270,33 +271,9 @@ class _MessagingPanelState extends State<MessagingPanel> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            // Avatar
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: hasUnread
-                    ? AppColors.accent.withValues(alpha: 0.15)
-                    : AppColors.card,
-                border: Border.all(
-                  color: hasUnread
-                      ? AppColors.accent.withValues(alpha: 0.3)
-                      : AppColors.border.withValues(alpha: 0.4),
-                  width: 0.5,
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  convo.initials,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color:
-                        hasUnread ? AppColors.accent : AppColors.textSecondary,
-                  ),
-                ),
-              ),
+            ContactIdenticon(
+              seed: convo.contactName ?? convo.remotePhone,
+              size: 42,
             ),
             const SizedBox(width: 10),
             Expanded(

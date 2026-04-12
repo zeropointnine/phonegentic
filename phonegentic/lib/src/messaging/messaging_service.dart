@@ -376,6 +376,18 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     return s.length > 120 ? '${s.substring(0, 120)}...' : s;
   }
 
+  /// Resend a previously failed message (removes the old one first).
+  Future<SmsMessage?> resendMessage(SmsMessage msg) async {
+    if (msg.localId != null) {
+      await deleteMessage(msg.localId!);
+    }
+    return sendMessage(
+      to: msg.to,
+      text: msg.text,
+      mediaUrls: msg.mediaUrls.isNotEmpty ? msg.mediaUrls : null,
+    );
+  }
+
   /// Send a reply in the currently selected conversation.
   Future<SmsMessage?> reply(String text, {List<String>? mediaUrls}) async {
     if (_selectedRemotePhone == null) return null;

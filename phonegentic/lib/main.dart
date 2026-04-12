@@ -15,6 +15,8 @@ import 'package:phonegentic/src/messaging/messaging_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
 import 'package:provider/provider.dart';
@@ -25,6 +27,19 @@ import 'src/register.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Suppress known Flutter bug with Caps Lock on macOS:
+  // https://github.com/flutter/flutter/issues/136280
+  PlatformDispatcher.instance.onError = (error, stack) {
+    if (error is AssertionError &&
+        error
+            .toString()
+            .contains('_pressedKeys.containsKey(event.physicalKey)')) {
+      return true;
+    }
+    return false;
+  };
+
   Logger.level = Level.warning;
   await CallHistoryDb.initialize();
   final confConfig = await AgentConfigService.loadConferenceConfig();

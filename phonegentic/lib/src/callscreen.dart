@@ -28,6 +28,7 @@ import 'theme_provider.dart';
 import 'widgets/action_button.dart';
 import 'widgets/add_call_modal.dart';
 import 'widgets/dialpad_contact_preview.dart';
+import 'widgets/glass_plate_modal.dart';
 import 'widgets/audio_device_sheet.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/voice_clone_modal.dart';
@@ -675,7 +676,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     );
   }
 
-  bool _showAddCallModal = false;
   bool _placingConferenceLeg = false;
 
   void _startAddCallGrace() {
@@ -685,19 +685,36 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     });
   }
 
-  void _handleAddCall() {
+  void _handleAddCall() async {
     if (!_addCallReady) return;
     if (!_hold && call != null) {
       _handleHold();
     }
-    setState(() => _showAddCallModal = true);
-  }
-
-  void _closeAddCallModal() {
-    setState(() {
-      _showAddCallModal = false;
-      _placingConferenceLeg = false;
-    });
+    const double diameter = 660;
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    final Size screen = MediaQuery.of(context).size;
+    Alignment plateAlignment = Alignment.center;
+    if (box != null) {
+      final Offset center = box.localToGlobal(box.size.center(Offset.zero));
+      final double freeX = screen.width - diameter;
+      final double freeY = screen.height - diameter;
+      plateAlignment = Alignment(
+        freeX > 0 ? ((center.dx - diameter / 2) / freeX) * 2 - 1 : 0,
+        freeY > 0 ? ((center.dy - diameter / 2) / freeY) * 2 - 1 : 0,
+      );
+    }
+    await GlassPlateModal.show<void>(
+      context: context,
+      diameter: diameter,
+      alignment: plateAlignment,
+      builder: (BuildContext ctx) => AddCallModal(
+        onCall: _placeConferenceLeg,
+        onClose: () => Navigator.of(ctx).pop(),
+      ),
+    );
+    if (mounted) {
+      setState(() => _placingConferenceLeg = false);
+    }
   }
 
   Future<void> _placeConferenceLeg(String number) async {
@@ -834,26 +851,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        SafeArea(
-          child: Column(
-            children: [
-              _buildCallTopBar(),
-              Expanded(child: _buildContent()),
-              _buildActionButtons(),
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
-        if (_showAddCallModal)
-          Positioned.fill(
-            child: AddCallModal(
-              onCall: _placeConferenceLeg,
-              onClose: _closeAddCallModal,
-            ),
-          ),
-      ],
+    return SafeArea(
+      child: Column(
+        children: [
+          _buildCallTopBar(),
+          Expanded(child: _buildContent()),
+          _buildActionButtons(),
+          const SizedBox(height: 32),
+        ],
+      ),
     );
   }
 

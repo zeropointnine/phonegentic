@@ -208,91 +208,65 @@ class _AddCallModalState extends State<AddCallModal> {
     final derived = _derivePhase(conf);
     _applyPhase(derived);
 
-    return Container(
-      color: AppColors.bg.withValues(alpha: 0.97),
-      child: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(heldCount),
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 380),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: _phase == _ModalPhase.connected
-                        ? _buildConnectedView()
-                        : _phase == _ModalPhase.failed
-                            ? _buildFailedView()
-                            : _searchResults.isNotEmpty
-                                ? _buildSearchResults()
-                                : SingleChildScrollView(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const SizedBox(height: 8),
-                                        _buildNumberDisplay(),
-                                        const SizedBox(height: 28),
-                                        if (_phase == _ModalPhase.dialing) ...[
-                                          _buildNumPad(),
-                                          const SizedBox(height: 20),
-                                        ],
-                                        _buildCallRow(),
-                                        const SizedBox(height: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 44, 28, 44),
+      child: Column(
+        children: [
+          _buildHeader(heldCount),
+          const SizedBox(height: 4),
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: _phase == _ModalPhase.connected
+                    ? _buildConnectedView()
+                    : _phase == _ModalPhase.failed
+                        ? _buildFailedView()
+                        : _searchResults.isNotEmpty
+                            ? _buildSearchResults()
+                            : ScrollConfiguration(
+                                behavior: ScrollConfiguration.of(context)
+                                    .copyWith(scrollbars: false),
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _buildNumberDisplay(),
+                                      const SizedBox(height: 14),
+                                      if (_phase == _ModalPhase.dialing) ...[
+                                        _buildNumPad(),
+                                        const SizedBox(height: 10),
                                       ],
-                                    ),
+                                      _buildCallRow(),
+                                    ],
                                   ),
-                  ),
-                ),
+                                ),
+                              ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildHeader(int heldCount) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-      child: Row(
-        children: [
-          Icon(Icons.person_add_rounded, size: 20, color: AppColors.accent),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Add to Conference',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.3,
-              ),
-            ),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.add_ic_call_rounded, size: 20, color: AppColors.accent),
+        const SizedBox(width: 6),
+        Text(
+          'Add Call',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: AppColors.accent,
+            letterSpacing: -0.3,
           ),
-          if (heldCount > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppColors.burntAmber.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '$heldCount on hold',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: AppColors.burntAmber,
-                    fontWeight: FontWeight.w500),
-              ),
-            ),
-          const SizedBox(width: 4),
-          IconButton(
-            icon: Icon(Icons.close, size: 20, color: AppColors.textTertiary),
-            onPressed: widget.onClose,
-            splashRadius: 18,
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
