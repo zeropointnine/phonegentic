@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -15,6 +19,7 @@ import '../models/job_function.dart';
 import '../models/chat_message.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
+import '../transcript_exporter.dart';
 import 'streaming_typing_text.dart';
 import 'waveform_bars.dart';
 
@@ -33,12 +38,91 @@ class AgentPanel extends StatefulWidget {
 class _AgentPanelState extends State<AgentPanel> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  bool _isDragging = false;
 
   @override
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onDropDone(DropDoneDetails details, AgentService agent) {
+    setState(() => _isDragging = false);
+    for (final xFile in details.files) {
+      final path = xFile.path;
+      if (path.isEmpty) continue;
+      final ext = path.split('.').last.toLowerCase();
+      if (!{'txt', 'md', 'csv', 'log', 'json', 'xml'}.contains(ext)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Only text files are supported (got .$ext)'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        continue;
+      }
+      _readAndAttachFile(path, agent);
+    }
+  }
+
+  Future<void> _readAndAttachFile(String path, AgentService agent) async {
+    try {
+      final file = File(path);
+      final content = await file.readAsString();
+      final fileName = path.split('/').last;
+      agent.sendFileAttachment(fileName: fileName, content: content);
+    } catch (e) {
+      debugPrint('[AgentPanel] Failed to read file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to read file: $e'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickAndAttachFile(AgentService agent) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['txt', 'md', 'csv', 'log', 'json', 'xml'],
+    );
+    if (result != null && result.files.isNotEmpty) {
+      final path = result.files.first.path;
+      if (path != null) {
+        _readAndAttachFile(path, agent);
+      }
+    }
+  }
+
+  Future<void> _downloadSessionTranscript(AgentService agent) async {
+    final messages = agent.messages;
+    if (messages.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No messages to export'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final content = TranscriptExporter.formatSessionTranscript(
+      messages: messages,
+      sessionLabel: agent.remoteDisplayName ?? agent.remoteIdentity,
+    );
+
+    await TranscriptExporter.saveToDownloads(
+      content,
+      filenamePrefix: 'session_transcript',
+      context: context,
+    );
   }
 
   void _send(AgentService agent) {
@@ -87,50 +171,110 @@ class _AgentPanelState extends State<AgentPanel> {
   Widget build(BuildContext context) {
     return Consumer<AgentService>(
       builder: (context, agent, _) {
-        return Container(
-          decoration: BoxDecoration(
-            color: AppColors.card,
-            border:
-                Border(left: BorderSide(color: AppColors.border, width: 0.5)),
-          ),
-          child: Column(
-            children: [
-              _AgentHeader(agent: agent, dragHandle: widget.dragHandle),
-              if (agent.pipelineError != null)
-                _PipelineErrorBanner(
-                  message: agent.pipelineError!,
-                  onDismiss: agent.clearPipelineError,
+        return DropTarget(
+          onDragEntered: (_) => setState(() => _isDragging = true),
+          onDragExited: (_) => setState(() => _isDragging = false),
+          onDragDone: (details) => _onDropDone(details, agent),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              border:
+                  Border(left: BorderSide(color: AppColors.border, width: 0.5)),
+            ),
+            child: Stack(
+              children: [
+                Column(
+                  children: [
+                    _AgentHeader(
+                      agent: agent,
+                      dragHandle: widget.dragHandle,
+                      onDownloadTranscript: () =>
+                          _downloadSessionTranscript(agent),
+                    ),
+                    if (agent.pipelineError != null)
+                      _PipelineErrorBanner(
+                        message: agent.pipelineError!,
+                        onDismiss: agent.clearPipelineError,
+                      ),
+                    const _CalendarEventBanner(),
+                    Consumer<TearSheetService>(
+                      builder: (context, tearSheet, _) {
+                        if (!tearSheet.isActive) {
+                          return const SizedBox.shrink();
+                        }
+                        return _PanelTearSheetBar(service: tearSheet);
+                      },
+                    ),
+                    if (agent.hasActiveCall) _ConferenceCallBar(agent: agent),
+                    Expanded(
+                        child: _MessageList(
+                      messages: agent.messages,
+                      scrollController: _scrollController,
+                      onAction: (action) {
+                        _controller.text = action.value;
+                        _send(agent);
+                      },
+                    )),
+                    _InputBar(
+                      controller: _controller,
+                      onSend: () => _send(agent),
+                      onWhisperSend: () => _sendWhisperOneShot(agent),
+                      onToggleWhisper:
+                          agent.canToggleWhisper ? agent.toggleWhisperMode : null,
+                      onAttachFile: () => _pickAndAttachFile(agent),
+                      active: agent.active,
+                      whisperMode: agent.whisperMode,
+                      hasActiveCall: agent.hasActiveCall,
+                    ),
+                  ],
                 ),
-              const _CalendarEventBanner(),
-              Consumer<TearSheetService>(
-                builder: (context, tearSheet, _) {
-                  if (!tearSheet.isActive) {
-                    return const SizedBox.shrink();
-                  }
-                  return _PanelTearSheetBar(service: tearSheet);
-                },
-              ),
-              if (agent.hasActiveCall) _ConferenceCallBar(agent: agent),
-              Expanded(
-                  child: _MessageList(
-                messages: agent.messages,
-                scrollController: _scrollController,
-                onAction: (action) {
-                  _controller.text = action.value;
-                  _send(agent);
-                },
-              )),
-              _InputBar(
-                controller: _controller,
-                onSend: () => _send(agent),
-                onWhisperSend: () => _sendWhisperOneShot(agent),
-                onToggleWhisper:
-                    agent.canToggleWhisper ? agent.toggleWhisperMode : null,
-                active: agent.active,
-                whisperMode: agent.whisperMode,
-                hasActiveCall: agent.hasActiveCall,
-              ),
-            ],
+                if (_isDragging)
+                  Positioned.fill(
+                    child: Container(
+                      color: AppColors.bg.withValues(alpha: 0.88),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppColors.accent.withValues(alpha: 0.12),
+                                border: Border.all(
+                                  color: AppColors.accent.withValues(alpha: 0.4),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Icon(Icons.attach_file_rounded,
+                                  size: 28, color: AppColors.accent),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Drop text file to attach',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '.txt  .md  .csv  .log  .json  .xml',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textTertiary,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -145,7 +289,12 @@ class _AgentPanelState extends State<AgentPanel> {
 class _AgentHeader extends StatelessWidget {
   final AgentService agent;
   final Widget? dragHandle;
-  const _AgentHeader({required this.agent, this.dragHandle});
+  final VoidCallback? onDownloadTranscript;
+  const _AgentHeader({
+    required this.agent,
+    this.dragHandle,
+    this.onDownloadTranscript,
+  });
 
   String get _statusLabel {
     if (!agent.active) return agent.statusText;
@@ -231,6 +380,14 @@ class _AgentHeader extends StatelessWidget {
             ),
             const SizedBox(width: 6),
           ],
+          _HeaderButton(
+            icon: Icons.download_rounded,
+            color: AppColors.textTertiary,
+            bgColor: AppColors.card,
+            onTap: onDownloadTranscript,
+            tooltip: 'Download transcript',
+          ),
+          const SizedBox(width: 6),
           _HeaderButton(
             icon: Icons.refresh_rounded,
             color: AppColors.textTertiary,
@@ -1616,6 +1773,8 @@ class _MessageBubble extends StatelessWidget {
       child = _CallStatePill(text: message.text);
     } else if (message.type == MessageType.whisper) {
       child = _WhisperBubble(message: message);
+    } else if (message.type == MessageType.attachment) {
+      child = _AttachmentBubble(message: message);
     } else {
       switch (message.role) {
         case ChatRole.system:
@@ -1984,6 +2143,112 @@ class _WhisperBubble extends StatelessWidget {
   }
 }
 
+class _AttachmentBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _AttachmentBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final fileName = message.metadata?['fileName'] as String? ?? 'file';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(width: 40),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_formatTime(message.timestamp),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textTertiary.withValues(alpha: 0.5),
+                        )),
+                    const SizedBox(width: 6),
+                    Icon(Icons.attach_file_rounded,
+                        size: 10,
+                        color: AppColors.accent.withValues(alpha: 0.6)),
+                    const SizedBox(width: 3),
+                    Text('File',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.accent.withValues(alpha: 0.6),
+                        )),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.06),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(14),
+                      topRight: Radius.circular(4),
+                      bottomLeft: Radius.circular(14),
+                      bottomRight: Radius.circular(14),
+                    ),
+                    border: Border.all(
+                        color: AppColors.accent.withValues(alpha: 0.15),
+                        width: 0.5),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(6),
+                          color: AppColors.accent.withValues(alpha: 0.12),
+                        ),
+                        child: Icon(Icons.description_outlined,
+                            size: 14, color: AppColors.accent),
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              fileName,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Text(
+                              'Sent to agent (silent)',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textTertiary,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TranscriptBubble extends StatelessWidget {
   final ChatMessage message;
   const _TranscriptBubble({required this.message});
@@ -2134,6 +2399,7 @@ class _InputBar extends StatefulWidget {
   final VoidCallback onSend;
   final VoidCallback onWhisperSend;
   final VoidCallback? onToggleWhisper;
+  final VoidCallback? onAttachFile;
   final bool active;
   final bool whisperMode;
   final bool hasActiveCall;
@@ -2143,6 +2409,7 @@ class _InputBar extends StatefulWidget {
     required this.onSend,
     required this.onWhisperSend,
     this.onToggleWhisper,
+    this.onAttachFile,
     required this.active,
     this.whisperMode = false,
     this.hasActiveCall = false,
@@ -2261,7 +2528,30 @@ class _InputBarState extends State<_InputBar> {
               ),
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
+          HoverButton(
+            onTap: widget.onAttachFile,
+            tooltip: 'Attach text file',
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: AppColors.card,
+                border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.5),
+                  width: 0.5,
+                ),
+              ),
+              child: Icon(
+                Icons.attach_file_rounded,
+                size: 15,
+                color: AppColors.textTertiary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
           // Whisper toggle — only shown during active call
           if (widget.hasActiveCall)
             Padding(

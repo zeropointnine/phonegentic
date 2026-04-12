@@ -1,6 +1,6 @@
 enum ChatRole { user, agent, host, remoteParty, system }
 
-enum MessageType { text, transcript, action, status, callState, whisper }
+enum MessageType { text, transcript, action, status, callState, whisper, attachment }
 
 class MessageAction {
   final String label;
@@ -93,6 +93,19 @@ class ChatMessage {
         speakerName = null,
         isStreaming = false,
         actions = const [];
+
+  ChatMessage.attachment(
+    this.text, {
+    String? id,
+    required String fileName,
+  })  : id = id ?? _uid(),
+        role = ChatRole.user,
+        type = MessageType.attachment,
+        timestamp = DateTime.now(),
+        speakerName = null,
+        isStreaming = false,
+        actions = const [],
+        metadata = {'fileName': fileName};
 
   static int _counter = 0;
   static String _uid() => 'msg_${DateTime.now().millisecondsSinceEpoch}_${_counter++}';
