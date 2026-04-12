@@ -20,60 +20,36 @@ class DialpadContactPreview extends StatelessWidget {
     final demo = context.watch<DemoModeService>();
     final displayName = demo.maskDisplayName(_rawName);
 
-    return Container(
-      width: 260,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: AppColors.accent.withValues(alpha: 0.18),
-          width: 0.5,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ContactIdenticon(seed: _rawName, size: 56),
+        const SizedBox(height: 8),
+        Text(
+          displayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+            letterSpacing: -0.3,
+          ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.accent.withValues(alpha: 0.06),
-            blurRadius: 24,
-            spreadRadius: 2,
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ContactIdenticon(seed: _rawName, size: 56),
-          const SizedBox(height: 10),
+        if (_company.isNotEmpty) ...[
+          const SizedBox(height: 2),
           Text(
-            displayName,
+            _company,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-              letterSpacing: -0.3,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textTertiary,
             ),
           ),
-          if (_company.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              _company,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textTertiary,
-              ),
-            ),
-          ],
         ],
-      ),
+      ],
     );
   }
 }

@@ -982,7 +982,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
               child: showCard
                   ? Padding(
                       key: ValueKey(_matchedContact!['id']),
-                      padding: const EdgeInsets.only(bottom: 14),
+                      padding: const EdgeInsets.only(bottom: 8),
                       child: DialpadContactPreview(
                           contact: _matchedContact!),
                     )
