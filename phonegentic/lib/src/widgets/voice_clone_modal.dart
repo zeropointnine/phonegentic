@@ -65,7 +65,12 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
   late final AnimationController _pulseCtrl;
 
   AgentService? _agentService;
+  StreamSubscription<double>? _levelSub;
   bool _didMuteAgent = false;
+
+  /// Rolling buffer of real-time mic RMS levels — one per waveform bar.
+  static const int _barCount = 45;
+  final List<double> _micLevels = List<double>.filled(_barCount, 0.0);
 
   String? _recordingPath;
   String? _uploadedFilePath;
@@ -124,8 +129,23 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
     if (_agentService != null) return;
     try {
       _agentService = context.read<AgentService>();
+
+      // Tap into the real-time mic level stream for the waveform.
+      // _emitAudioLevel fires before the mute guard so levels keep flowing.
+      _levelSub ??= _agentService!.whisper.audioLevels.listen((double level) {
+        if (!mounted) return;
+        // Perceptual gain curve: the raw RMS from pro interfaces is very
+        // small (0.01–0.15 for normal speech). Boost + power-compress so
+        // quiet speech is clearly visible while loud peaks still saturate.
+        final double boosted =
+            math.pow((level * 2.5).clamp(0.0, 1.0), 0.4).toDouble();
+        for (int i = 0; i < _micLevels.length - 1; i++) {
+          _micLevels[i] = _micLevels[i + 1];
+        }
+        _micLevels[_micLevels.length - 1] = boosted;
+      });
+
       if (_agentService!.active && !_agentService!.muted) {
-        // Defer to avoid notifyListeners() during build phase
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || _didMuteAgent) return;
           _agentService!.toggleMute();
@@ -160,6 +180,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
           .invokeMethod<void>('stopVoiceSample')
           .catchError((Object _) {});
     }
+    _levelSub?.cancel();
     _playbackTimer?.cancel();
     _recTimer?.cancel();
     _nameCtrl.dispose();
@@ -579,7 +600,9 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
             amplitude: _waveAmplitude,
             primaryColor: AppColors.accent,
             secondaryColor: AppColors.accentLight,
-            barCount: 45,
+            barCount: _barCount,
+            micLevels: _micLevels,
+            liveMode: _isRecording,
           ),
         );
       },
@@ -984,6 +1007,8 @@ class _WaveformPainter extends CustomPainter {
     required this.primaryColor,
     required this.secondaryColor,
     required this.barCount,
+    required this.micLevels,
+    this.liveMode = false,
   });
 
   final double phase;
@@ -991,6 +1016,8 @@ class _WaveformPainter extends CustomPainter {
   final Color primaryColor;
   final Color secondaryColor;
   final int barCount;
+  final List<double> micLevels;
+  final bool liveMode;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1005,28 +1032,37 @@ class _WaveformPainter extends CustomPainter {
       final double x = i * (barWidth + gap);
       final double t = i / (barCount - 1);
 
+      // Decorative sine component
       final double w1 =
           math.sin(t * math.pi * 3.0 + phase * math.pi * 2.0);
       final double w2 =
           math.sin(t * math.pi * 5.5 + phase * math.pi * 2.0 * 1.3) * 0.6;
       final double w3 =
           math.sin(t * math.pi * 8.0 + phase * math.pi * 2.0 * 0.7) * 0.3;
-
       final double combined = (w1 + w2 + w3) / 1.9;
-      final double normHeight = (combined + 1.0) / 2.0;
+      final double sineNorm = (combined + 1.0) / 2.0;
 
       const double minRatio = 0.06;
-      final double ratio =
-          minRatio + normHeight * amplitude * (1.0 - minRatio);
-      final double barHeight = ratio * maxHeight;
+      double ratio;
+
+      if (liveMode && i < micLevels.length) {
+        // Real mic level drives the bar, sine adds gentle variation
+        final double mic = micLevels[i].clamp(0.0, 1.0);
+        ratio = minRatio + mic * 0.80 + sineNorm * amplitude * 0.20;
+      } else {
+        ratio = minRatio + sineNorm * amplitude * (1.0 - minRatio);
+      }
+
+      final double barHeight = ratio.clamp(minRatio, 1.0) * maxHeight;
       final double top = centerY - barHeight / 2;
 
       final Color barColor =
           Color.lerp(primaryColor, secondaryColor, t) ?? primaryColor;
-      final double alpha = 0.5 + normHeight * 0.5;
+      final double barAlpha =
+          liveMode ? (0.45 + ratio * 0.55) : (0.5 + sineNorm * 0.5);
 
       final Paint barPaint = Paint()
-        ..color = barColor.withValues(alpha: alpha)
+        ..color = barColor.withValues(alpha: barAlpha)
         ..style = PaintingStyle.fill;
 
       final RRect rr = RRect.fromRectAndRadius(
@@ -1035,9 +1071,13 @@ class _WaveformPainter extends CustomPainter {
       );
       canvas.drawRRect(rr, barPaint);
 
-      if (amplitude > 0.3) {
+      // Glow on active bars
+      final double effectiveAmp = liveMode
+          ? (i < micLevels.length ? micLevels[i] : 0.0)
+          : amplitude;
+      if (effectiveAmp > 0.25) {
         final Paint glow = Paint()
-          ..color = barColor.withValues(alpha: 0.12 * amplitude)
+          ..color = barColor.withValues(alpha: 0.15 * effectiveAmp)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
         canvas.drawRRect(rr, glow);
       }
@@ -1045,6 +1085,5 @@ class _WaveformPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_WaveformPainter old) =>
-      phase != old.phase || amplitude != old.amplitude;
+  bool shouldRepaint(_WaveformPainter old) => true;
 }
