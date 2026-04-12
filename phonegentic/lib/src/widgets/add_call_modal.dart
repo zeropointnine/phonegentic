@@ -475,6 +475,8 @@ class _AddCallModalState extends State<AddCallModal> {
             fontSize: 16,
             fontWeight: FontWeight.w400,
             color: AppColors.textSecondary,
+            fontFamily: AppColors.timerFontFamily,
+            fontFamilyFallback: AppColors.timerFontFamilyFallback,
             fontFeatures: [FontFeature.tabularFigures()],
           ),
         ),

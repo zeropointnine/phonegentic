@@ -8,6 +8,7 @@ class ActionButton extends StatefulWidget {
   final bool checked;
   final bool number;
   final Color? fillColor;
+  final TextStyle? titleStyle;
   final Function()? onPressed;
   final Function()? onLongPress;
 
@@ -21,6 +22,7 @@ class ActionButton extends StatefulWidget {
     this.checked = false,
     this.number = false,
     this.fillColor,
+    this.titleStyle,
   });
 
   @override
@@ -203,7 +205,7 @@ class _ActionButtonState extends State<ActionButton> {
                 color:
                     hasFill ? widget.fillColor : AppColors.textTertiary,
                 fontWeight: FontWeight.w500,
-              ),
+              ).merge(widget.titleStyle),
             ),
           ],
         ],

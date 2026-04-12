@@ -1250,53 +1250,49 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ? demoMode.maskPhone(remoteIdentity!)
           : null;
 
-      // Top bar: status + timer
-      stackWidgets.add(
-        Positioned(
-          top: 12,
-          left: 0,
-          right: 0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _stateLabel +
-                    (_hold
-                        ? ' by ${_holdOriginator?.name ?? 'unknown'}'
-                        : ''),
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppColors.textTertiary,
-                ),
-              ),
-              const SizedBox(width: 8),
-              ValueListenableBuilder<String>(
-                valueListenable: _timeLabel,
-                builder: (context, value, _) {
-                  if (value.isEmpty) return const SizedBox.shrink();
-                  return Text(
-                    value,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.textSecondary,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
-      );
-
-      // Center: avatar + name + phone
+      // Center: status + timer + avatar + name + phone (grouped)
       stackWidgets.add(
         Center(
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Status + timer row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _stateLabel +
+                          (_hold
+                              ? ' by ${_holdOriginator?.name ?? 'unknown'}'
+                              : ''),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textTertiary,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ValueListenableBuilder<String>(
+                      valueListenable: _timeLabel,
+                      builder: (context, value, _) {
+                        if (value.isEmpty) return const SizedBox.shrink();
+                        return Text(
+                          value,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textSecondary,
+                            fontFamily: AppColors.timerFontFamily,
+                            fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
                 ContactIdenticon(
                   seed: rawContactName ?? remoteIdentity ?? '?',
                   size: 88,
@@ -1383,6 +1379,13 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               icon: _isRecording ? Icons.stop_rounded : Icons.fiber_manual_record,
               checked: _isRecording,
               fillColor: _isRecording ? AppColors.red : null,
+              titleStyle: _isRecording
+                  ? TextStyle(
+                      fontFamily: AppColors.timerFontFamily,
+                      fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    )
+                  : null,
               onPressed: _toggleRecording,
             )
           else

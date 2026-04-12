@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 import '../agent_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../theme_provider.dart';
+import 'waveform_bars.dart';
 
 class VoiceCloneResult {
   const VoiceCloneResult({required this.voiceId, required this.name});
@@ -61,7 +62,6 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
 
   final TextEditingController _nameCtrl = TextEditingController();
 
-  late final AnimationController _waveCtrl;
   late final AnimationController _pulseCtrl;
 
   AgentService? _agentService;
@@ -111,11 +111,6 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
       _nameCtrl.text =
           widget.sampleParty == 'host' ? 'My Voice' : 'Remote Voice';
     }
-
-    _waveCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 3000),
-    )..repeat();
 
     _pulseCtrl = AnimationController(
       vsync: this,
@@ -184,7 +179,6 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
     _playbackTimer?.cancel();
     _recTimer?.cancel();
     _nameCtrl.dispose();
-    _waveCtrl.dispose();
     _pulseCtrl.dispose();
     super.dispose();
   }
@@ -591,19 +585,14 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
 
   Widget _buildWaveform({double height = 48}) {
     return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[_waveCtrl, _pulseCtrl]),
+      animation: _pulseCtrl,
       builder: (BuildContext context, Widget? child) {
-        return CustomPaint(
-          size: Size(double.infinity, height),
-          painter: _WaveformPainter(
-            phase: _waveCtrl.value,
-            amplitude: _waveAmplitude,
-            primaryColor: AppColors.accent,
-            secondaryColor: AppColors.accentLight,
-            barCount: _barCount,
-            micLevels: _micLevels,
-            liveMode: _isRecording,
-          ),
+        return WaveformBars(
+          micLevels: _micLevels,
+          barCount: _barCount,
+          height: height,
+          amplitude: _waveAmplitude,
+          liveMode: _isRecording,
         );
       },
     );
@@ -777,6 +766,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
     final TextStyle dimStyle = TextStyle(
       fontSize: 26,
       fontWeight: FontWeight.w200,
+      fontFamily: AppColors.timerFontFamily,
+      fontFamilyFallback: AppColors.timerFontFamilyFallback,
       color: AppColors.textTertiary.withValues(alpha: 0.35),
       decoration: TextDecoration.lineThrough,
       decorationColor: AppColors.textTertiary.withValues(alpha: 0.25),
@@ -787,6 +778,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
     final TextStyle brightStyle = TextStyle(
       fontSize: 26,
       fontWeight: FontWeight.w300,
+      fontFamily: AppColors.timerFontFamily,
+      fontFamilyFallback: AppColors.timerFontFamilyFallback,
       color: AppColors.textPrimary,
       fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
     );
@@ -794,6 +787,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
     final TextStyle dimSep = TextStyle(
       fontSize: 26,
       fontWeight: FontWeight.w200,
+      fontFamily: AppColors.timerFontFamily,
+      fontFamilyFallback: AppColors.timerFontFamilyFallback,
       color: AppColors.textTertiary.withValues(alpha: 0.35),
       fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
     );
@@ -801,6 +796,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
     final TextStyle brightSep = TextStyle(
       fontSize: 26,
       fontWeight: FontWeight.w300,
+      fontFamily: AppColors.timerFontFamily,
+      fontFamilyFallback: AppColors.timerFontFamilyFallback,
       color: AppColors.textPrimary.withValues(alpha: 0.5),
       fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
     );
@@ -890,6 +887,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
             style: TextStyle(
               fontSize: 10,
               color: AppColors.textTertiary,
+              fontFamily: AppColors.timerFontFamily,
+              fontFamilyFallback: AppColors.timerFontFamilyFallback,
               fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
             ),
           ),
@@ -996,94 +995,4 @@ class _PulsingDot extends StatelessWidget {
       },
     );
   }
-}
-
-// ── Waveform bar painter ──
-
-class _WaveformPainter extends CustomPainter {
-  _WaveformPainter({
-    required this.phase,
-    required this.amplitude,
-    required this.primaryColor,
-    required this.secondaryColor,
-    required this.barCount,
-    required this.micLevels,
-    this.liveMode = false,
-  });
-
-  final double phase;
-  final double amplitude;
-  final Color primaryColor;
-  final Color secondaryColor;
-  final int barCount;
-  final List<double> micLevels;
-  final bool liveMode;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const double gapRatio = 0.4;
-    final double barWidth =
-        size.width / (barCount + (barCount - 1) * gapRatio);
-    final double gap = barWidth * gapRatio;
-    final double maxHeight = size.height;
-    final double centerY = size.height / 2;
-
-    for (int i = 0; i < barCount; i++) {
-      final double x = i * (barWidth + gap);
-      final double t = i / (barCount - 1);
-
-      // Decorative sine component
-      final double w1 =
-          math.sin(t * math.pi * 3.0 + phase * math.pi * 2.0);
-      final double w2 =
-          math.sin(t * math.pi * 5.5 + phase * math.pi * 2.0 * 1.3) * 0.6;
-      final double w3 =
-          math.sin(t * math.pi * 8.0 + phase * math.pi * 2.0 * 0.7) * 0.3;
-      final double combined = (w1 + w2 + w3) / 1.9;
-      final double sineNorm = (combined + 1.0) / 2.0;
-
-      const double minRatio = 0.06;
-      double ratio;
-
-      if (liveMode && i < micLevels.length) {
-        // Real mic level drives the bar, sine adds gentle variation
-        final double mic = micLevels[i].clamp(0.0, 1.0);
-        ratio = minRatio + mic * 0.80 + sineNorm * amplitude * 0.20;
-      } else {
-        ratio = minRatio + sineNorm * amplitude * (1.0 - minRatio);
-      }
-
-      final double barHeight = ratio.clamp(minRatio, 1.0) * maxHeight;
-      final double top = centerY - barHeight / 2;
-
-      final Color barColor =
-          Color.lerp(primaryColor, secondaryColor, t) ?? primaryColor;
-      final double barAlpha =
-          liveMode ? (0.45 + ratio * 0.55) : (0.5 + sineNorm * 0.5);
-
-      final Paint barPaint = Paint()
-        ..color = barColor.withValues(alpha: barAlpha)
-        ..style = PaintingStyle.fill;
-
-      final RRect rr = RRect.fromRectAndRadius(
-        Rect.fromLTWH(x, top, barWidth, barHeight),
-        Radius.circular(barWidth / 2),
-      );
-      canvas.drawRRect(rr, barPaint);
-
-      // Glow on active bars
-      final double effectiveAmp = liveMode
-          ? (i < micLevels.length ? micLevels[i] : 0.0)
-          : amplitude;
-      if (effectiveAmp > 0.25) {
-        final Paint glow = Paint()
-          ..color = barColor.withValues(alpha: 0.15 * effectiveAmp)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-        canvas.drawRRect(rr, glow);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_WaveformPainter old) => true;
 }

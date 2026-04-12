@@ -16,6 +16,7 @@ import '../models/chat_message.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 import 'streaming_typing_text.dart';
+import 'waveform_bars.dart';
 
 class AgentPanel extends StatefulWidget {
   final Widget? dragHandle;
@@ -95,6 +96,11 @@ class _AgentPanelState extends State<AgentPanel> {
           child: Column(
             children: [
               _AgentHeader(agent: agent, dragHandle: widget.dragHandle),
+              if (agent.pipelineError != null)
+                _PipelineErrorBanner(
+                  message: agent.pipelineError!,
+                  onDismiss: agent.clearPipelineError,
+                ),
               const _CalendarEventBanner(),
               Consumer<TearSheetService>(
                 builder: (context, tearSheet, _) {
@@ -231,6 +237,71 @@ class _AgentHeader extends StatelessWidget {
             bgColor: AppColors.card,
             onTap: agent.reconnect,
             tooltip: 'Reconnect',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline error banner
+// ---------------------------------------------------------------------------
+
+class _PipelineErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback onDismiss;
+
+  const _PipelineErrorBanner({
+    required this.message,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.red.withValues(alpha: 0.12),
+        border: Border(
+          bottom: BorderSide(
+            color: AppColors.red.withValues(alpha: 0.25),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.error_outline_rounded,
+            size: 16,
+            color: AppColors.red,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: AppColors.red,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onDismiss,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Icon(
+                Icons.close_rounded,
+                size: 14,
+                color: AppColors.red.withValues(alpha: 0.6),
+              ),
+            ),
           ),
         ],
       ),
@@ -1399,10 +1470,12 @@ class _WaveformPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = muted ? color.withValues(alpha: 0.3) : color;
+
     return Container(
       width: 44,
       height: 28,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
         gradient: active
@@ -1423,49 +1496,17 @@ class _WaveformPill extends StatelessWidget {
           width: 0.5,
         ),
       ),
-      child: CustomPaint(
-        painter: _MiniWaveformPainter(
-          levels: levels,
-          color: muted ? color.withValues(alpha: 0.3) : color,
-          barCount: 7,
-        ),
+      child: WaveformBars(
+        micLevels: levels,
+        barCount: 9,
+        height: 20,
+        primaryColor: effectiveColor,
+        secondaryColor: effectiveColor.withValues(alpha: 0.6),
+        amplitude: active ? 0.35 : 0.08,
+        liveMode: active && !muted,
       ),
     );
   }
-}
-
-class _MiniWaveformPainter extends CustomPainter {
-  final List<double> levels;
-  final Color color;
-  final int barCount;
-
-  _MiniWaveformPainter(
-      {required this.levels, required this.color, required this.barCount});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeCap = StrokeCap.round
-      ..strokeWidth = 2.0;
-
-    final spacing = size.width / barCount;
-    final maxH = size.height * 0.85;
-    final minH = 2.5;
-    final cy = size.height / 2;
-
-    for (int i = 0; i < barCount; i++) {
-      final idx = levels.length > barCount ? levels.length - barCount + i : i;
-      final level = (idx >= 0 && idx < levels.length) ? levels[idx] : 0.0;
-      final h = minH + (maxH - minH) * level;
-      final x = spacing * i + spacing / 2;
-      canvas.drawLine(Offset(x, cy - h / 2), Offset(x, cy + h / 2), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _MiniWaveformPainter old) =>
-      old.levels != levels || old.color != color;
 }
 
 class _HeaderButton extends StatelessWidget {

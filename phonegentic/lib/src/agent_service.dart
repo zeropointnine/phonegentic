@@ -432,6 +432,39 @@ class AgentService extends ChangeNotifier {
   bool get ttsActiveForUi => _splitPipeline && _hasTts && !_ttsMuted && !_muted;
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
+
+  /// Last pipeline error (Claude / TTS / Whisper). Null when healthy.
+  String? _pipelineError;
+  String? get pipelineError => _pipelineError;
+  void clearPipelineError() {
+    _pipelineError = null;
+    notifyListeners();
+  }
+
+  /// Extract a human-readable summary from a raw error string.
+  static String _formatPipelineError(String raw) {
+    // Claude credit / billing errors
+    if (raw.contains('credit balance is too low')) {
+      return 'Claude API: credit balance too low';
+    }
+    // Claude auth
+    if (raw.contains('401') || raw.contains('authentication_error')) {
+      return 'Claude API: invalid API key';
+    }
+    // Claude model not found
+    if (raw.contains('not_found_error') || raw.contains('model_not_found')) {
+      return 'Claude API: model not found';
+    }
+    // Claude rate limit
+    if (raw.contains('rate_limit') || raw.contains('429')) {
+      return 'Claude API: rate limited';
+    }
+    // Generic – trim to something readable
+    final match = RegExp(r'"message"\s*:\s*"([^"]+)"').firstMatch(raw);
+    if (match != null) return match.group(1)!;
+    if (raw.length > 120) return '${raw.substring(0, 117)}...';
+    return raw;
+  }
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
@@ -684,6 +717,7 @@ class AgentService extends ChangeNotifier {
     } catch (e) {
       _statusText = 'Error';
       _active = false;
+      _pipelineError = _formatPipelineError('$e');
       _messages.add(ChatMessage.system('Error: $e'));
       debugPrint('[AgentService] Init failed: $e');
       notifyListeners();
@@ -1804,6 +1838,12 @@ class AgentService extends ChangeNotifier {
     if (event.isFinal) {
       debugPrint('[AgentService] Claude response final: '
           '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
+
+      if (event.text.startsWith('Error:')) {
+        _pipelineError = _formatPipelineError(event.text);
+      } else if (_pipelineError != null) {
+        _pipelineError = null;
+      }
     }
 
     if (event.isFinal) {

@@ -907,6 +907,8 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
             style: TextStyle(
               fontSize: 10,
               color: AppColors.textTertiary,
+              fontFamily: AppColors.timerFontFamily,
+              fontFamilyFallback: AppColors.timerFontFamilyFallback,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
