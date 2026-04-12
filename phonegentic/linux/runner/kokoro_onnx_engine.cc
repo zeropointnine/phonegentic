@@ -707,28 +707,41 @@ std::string KokoroOnnxEngine::Impl::phonemize(const std::string& text) {
 
   std::lock_guard<std::mutex> lock(espeak_mutex);
 
-  // espeak_TextToPhonemes takes a pointer-to-pointer and advances it.
+  // espeak_TextToPhonemes is an iterative API: it processes one clause at a
+  // time, advances text_ptr to the next clause, and returns NULL when done.
+  // Punctuation like ':' is treated as a clause boundary, so we MUST loop
+  // until NULL to capture all phonemes (a single call drops everything after
+  // the first boundary).
+  //
   // phonememode bit flags (espeak-ng 1.51):
   //   bit 0 (0x01): reserved / no effect
   //   bit 1 (0x02): IPA output (Unicode IPA characters)
-  // textmode=0 → text input (as opposed to SSML etc.)
+  // textmode=0 → plain text input (not SSML)
   const void* text_ptr = text.c_str();
-  const char* ipa = espeak_TextToPhonemes(&text_ptr, 0, 0x02);
+  std::string accumulated;
 
-  if (!ipa) {
-    fprintf(stderr, "[KokoroOnnx] espeak_TextToPhonemes returned NULL\n");
+  while (text_ptr != nullptr) {
+    const char* ipa = espeak_TextToPhonemes(&text_ptr, 0, 0x02);
+    if (!ipa) break;
+
+    std::string raw_ipa(ipa);
+    if (raw_ipa.empty()) continue;
+
+    std::string remapped = remap_espeak_ipa(raw_ipa);
+    if (raw_ipa != remapped) {
+      fprintf(stderr, "[KokoroOnnx] IPA remap: '%s' → '%s'\n",
+              raw_ipa.c_str(), remapped.c_str());
+    }
+    accumulated += remapped;
+  }
+
+  if (accumulated.empty()) {
+    fprintf(stderr, "[KokoroOnnx] espeak_TextToPhonemes returned empty for: %s\n",
+            text.c_str());
     return "";
   }
 
-  std::string raw_ipa(ipa);
-  std::string remapped = remap_espeak_ipa(raw_ipa);
-
-  if (raw_ipa != remapped) {
-    fprintf(stderr, "[KokoroOnnx] IPA remap: '%s' → '%s'\n",
-            raw_ipa.c_str(), remapped.c_str());
-  }
-
-  return remapped;
+  return accumulated;
 }
 
 // ── Impl: Tokenize IPA phonemes → token IDs ─────────────────────────────────

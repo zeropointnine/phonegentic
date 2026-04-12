@@ -402,6 +402,7 @@ class AgentService extends ChangeNotifier {
   final List<TranscriptionEvent> _pendingTranscripts = [];
   Timer? _postSpeakFlushTimer;
   Timer? _playbackEndDebounce;
+  bool _ttsGenerationComplete = false;
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -816,11 +817,19 @@ class AgentService extends ChangeNotifier {
 
     _ttsSpeakingSub = kokoro.speakingState.listen((speaking) {
       if (speaking) {
+        _ttsGenerationComplete = false;
         _speaking = true;
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
         }
+      } else {
+        // All chunks have been queued to the playback pipeline, but PulseAudio
+        // may still be draining the last buffer. Just set the flag — the next
+        // onPlaybackComplete (final underflow) will fire with this flag true and
+        // use the short 300ms debounce. Do NOT start a timer here: audio is
+        // still playing and a premature timer would lift suppression too early.
+        _ttsGenerationComplete = true;
       }
     });
 
@@ -1875,8 +1884,8 @@ class AgentService extends ChangeNotifier {
       }
       final ttsText = _flattenMarkdownForTtsDelta(
         _stripBracketsForTts(event.text),
-      ).trim();
-      if (ttsText.isNotEmpty) {
+      );
+      if (ttsText.trim().isNotEmpty) {
         _activeTtsSendText(ttsText);
       }
     }
@@ -3289,6 +3298,7 @@ class AgentService extends ChangeNotifier {
       _settleTranscripts.clear();
       _postSpeakFlushTimer?.cancel();
       _playbackEndDebounce?.cancel();
+      _ttsGenerationComplete = false;
       _stopTtsLevelDrain();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
@@ -3606,9 +3616,14 @@ class AgentService extends ChangeNotifier {
       case 'onPlaybackComplete':
         if (_splitPipeline) {
           // AudioTap fires this per-buffer drain, not once at the end.
-          // Debounce: keep the echo guard open until 2s after the LAST event.
+          // Debounce: keep the echo guard open until Nms after the LAST event.
+          // Use a short window once generation is done (no more chunks coming).
           _playbackEndDebounce?.cancel();
-          _playbackEndDebounce = Timer(const Duration(seconds: 2), () {
+          final debounce = _ttsGenerationComplete
+              ? const Duration(milliseconds: 300)
+              : const Duration(seconds: 2);
+          _playbackEndDebounce = Timer(debounce, () {
+            _ttsGenerationComplete = false;
             _whisper.isTtsPlaying = false;
             if (_speaking) {
               _speaking = false;
@@ -3706,6 +3721,7 @@ class AgentService extends ChangeNotifier {
     _cancelConnectedGreeting();
     _postSpeakFlushTimer?.cancel();
     _playbackEndDebounce?.cancel();
+    _ttsGenerationComplete = false;
     _stopTtsLevelDrain();
     _tapChannel.setMethodCallHandler(null);
     _textAgentToolSub?.cancel();
