@@ -1,20 +1,24 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 
+import '../agent_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../theme_provider.dart';
 
 class VoiceCloneResult {
+  const VoiceCloneResult({required this.voiceId, required this.name});
+
   final String voiceId;
   final String name;
-
-  const VoiceCloneResult({required this.voiceId, required this.name});
 }
 
 /// Shows the voice clone modal and returns the created voice, or null.
@@ -36,41 +40,62 @@ Future<VoiceCloneResult?> showVoiceCloneModal(
 }
 
 class _VoiceCloneDialog extends StatefulWidget {
-  final String apiKey;
-  final String? preRecordedPath;
-  final String? sampleParty;
-
   const _VoiceCloneDialog({
     required this.apiKey,
     this.preRecordedPath,
     this.sampleParty,
   });
 
+  final String apiKey;
+  final String? preRecordedPath;
+  final String? sampleParty;
+
   @override
   State<_VoiceCloneDialog> createState() => _VoiceCloneDialogState();
 }
 
-class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
-  static const _tapControl =
+class _VoiceCloneDialogState extends State<_VoiceCloneDialog>
+    with TickerProviderStateMixin {
+  static const MethodChannel _tapControl =
       MethodChannel('com.agentic_ai/audio_tap_control');
-  final _nameCtrl = TextEditingController();
-  final _player = AudioPlayer();
+
+  final TextEditingController _nameCtrl = TextEditingController();
+
+  late final AnimationController _waveCtrl;
+  late final AnimationController _pulseCtrl;
+
+  AgentService? _agentService;
+  bool _didMuteAgent = false;
 
   String? _recordingPath;
+  String? _uploadedFilePath;
   bool _isRecording = false;
   bool _isPlaying = false;
   bool _isSubmitting = false;
   String? _error;
   Timer? _recTimer;
+  Timer? _playbackTimer;
   int _recSeconds = 0;
   Duration _playbackPosition = Duration.zero;
   Duration _playbackDuration = Duration.zero;
-  StreamSubscription? _positionSub;
-  StreamSubscription? _playerStateSub;
 
   bool get _hasAudio =>
-      _recordingPath != null || widget.preRecordedPath != null;
-  String? get _audioPath => _recordingPath ?? widget.preRecordedPath;
+      _recordingPath != null ||
+      _uploadedFilePath != null ||
+      widget.preRecordedPath != null;
+
+  String? get _audioPath =>
+      _recordingPath ?? _uploadedFilePath ?? widget.preRecordedPath;
+
+  String? get _uploadedFileName =>
+      _uploadedFilePath != null ? p.basename(_uploadedFilePath!) : null;
+
+  double get _waveAmplitude {
+    if (_isRecording) return 0.55 + 0.45 * _pulseCtrl.value;
+    if (_isPlaying) return 0.40 + 0.30 * _pulseCtrl.value;
+    if (_hasAudio) return 0.15 + 0.05 * _pulseCtrl.value;
+    return 0.08 + 0.04 * _pulseCtrl.value;
+  }
 
   @override
   void initState() {
@@ -82,47 +107,77 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
           widget.sampleParty == 'host' ? 'My Voice' : 'Remote Voice';
     }
 
-    _positionSub = _player.positionStream.listen((pos) {
-      if (mounted) setState(() => _playbackPosition = pos);
-    });
-    _playerStateSub = _player.playerStateStream.listen((state) {
-      if (mounted) {
-        setState(() => _isPlaying = state.playing);
-        if (state.processingState == ProcessingState.completed) {
-          _player.seek(Duration.zero);
-          _player.pause();
-        }
+    _waveCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3000),
+    )..repeat();
+
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_agentService != null) return;
+    try {
+      _agentService = context.read<AgentService>();
+      if (_agentService!.active && !_agentService!.muted) {
+        // Defer to avoid notifyListeners() during build phase
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _didMuteAgent) return;
+          _agentService!.toggleMute();
+          _didMuteAgent = true;
+          debugPrint('[VoiceClone] Muted agent for voice clone session');
+        });
       }
-    });
+    } catch (_) {
+      // AgentService not in the Provider tree — skip
+    }
   }
 
   @override
   void dispose() {
-    if (_isRecording) {
-      _tapControl.invokeMethod('stopVoiceSample').catchError((_) {});
+    if (_didMuteAgent && _agentService != null && _agentService!.muted) {
+      _agentService!.toggleMute();
+      debugPrint('[VoiceClone] Restored agent mute state');
     }
+    if (_isPlaying) {
+      _tapControl
+          .invokeMethod<void>('stopAudioPlayback')
+          .catchError((Object _) {});
+    }
+    if (_isRecording) {
+      _tapControl
+          .invokeMethod<void>('stopVoiceSample')
+          .catchError((Object _) {});
+    }
+    _playbackTimer?.cancel();
     _recTimer?.cancel();
-    _positionSub?.cancel();
-    _playerStateSub?.cancel();
-    _player.dispose();
     _nameCtrl.dispose();
+    _waveCtrl.dispose();
+    _pulseCtrl.dispose();
     super.dispose();
   }
+
+  // ── Recording ──
 
   Future<void> _startRecording() async {
     if (_isRecording) return;
 
-    final dir = await getApplicationDocumentsDirectory();
-    final recDir =
+    final Directory dir = await getApplicationDocumentsDirectory();
+    final Directory recDir =
         Directory(p.join(dir.path, 'phonegentic', 'voice_samples'));
     await recDir.create(recursive: true);
 
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final path = p.join(recDir.path, 'mic_sample_$timestamp.wav');
+    final int timestamp = DateTime.now().millisecondsSinceEpoch;
+    final String path = p.join(recDir.path, 'mic_sample_$timestamp.wav');
 
     try {
-      await _tapControl.invokeMethod(
-          'startVoiceSample', {'path': path, 'party': 'host'});
+      await _tapControl.invokeMethod<void>(
+          'startVoiceSample', <String, String>{'path': path, 'party': 'host'});
     } catch (e) {
       debugPrint('[VoiceClone] Failed to start native recording: $e');
       setState(() => _error = 'Failed to start recording');
@@ -130,6 +185,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     }
 
     _recordingPath = path;
+    _uploadedFilePath = null;
     _recSeconds = 0;
     _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _recSeconds++;
@@ -148,42 +204,223 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     _recTimer = null;
 
     try {
-      await _tapControl.invokeMethod('stopVoiceSample');
+      await _tapControl.invokeMethod<void>('stopVoiceSample');
     } catch (e) {
       debugPrint('[VoiceClone] Failed to stop native recording: $e');
     }
 
-    setState(() {
-      _isRecording = false;
-    });
+    // Let the native side finalize the WAV file before exposing for playback
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    setState(() => _isRecording = false);
   }
+
+  // ── File upload ──
+
+  Future<void> _pickFile() async {
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: <String>['wav', 'mp3', 'm4a', 'ogg', 'flac', 'aac'],
+    );
+    if (result != null && result.files.single.path != null) {
+      if (_isPlaying) await _stopNativePlayback();
+      setState(() {
+        _uploadedFilePath = result.files.single.path;
+        _recordingPath = null;
+        _playbackPosition = Duration.zero;
+        _playbackDuration = Duration.zero;
+        _error = null;
+      });
+    }
+  }
+
+  // ── Playback (routed through native AudioTap) ──
 
   Future<void> _togglePlayback() async {
     if (_isPlaying) {
-      await _player.pause();
-    } else if (_audioPath != null) {
-      final file = File(_audioPath!);
-      if (await file.exists()) {
-        if (_player.audioSource == null ||
-            _playbackPosition >= _playbackDuration) {
-          final duration = await _player.setFilePath(_audioPath!);
-          if (duration != null) {
-            setState(() => _playbackDuration = duration);
+      await _stopNativePlayback();
+      return;
+    }
+    if (_audioPath == null) return;
+
+    try {
+      final File file = File(_audioPath!);
+      if (!await file.exists()) {
+        setState(() => _error = 'Audio file not found');
+        return;
+      }
+
+      final Uint8List wav = await file.readAsBytes();
+      if (wav.length < 44) {
+        setState(() => _error = 'Audio file is too small');
+        return;
+      }
+
+      final Uint8List pcm = _wavToNativePcm(wav);
+
+      // Duration from mono 16-bit @ 24 kHz PCM
+      const int playbackRate = 24000;
+      final int totalSamples = pcm.length ~/ 2;
+      final Duration totalDuration = Duration(
+        milliseconds: (totalSamples * 1000 / playbackRate).round(),
+      );
+
+      setState(() {
+        _playbackDuration = totalDuration;
+        _playbackPosition = Duration.zero;
+        _isPlaying = true;
+        _error = null;
+      });
+
+      debugPrint('[VoiceClone] Playing ${pcm.length} bytes '
+          '(${totalDuration.inSeconds}s) via native AudioTap');
+
+      // Send PCM chunks to native AudioTap playback engine
+      const int chunkBytes = 48000; // ~1 s at 24 kHz mono 16-bit
+      for (int i = 0; i < pcm.length; i += chunkBytes) {
+        if (!_isPlaying) break;
+        final int end = (i + chunkBytes).clamp(0, pcm.length);
+        await _tapControl.invokeMethod<void>(
+          'playAudioResponse',
+          pcm.sublist(i, end),
+        );
+      }
+
+      // Track position via elapsed wall-clock time
+      final DateTime start = DateTime.now();
+      _playbackTimer?.cancel();
+      _playbackTimer = Timer.periodic(
+        const Duration(milliseconds: 80),
+        (_) {
+          if (!mounted || !_isPlaying) {
+            _playbackTimer?.cancel();
+            return;
           }
-        }
-        await _player.play();
+          final Duration elapsed = DateTime.now().difference(start);
+          if (elapsed >= totalDuration) {
+            _playbackTimer?.cancel();
+            setState(() {
+              _playbackPosition = totalDuration;
+              _isPlaying = false;
+            });
+          } else {
+            setState(() => _playbackPosition = elapsed);
+          }
+        },
+      );
+    } catch (e) {
+      debugPrint('[VoiceClone] Playback failed: $e');
+      if (mounted) {
+        setState(() {
+          _error =
+              'Playback failed: ${e.toString().replaceFirst("Exception: ", "")}';
+          _isPlaying = false;
+        });
       }
     }
   }
 
+  Future<void> _stopNativePlayback() async {
+    _playbackTimer?.cancel();
+    try {
+      await _tapControl.invokeMethod<void>('stopAudioPlayback');
+    } catch (_) {}
+    if (mounted) setState(() => _isPlaying = false);
+  }
+
+  // ── WAV → PCM conversion for native playback ──
+
+  /// Reads a WAV file, mixes to mono, resamples to 24 kHz PCM16 — the format
+  /// expected by the AudioTap's `playAudioResponse` handler.
+  static Uint8List _wavToNativePcm(Uint8List wav) {
+    final ByteData hdr = wav.buffer.asByteData(wav.offsetInBytes);
+
+    final int channels = hdr.getInt16(22, Endian.little);
+    final int sampleRate = hdr.getInt32(24, Endian.little);
+    final int bitsPerSample = hdr.getInt16(34, Endian.little);
+
+    // Locate the 'data' chunk (may follow extra sub-chunks)
+    int dataOffset = 0;
+    int dataSize = 0;
+    for (int i = 12; i < wav.length - 8; i++) {
+      if (wav[i] == 0x64 &&
+          wav[i + 1] == 0x61 &&
+          wav[i + 2] == 0x74 &&
+          wav[i + 3] == 0x61) {
+        dataSize = hdr.getInt32(i + 4, Endian.little);
+        dataOffset = i + 8;
+        break;
+      }
+    }
+    if (dataOffset == 0) throw Exception('No data chunk in WAV');
+
+    final int end = (dataOffset + dataSize).clamp(0, wav.length);
+    Uint8List pcm = wav.sublist(dataOffset, end);
+
+    if (bitsPerSample != 16) {
+      throw Exception('Unsupported WAV bit depth: $bitsPerSample');
+    }
+
+    // Stereo → mono
+    if (channels == 2) {
+      final ByteData bd = pcm.buffer.asByteData(pcm.offsetInBytes);
+      final int numSamples = pcm.length ~/ 4;
+      final Uint8List mono = Uint8List(numSamples * 2);
+      final ByteData mbd = mono.buffer.asByteData();
+      for (int i = 0; i < numSamples; i++) {
+        final int l = bd.getInt16(i * 4, Endian.little);
+        final int r = bd.getInt16(i * 4 + 2, Endian.little);
+        mbd.setInt16(i * 2, (l + r) ~/ 2, Endian.little);
+      }
+      pcm = mono;
+    }
+
+    // Resample to 24 kHz if needed
+    if (sampleRate != 24000) {
+      pcm = _resamplePcm16(pcm, sampleRate, 24000);
+    }
+
+    return pcm;
+  }
+
+  /// Linear-interpolation resampler for mono PCM16 data.
+  static Uint8List _resamplePcm16(
+      Uint8List input, int srcRate, int dstRate) {
+    final ByteData bd = input.buffer.asByteData(input.offsetInBytes);
+    final int srcCount = input.length ~/ 2;
+    final int dstCount = (srcCount * dstRate / srcRate).round();
+    final Uint8List out = Uint8List(dstCount * 2);
+    final ByteData obd = out.buffer.asByteData();
+
+    final double ratio = srcRate / dstRate;
+    for (int i = 0; i < dstCount; i++) {
+      final double srcPos = i * ratio;
+      final int idx = srcPos.floor();
+      final double frac = srcPos - idx;
+
+      final int s0 =
+          idx < srcCount ? bd.getInt16(idx * 2, Endian.little) : 0;
+      final int s1 = (idx + 1) < srcCount
+          ? bd.getInt16((idx + 1) * 2, Endian.little)
+          : s0;
+
+      final int sample =
+          (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767);
+      obd.setInt16(i * 2, sample, Endian.little);
+    }
+    return out;
+  }
+
+  // ── Submit ──
+
   Future<void> _submit() async {
-    final name = _nameCtrl.text.trim();
+    final String name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       setState(() => _error = 'Please enter a voice name');
       return;
     }
     if (_audioPath == null) {
-      setState(() => _error = 'Please record an audio sample');
+      setState(() => _error = 'Please record or upload an audio sample');
       return;
     }
     if (widget.apiKey.isEmpty) {
@@ -197,10 +434,10 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     });
 
     try {
-      final voiceId = await ElevenLabsApiService.addVoice(
+      final String voiceId = await ElevenLabsApiService.addVoice(
         widget.apiKey,
         name: name,
-        filePaths: [_audioPath!],
+        filePaths: <String>[_audioPath!],
       );
 
       if (mounted) {
@@ -217,11 +454,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     }
   }
 
-  String _formatDuration(Duration d) {
-    final m = d.inMinutes;
-    final s = d.inSeconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
-  }
+  // ── Build ──
 
   @override
   Widget build(BuildContext context) {
@@ -229,23 +462,26 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400),
+        constraints: const BoxConstraints(maxWidth: 420),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+            children: <Widget>[
               _buildHeader(),
               const SizedBox(height: 20),
               _buildNameField(),
               const SizedBox(height: 16),
-              if (widget.preRecordedPath == null) _buildRecordSection(),
-              if (_hasAudio) ...[
+              if (widget.preRecordedPath == null)
+                _buildRecordSection()
+              else
+                _buildPreRecordedWaveform(),
+              if (_hasAudio && !_isRecording) ...<Widget>[
                 const SizedBox(height: 12),
                 _buildPlaybackSection(),
               ],
-              if (_error != null) ...[
+              if (_error != null) ...<Widget>[
                 const SizedBox(height: 12),
                 _buildError(),
               ],
@@ -259,12 +495,12 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
   }
 
   Widget _buildHeader() {
-    final subtitle = widget.preRecordedPath != null
+    final String subtitle = widget.preRecordedPath != null
         ? 'Create voice from ${widget.sampleParty ?? "call"} sample'
-        : 'Record a voice sample to clone';
+        : 'Record or upload a voice sample';
 
     return Row(
-      children: [
+      children: <Widget>[
         Container(
           width: 36,
           height: 36,
@@ -279,7 +515,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+            children: <Widget>[
               Text(
                 'Clone Voice',
                 style: TextStyle(
@@ -291,8 +527,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
               const SizedBox(height: 2),
               Text(
                 subtitle,
-                style: TextStyle(
-                    fontSize: 11, color: AppColors.textTertiary),
+                style:
+                    TextStyle(fontSize: 11, color: AppColors.textTertiary),
               ),
             ],
           ),
@@ -302,90 +538,330 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
   }
 
   Widget _buildNameField() {
+    return TextField(
+      controller: _nameCtrl,
+      autocorrect: false,
+      style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+      decoration: InputDecoration(
+        hintText: 'Voice name',
+        hintStyle: TextStyle(fontSize: 13, color: AppColors.textTertiary),
+        filled: true,
+        fillColor: AppColors.card,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: AppColors.accent, width: 1),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWaveform({double height = 48}) {
+    return AnimatedBuilder(
+      animation: Listenable.merge(<Listenable>[_waveCtrl, _pulseCtrl]),
+      builder: (BuildContext context, Widget? child) {
+        return CustomPaint(
+          size: Size(double.infinity, height),
+          painter: _WaveformPainter(
+            phase: _waveCtrl.value,
+            amplitude: _waveAmplitude,
+            primaryColor: AppColors.accent,
+            secondaryColor: AppColors.accentLight,
+            barCount: 45,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPreRecordedWaveform() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
       ),
-      child: TextField(
-        controller: _nameCtrl,
-        autocorrect: false,
-        style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
-        decoration: InputDecoration(
-          hintText: 'Voice name',
-          hintStyle: TextStyle(fontSize: 13, color: AppColors.textTertiary),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 14),
-        ),
+      child: Column(
+        children: <Widget>[
+          _buildWaveform(),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(Icons.audio_file_rounded,
+                  size: 14, color: AppColors.textSecondary),
+              const SizedBox(width: 6),
+              Text(
+                '${widget.sampleParty ?? "Call"} recording ready',
+                style:
+                    TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildRecordSection() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       decoration: BoxDecoration(
         color: AppColors.card,
-        borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: _isRecording
+                ? AppColors.accent.withValues(alpha: 0.3)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: _isRecording ? 1 : 0.5),
       ),
       child: Column(
-        children: [
-          if (_isRecording) ...[
+        children: <Widget>[
+          _buildWaveform(),
+          const SizedBox(height: 14),
+
+          // Timer or status
+          if (_isRecording)
+            _buildMacosTimer(_recSeconds)
+          else if (_uploadedFileName != null)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.fiber_manual_record,
-                    size: 10, color: AppColors.red),
-                const SizedBox(width: 8),
-                Text(
-                  _formatDuration(Duration(seconds: _recSeconds)),
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w300,
-                    color: AppColors.textPrimary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(Icons.audio_file_rounded,
+                    size: 14, color: AppColors.accent),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    _uploadedFileName!,
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 4),
+            )
+          else if (_recordingPath != null)
             Text(
-              'Recording... speak clearly',
-              style:
-                  TextStyle(fontSize: 11, color: AppColors.textTertiary),
-            ),
-          ] else ...[
-            Icon(Icons.mic_rounded, size: 32, color: AppColors.textTertiary),
-            const SizedBox(height: 8),
+              'Sample recorded — tap to re-record',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            )
+          else
             Text(
-              _recordingPath != null
-                  ? 'Sample recorded. Tap to re-record.'
-                  : 'Tap to start recording',
-              style:
-                  TextStyle(fontSize: 12, color: AppColors.textTertiary),
+              'Ready to capture',
+              style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
             ),
-          ],
-          const SizedBox(height: 12),
-          SizedBox(
-            width: 48,
-            height: 48,
-            child: Material(
-              color: _isRecording ? AppColors.red : AppColors.accent,
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
+
+          const SizedBox(height: 16),
+
+          // Action buttons
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              _buildCircleAction(
+                icon:
+                    _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                color: _isRecording ? AppColors.red : AppColors.accent,
+                size: 48,
                 onTap: _isRecording ? _stopRecording : _startRecording,
-                child: Icon(
-                  _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
-                  color: AppColors.onAccent,
-                  size: 24,
-                ),
+                label: _isRecording ? 'Stop' : 'Record',
               ),
+              if (!_isRecording) ...<Widget>[
+                const SizedBox(width: 28),
+                _buildCircleAction(
+                  icon: Icons.file_upload_outlined,
+                  color: AppColors.textSecondary,
+                  size: 48,
+                  onTap: _pickFile,
+                  label: 'Upload',
+                  outlined: true,
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCircleAction({
+    required IconData icon,
+    required Color color,
+    required double size,
+    required VoidCallback onTap,
+    required String label,
+    bool outlined = false,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        HoverButton(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(size / 2),
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: outlined ? Colors.transparent : color,
+              border: outlined
+                  ? Border.all(
+                      color: color.withValues(alpha: 0.5), width: 1.5)
+                  : null,
+            ),
+            child: Icon(
+              icon,
+              color: outlined ? color : AppColors.onAccent,
+              size: size * 0.5,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMacosTimer(int totalSeconds) {
+    final int hours = totalSeconds ~/ 3600;
+    final int minutes = (totalSeconds % 3600) ~/ 60;
+    final int seconds = totalSeconds % 60;
+
+    final String hh = hours.toString().padLeft(2, '0');
+    final String mm = minutes.toString().padLeft(2, '0');
+    final String ss = seconds.toString().padLeft(2, '0');
+
+    final bool hoursZero = hours == 0;
+    final bool minutesZero = hours == 0 && minutes == 0;
+
+    final TextStyle dimStyle = TextStyle(
+      fontSize: 26,
+      fontWeight: FontWeight.w200,
+      color: AppColors.textTertiary.withValues(alpha: 0.35),
+      decoration: TextDecoration.lineThrough,
+      decorationColor: AppColors.textTertiary.withValues(alpha: 0.25),
+      decorationThickness: 1.5,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+
+    final TextStyle brightStyle = TextStyle(
+      fontSize: 26,
+      fontWeight: FontWeight.w300,
+      color: AppColors.textPrimary,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+
+    final TextStyle dimSep = TextStyle(
+      fontSize: 26,
+      fontWeight: FontWeight.w200,
+      color: AppColors.textTertiary.withValues(alpha: 0.35),
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+
+    final TextStyle brightSep = TextStyle(
+      fontSize: 26,
+      fontWeight: FontWeight.w300,
+      color: AppColors.textPrimary.withValues(alpha: 0.5),
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _PulsingDot(color: AppColors.red, animation: _pulseCtrl),
+        const SizedBox(width: 10),
+        Text.rich(
+          TextSpan(
+            children: <TextSpan>[
+              TextSpan(text: hh, style: hoursZero ? dimStyle : brightStyle),
+              TextSpan(text: ':', style: hoursZero ? dimSep : brightSep),
+              TextSpan(
+                  text: mm, style: minutesZero ? dimStyle : brightStyle),
+              TextSpan(text: ':', style: minutesZero ? dimSep : brightSep),
+              TextSpan(text: ss, style: brightStyle),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlaybackSection() {
+    final double progress = _playbackDuration.inMilliseconds > 0
+        ? _playbackPosition.inMilliseconds / _playbackDuration.inMilliseconds
+        : 0.0;
+
+    final String posStr = _fmtCompact(_playbackPosition);
+    final String durStr = _fmtCompact(_playbackDuration);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+      ),
+      child: Row(
+        children: <Widget>[
+          HoverButton(
+            onTap: _togglePlayback,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.accent.withValues(alpha: 0.12),
+              ),
+              child: Icon(
+                _isPlaying
+                    ? Icons.stop_rounded
+                    : Icons.play_arrow_rounded,
+                color: AppColors.accent,
+                size: 18,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 3,
+                activeTrackColor: AppColors.accent,
+                inactiveTrackColor: AppColors.border.withValues(alpha: 0.3),
+                thumbColor: AppColors.accent,
+                thumbShape:
+                    const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape:
+                    const RoundSliderOverlayShape(overlayRadius: 14),
+                overlayColor: AppColors.accent.withValues(alpha: 0.12),
+              ),
+              child: Slider(
+                value: progress.clamp(0.0, 1.0),
+                onChanged: _isPlaying ? null : (double _) {},
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            '$posStr / $durStr',
+            style: TextStyle(
+              fontSize: 10,
+              color: AppColors.textTertiary,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
             ),
           ),
         ],
@@ -393,67 +869,10 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
     );
   }
 
-  Widget _buildPlaybackSection() {
-    final progress = _playbackDuration.inMilliseconds > 0
-        ? _playbackPosition.inMilliseconds / _playbackDuration.inMilliseconds
-        : 0.0;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 32,
-            height: 32,
-            child: Material(
-              color: AppColors.accent.withValues(alpha: 0.12),
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _togglePlayback,
-                child: Icon(
-                  _isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  color: AppColors.accent,
-                  size: 18,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: progress.clamp(0.0, 1.0),
-                    backgroundColor: AppColors.border.withValues(alpha: 0.3),
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(AppColors.accent),
-                    minHeight: 3,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatDuration(_playbackPosition)} / ${_formatDuration(_playbackDuration)}',
-                  style: TextStyle(
-                      fontSize: 10, color: AppColors.textTertiary),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  String _fmtCompact(Duration d) {
+    final int m = d.inMinutes;
+    final int s = d.inSeconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
   }
 
   Widget _buildError() {
@@ -462,7 +881,8 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
       decoration: BoxDecoration(
         color: AppColors.red.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.red.withValues(alpha: 0.2), width: 0.5),
+        border:
+            Border.all(color: AppColors.red.withValues(alpha: 0.2), width: 0.5),
       ),
       child: Text(
         _error!,
@@ -474,7 +894,7 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
   Widget _buildActions() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
-      children: [
+      children: <Widget>[
         TextButton(
           onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
           child: Text(
@@ -486,12 +906,12 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
         SizedBox(
           height: 36,
           child: ElevatedButton(
-            onPressed:
-                _isSubmitting || !_hasAudio ? null : _submit,
+            onPressed: _isSubmitting || !_hasAudio ? null : _submit,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.accent,
               foregroundColor: AppColors.crtBlack,
-              disabledBackgroundColor: AppColors.accent.withValues(alpha: 0.3),
+              disabledBackgroundColor:
+                  AppColors.accent.withValues(alpha: 0.3),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -507,11 +927,118 @@ class _VoiceCloneDialogState extends State<_VoiceCloneDialog> {
                     ),
                   )
                 : const Text('Create Voice',
-                    style:
-                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600)),
           ),
         ),
       ],
     );
   }
+}
+
+// ── Pulsing recording dot ──
+
+class _PulsingDot extends StatelessWidget {
+  const _PulsingDot({required this.color, required this.animation});
+
+  final Color color;
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (BuildContext context, Widget? child) {
+        return Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color.withValues(alpha: 0.5 + 0.5 * animation.value),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: color.withValues(alpha: 0.3 * animation.value),
+                blurRadius: 6,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Waveform bar painter ──
+
+class _WaveformPainter extends CustomPainter {
+  _WaveformPainter({
+    required this.phase,
+    required this.amplitude,
+    required this.primaryColor,
+    required this.secondaryColor,
+    required this.barCount,
+  });
+
+  final double phase;
+  final double amplitude;
+  final Color primaryColor;
+  final Color secondaryColor;
+  final int barCount;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double gapRatio = 0.4;
+    final double barWidth =
+        size.width / (barCount + (barCount - 1) * gapRatio);
+    final double gap = barWidth * gapRatio;
+    final double maxHeight = size.height;
+    final double centerY = size.height / 2;
+
+    for (int i = 0; i < barCount; i++) {
+      final double x = i * (barWidth + gap);
+      final double t = i / (barCount - 1);
+
+      final double w1 =
+          math.sin(t * math.pi * 3.0 + phase * math.pi * 2.0);
+      final double w2 =
+          math.sin(t * math.pi * 5.5 + phase * math.pi * 2.0 * 1.3) * 0.6;
+      final double w3 =
+          math.sin(t * math.pi * 8.0 + phase * math.pi * 2.0 * 0.7) * 0.3;
+
+      final double combined = (w1 + w2 + w3) / 1.9;
+      final double normHeight = (combined + 1.0) / 2.0;
+
+      const double minRatio = 0.06;
+      final double ratio =
+          minRatio + normHeight * amplitude * (1.0 - minRatio);
+      final double barHeight = ratio * maxHeight;
+      final double top = centerY - barHeight / 2;
+
+      final Color barColor =
+          Color.lerp(primaryColor, secondaryColor, t) ?? primaryColor;
+      final double alpha = 0.5 + normHeight * 0.5;
+
+      final Paint barPaint = Paint()
+        ..color = barColor.withValues(alpha: alpha)
+        ..style = PaintingStyle.fill;
+
+      final RRect rr = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x, top, barWidth, barHeight),
+        Radius.circular(barWidth / 2),
+      );
+      canvas.drawRRect(rr, barPaint);
+
+      if (amplitude > 0.3) {
+        final Paint glow = Paint()
+          ..color = barColor.withValues(alpha: 0.12 * amplitude)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+        canvas.drawRRect(rr, glow);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WaveformPainter old) =>
+      phase != old.phase || amplitude != old.amplitude;
 }
