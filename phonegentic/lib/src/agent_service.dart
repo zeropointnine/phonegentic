@@ -3340,6 +3340,28 @@ class AgentService extends ChangeNotifier {
     );
   }
 
+  void sendFileAttachment({required String fileName, required String content}) {
+    if (content.trim().isEmpty) return;
+
+    _messages.add(ChatMessage.attachment(
+      'Attached file: $fileName',
+      fileName: fileName,
+    ));
+    notifyListeners();
+
+    final contextMsg = '[ATTACHED FILE "$fileName" — read silently, do NOT read '
+        'this aloud or repeat it back. Understand the content and use it as '
+        'context for the conversation.]\n\n$content';
+
+    if (_active) {
+      if (_splitPipeline && _textAgent != null) {
+        _textAgent!.addSystemContext(contextMsg);
+      } else {
+        _whisper.sendSystemContext(contextMsg);
+      }
+    }
+  }
+
   void updateSpeakerName(String speakerRole, String name) {
     final idx = _bootContext.speakers.indexWhere((s) => s.role == speakerRole);
     if (idx >= 0) {
