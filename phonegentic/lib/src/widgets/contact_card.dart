@@ -10,6 +10,7 @@ class ContactCard extends StatefulWidget {
   final void Function(String field, String value) onFieldChanged;
   final VoidCallback? onDelete;
   final VoidCallback? onCall;
+  final bool autoFocusName;
 
   const ContactCard({
     super.key,
@@ -17,6 +18,7 @@ class ContactCard extends StatefulWidget {
     required this.onFieldChanged,
     this.onDelete,
     this.onCall,
+    this.autoFocusName = false,
   });
 
   @override
@@ -31,6 +33,16 @@ class _ContactCardState extends State<ContactCard> {
   void initState() {
     super.initState();
     _editController = TextEditingController();
+    if (widget.autoFocusName) {
+      _editingField = 'display_name';
+      _editController.text = _rawDisplayName;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _editController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _editController.text.length,
+        );
+      });
+    }
   }
 
   @override

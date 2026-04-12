@@ -15,40 +15,61 @@ class DialpadContactPreview extends StatelessWidget {
   String get _rawName => contact['display_name'] as String? ?? 'Unknown';
   String get _company => contact['company'] as String? ?? '';
 
+  static bool _looksLikePhone(String s) {
+    final digits = s.replaceAll(RegExp(r'[^\d]'), '');
+    return digits.length >= 7 && RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(s);
+  }
+
   @override
   Widget build(BuildContext context) {
     final demo = context.watch<DemoModeService>();
     final displayName = demo.maskDisplayName(_rawName);
+    final nameIsPhone = _looksLikePhone(_rawName);
 
-    return Column(
+    final hasText = !nameIsPhone || _company.isNotEmpty;
+
+    if (!hasText) {
+      return ContactIdenticon(seed: _rawName, size: 48);
+    }
+
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ContactIdenticon(seed: _rawName, size: 56),
-        const SizedBox(height: 8),
-        Text(
-          displayName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-            letterSpacing: -0.3,
+        ContactIdenticon(seed: _rawName, size: 44),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!nameIsPhone)
+                Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              if (_company.isNotEmpty) ...[
+                if (!nameIsPhone) const SizedBox(height: 2),
+                Text(
+                  _company,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
-        if (_company.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(
-            _company,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
-              color: AppColors.textTertiary,
-            ),
-          ),
-        ],
       ],
     );
   }

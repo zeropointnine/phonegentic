@@ -952,7 +952,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               demoMode.maskPhone(userPhone),
               style: TextStyle(
@@ -963,30 +963,33 @@ class _MyDialPadWidget extends State<DialPadWidget>
               ),
             ),
             const SizedBox(height: 8),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 320),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeIn,
-              transitionBuilder: (child, animation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, 0.08),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                );
-              },
-              child: showCard
-                  ? Padding(
-                      key: ValueKey(_matchedContact!['id']),
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: DialpadContactPreview(
-                          contact: _matchedContact!),
-                    )
-                  : const SizedBox.shrink(key: ValueKey('empty')),
+            SizedBox(
+              height: 56,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 320),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.08),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  );
+                },
+                child: showCard
+                    ? Padding(
+                        key: ValueKey(_matchedContact!['id']),
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: DialpadContactPreview(
+                            contact: _matchedContact!),
+                      )
+                    : const SizedBox.shrink(key: ValueKey('empty')),
+              ),
             ),
             _buildNumberDisplay(),
             const SizedBox(height: 28),
@@ -1011,12 +1014,12 @@ class _MyDialPadWidget extends State<DialPadWidget>
     return Column(
       children: [
         SizedBox(
-          height: 52,
+          height: 48,
           child: raw.isEmpty
               ? Text(
                   'Enter number',
                   style: TextStyle(
-                    fontSize: 32,
+                    fontSize: 30,
                     fontWeight: FontWeight.w200,
                     color: AppColors.textTertiary,
                     letterSpacing: 1,
@@ -1027,7 +1030,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   child: Text(
                     display,
                     style: TextStyle(
-                      fontSize: 36,
+                      fontSize: 34,
                       fontWeight: FontWeight.w300,
                       color: AppColors.textPrimary,
                       letterSpacing: 2,

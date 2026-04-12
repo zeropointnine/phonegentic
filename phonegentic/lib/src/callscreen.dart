@@ -736,28 +736,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void _handleAddContact() async {
     if (remoteIdentity == null || remoteIdentity!.isEmpty) return;
     final contactService = context.read<ContactService>();
-    final existing = contactService.lookupByPhone(remoteIdentity!);
-    if (existing != null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                '${existing['display_name'] ?? remoteIdentity} is already a contact'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-      return;
-    }
-    await contactService.quickAdd(remoteIdentity!);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Contact saved'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
+    await contactService.openContactForPhone(remoteIdentity!);
   }
 
   void _handleSendMessage() {
@@ -1422,7 +1401,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         bottomRow.addAll([
           ActionButton(
             title: 'Contact',
-            icon: Icons.contact_phone_rounded,
+            icon: Icons.person_add_outlined,
             onPressed: _handleAddContact,
           ),
           if (voiceOnly)

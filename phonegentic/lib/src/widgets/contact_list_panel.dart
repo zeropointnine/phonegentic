@@ -244,16 +244,57 @@ class _ContactListPanelState extends State<ContactListPanel> {
 
   Widget _buildContactDetail(ContactService service) {
     final contact = service.selectedContact!;
+    final autoFocus = service.autoFocusName;
+    if (autoFocus) service.consumeAutoFocusName();
     return SingleChildScrollView(
-      child: ContactCard(
-        contact: contact,
-        onFieldChanged: (field, value) {
-          service.updateField(contact['id'] as int, field, value);
-        },
-        onDelete: () {
-          service.deleteContact(contact['id'] as int);
-        },
-        onCall: () => _callContact(contact),
+      child: Column(
+        children: [
+          if (service.multipleMatchMessage != null)
+            _buildMultipleMatchBanner(service),
+          ContactCard(
+            contact: contact,
+            autoFocusName: autoFocus,
+            onFieldChanged: (field, value) {
+              service.updateField(contact['id'] as int, field, value);
+            },
+            onDelete: () {
+              service.deleteContact(contact['id'] as int);
+            },
+            onCall: () => _callContact(contact),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMultipleMatchBanner(ContactService service) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.burntAmber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: AppColors.burntAmber.withValues(alpha: 0.3),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline_rounded,
+              size: 16, color: AppColors.burntAmber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              service.multipleMatchMessage!,
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.burntAmber,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
