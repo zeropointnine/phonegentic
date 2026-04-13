@@ -1,13 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../theme_provider.dart';
 
 class PhonegenticLogo extends StatelessWidget {
-  static List<Color> get _defaultColors => [
-        AppColors.hotSignal,
-        AppColors.phosphor,
-        AppColors.burntAmber,
-      ];
-
   final double size;
   final List<Color>? colors;
 
@@ -15,11 +10,18 @@ class PhonegenticLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Watch ThemeProvider so the logo repaints whenever the theme changes.
+    context.watch<ThemeProvider>();
+    final resolvedColors = colors ?? [
+      AppColors.hotSignal,
+      AppColors.phosphor,
+      AppColors.burntAmber,
+    ];
     return SizedBox(
       width: size,
       height: size,
       child: CustomPaint(
-        painter: _SparklePainter(colors: colors ?? _defaultColors),
+        painter: _SparklePainter(colors: resolvedColors),
       ),
     );
   }

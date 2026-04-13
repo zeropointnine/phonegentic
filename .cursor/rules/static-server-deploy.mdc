@@ -1,0 +1,44 @@
+---
+description: Deployment procedures for the phonegentic.ai static site and Rust Axum server
+globs: static/**
+alwaysApply: false
+---
+
+# Deploying to phonegentic.ai
+
+The site runs an Axum (Rust) server on port 3000 behind nginx with TLS on `phonegentic.ai`.
+
+## Key paths on the remote server
+
+| What | Remote path |
+|------|-------------|
+| Static HTML/CSS/JS | `/var/html/` |
+| Rust server source | `/root/phonegentic/static/static_server/` |
+| Release binary | `/root/phonegentic/static/static_server/target/release/static_server` |
+| systemd service | `static_server` (`/etc/systemd/system/static_server.service`) |
+
+## Deploying static files (HTML, CSS, JS)
+
+```bash
+scp static/<file> root@phonegentic.ai:/var/html/
+```
+
+Do NOT deploy to `/var/www/html/` — the Axum server serves from `/var/html/`.
+
+## Deploying Rust server changes
+
+1. SCP source to the correct remote path:
+```bash
+scp static/static_server/src/main.rs root@phonegentic.ai:/root/phonegentic/static/static_server/src/main.rs
+```
+
+2. Build and restart (always source cargo env for non-interactive SSH):
+```bash
+ssh root@phonegentic.ai "source \$HOME/.cargo/env && cd /root/phonegentic/static/static_server && cargo build --release && systemctl restart static_server"
+```
+
+## Common mistakes to avoid
+
+- **Wrong HTML path**: Files must go to `/var/html/`, not `/var/www/html/`
+- **Wrong Rust source path**: Source goes to `/root/phonegentic/static/static_server/`, not `/root/static_server/`
+- **Forgetting server-side**: API endpoints (like form handlers) have both client-side JS validation and server-side Rust validation — changes often need both

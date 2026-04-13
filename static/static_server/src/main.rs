@@ -498,14 +498,6 @@ async fn sms_opt_in_handler(headers: HeaderMap, Form(form): Form<SmsOptInForm>) 
         return thanks.into_response();
     }
 
-    if form.sms_consent.as_deref() != Some("yes") {
-        return opt_in_err_response(
-            ajax,
-            StatusCode::BAD_REQUEST,
-            "SMS consent is required. Please check the consent box and try again.",
-        );
-    }
-
     let phone = match normalize_e164(&trim_limit(form.phone, MAX_FIELD_LEN)) {
         Some(p) => p,
         None => {

@@ -30,7 +30,10 @@ class TextAgentService {
 
   HttpClient? _httpClient;
   bool _responding = false;
+  bool _pendingRespond = false;
   final Set<String> _pendingToolUseIds = {};
+
+  static const _responseTimeoutSecs = 45;
 
   final _responseController = StreamController<ResponseTextEvent>.broadcast();
   Stream<ResponseTextEvent> get responses => _responseController.stream;
@@ -125,9 +128,17 @@ class TextAgentService {
   static const _maxRetries = 2;
 
   Future<void> _respond() async {
-    if (_responding) return;
-    if (_pendingToolUseIds.isNotEmpty) return;
+    if (_responding) {
+      _pendingRespond = true;
+      debugPrint('[TextAgentService] _respond: already responding, will retry after');
+      return;
+    }
+    if (_pendingToolUseIds.isNotEmpty) {
+      debugPrint('[TextAgentService] _respond: waiting for ${_pendingToolUseIds.length} tool result(s)');
+      return;
+    }
     _responding = true;
+    _pendingRespond = false;
 
     try {
       if (_config.provider == TextAgentProvider.claude) {
@@ -141,20 +152,35 @@ class TextAgentService {
       }
     } finally {
       _responding = false;
-      if (_pendingContext.isNotEmpty) _scheduleFlush();
+      if (_pendingRespond && _pendingToolUseIds.isEmpty) {
+        _pendingRespond = false;
+        debugPrint('[TextAgentService] _respond: processing queued request');
+        unawaited(_respond());
+      } else if (_pendingContext.isNotEmpty) {
+        _scheduleFlush();
+      }
     }
   }
 
   Future<void> _callClaudeWithRetry() async {
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
-        await _callClaude();
+        await _callClaude().timeout(
+          const Duration(seconds: _responseTimeoutSecs),
+          onTimeout: () {
+            throw TimeoutException(
+                'Claude API timed out after ${_responseTimeoutSecs}s — '
+                'check network or API key');
+          },
+        );
         return;
       } catch (e) {
         final isTransient = e is HttpException ||
+            e is TimeoutException ||
             e.toString().contains('Connection closed') ||
             e.toString().contains('Connection reset') ||
-            e.toString().contains('SocketException');
+            e.toString().contains('SocketException') ||
+            e.toString().contains('timed out');
         if (!isTransient || attempt >= _maxRetries) rethrow;
         final delayMs = 500 * (attempt + 1);
         debugPrint('[TextAgentService] Transient error (attempt ${attempt + 1}/$_maxRetries), retrying in ${delayMs}ms: $e');
@@ -692,6 +718,7 @@ class TextAgentService {
     _history.clear();
     _pendingToolUseIds.clear();
     _responding = false;
+    _pendingRespond = false;
   }
 
   void dispose() {

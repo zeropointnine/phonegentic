@@ -8,15 +8,21 @@ The server is an Axum app that lives in `static_server/`. It runs on port **3000
 
 ### 1 — SCP the source to the server
 
+Static HTML files are served from `/var/html/` on the server.
+The Rust server source lives at `/root/phonegentic/static/static_server/` on the server.
+
 ```bash
-scp -r static/static_server root@phonegentic.ai:/root/static_server
+# Static HTML files
+scp static/sms-opt-in.html root@phonegentic.ai:/var/html/
+
+# Rust server source
+scp -r static/static_server root@phonegentic.ai:/root/phonegentic/static/static_server
 ```
 
 Or if you only changed `main.rs`:
 
 ```bash
-scp static/static_server/src/main.rs root@phonegentic.ai:/root/static_server/src/main.rs
-scp static/static_server/Cargo.toml root@phonegentic.ai:/root/static_server/src/Cargo.toml
+scp static/static_server/src/main.rs root@phonegentic.ai:/root/phonegentic/static/static_server/src/main.rs
 ```
 
 ### 2 — SSH in, build release, and restart
@@ -24,14 +30,14 @@ scp static/static_server/Cargo.toml root@phonegentic.ai:/root/static_server/src/
 > `cargo` isn't on `PATH` in non-interactive SSH sessions — always source the rustup env first.
 
 ```bash
-ssh root@phonegentic.ai "source \$HOME/.cargo/env && cd /root/static_server && cargo build --release && systemctl restart static_server"
+ssh root@phonegentic.ai "source \$HOME/.cargo/env && cd /root/phonegentic/static/static_server && cargo build --release && systemctl restart static_server"
 ```
 
 All three steps as a single copy-paste chain (scp + build + restart):
 
 ```bash
-scp -r static/static_server root@phonegentic.ai:/root/static_server && \
-  ssh root@phonegentic.ai "source \$HOME/.cargo/env && cd /root/static_server && cargo build --release && systemctl restart static_server"
+scp -r static/static_server root@phonegentic.ai:/root/phonegentic/static/static_server && \
+  ssh root@phonegentic.ai "source \$HOME/.cargo/env && cd /root/phonegentic/static/static_server && cargo build --release && systemctl restart static_server"
 ```
 ```bash
 cat > /etc/nginx/sites-enabled/phonegentic << 'EOF'
@@ -125,8 +131,8 @@ Description=Phonegentic Axum static server
 After=network.target
 
 [Service]
-ExecStart=/root/static_server/target/release/static_server
-WorkingDirectory=/root/static_server
+ExecStart=/root/phonegentic/static/static_server/target/release/static_server
+WorkingDirectory=/root/phonegentic/static/static_server
 Restart=on-failure
 Environment=RUST_LOG=info
 Environment=WEB_ROOT=/var/html
