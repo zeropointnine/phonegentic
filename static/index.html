@@ -818,7 +818,8 @@
       align-items: center;
       gap: 8px;
       padding: 16px 20px;
-      min-width: 120px;
+      min-width: 130px;
+      max-width: 160px;
     }
 
     .pipeline-node-icon {
@@ -849,33 +850,21 @@
       font-size: 0.7rem;
       color: var(--text-dim);
       text-align: center;
-    }
-
-    .pipeline-node-logos {
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      margin-top: 4px;
+      gap: 3px;
+      line-height: 1.6;
+    }
+
+    .pipeline-node-sub svg {
+      width: 13px;
+      height: 13px;
       color: var(--gold);
-    }
-
-    .pipeline-node-logos svg {
-      width: 20px;
-      height: 20px;
-      opacity: 0.55;
-      transition: opacity 0.2s;
-    }
-
-    .pipeline-node:hover .pipeline-node-logos svg {
-      opacity: 0.85;
-    }
-
-    .pipeline-node-logos .logo-sep {
-      width: 1px;
-      height: 14px;
-      background: var(--border);
+      opacity: 0.75;
       flex-shrink: 0;
+      display: inline-block;
     }
 
     .pipeline-arrow {
@@ -883,7 +872,6 @@
       font-size: 1.4rem;
       opacity: 0.4;
       padding: 0 4px;
-      margin-top: -40px;
     }
 
     .pipeline-caption {
@@ -1292,12 +1280,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           </div>
           <span class="pipeline-node-label">STT</span>
-          <span class="pipeline-node-sub">WhisperKit / OpenAI Whisper</span>
-          <div class="pipeline-node-logos">
-            <svg viewBox="0 0 50 32" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M0.503213 27.7264V31.0566H0.726162H26.375C26.9173 31.0566 27.2652 30.7087 27.2668 30.1647C27.2679 29.7991 27.2676 29.4334 27.2674 29.0677C27.2673 28.9111 27.2672 28.7545 27.2672 28.5978C27.2672 28.0345 27.5986 27.7047 28.1682 27.7035C28.4531 27.7028 28.7379 27.703 29.0227 27.7032C29.2668 27.7033 29.5108 27.7035 29.755 27.7031C30.2547 27.7027 30.6014 27.3588 30.6026 26.8626C30.603 26.6456 30.6028 26.4286 30.6025 26.2117C30.602 25.8862 30.6016 25.5608 30.6038 25.2354C30.6074 24.7027 30.9436 24.3692 31.4707 24.3692H33.0775C33.6451 24.3696 33.9757 24.6975 33.9773 25.2643C33.9781 25.532 33.9779 25.7997 33.9777 26.0675C33.9775 26.3355 33.9773 26.6035 33.9781 26.8714C33.9793 27.3568 34.3268 27.7027 34.8125 27.7035C35.0468 27.7038 35.2811 27.7036 35.5155 27.7035C35.8168 27.7032 36.1181 27.703 36.4193 27.7039C36.9833 27.7055 37.318 28.0474 37.3135 28.6063C37.3091 29.1354 37.3063 29.6645 37.3127 30.1932C37.3188 30.7123 37.6735 31.0566 38.1909 31.0566H38.1913C39.845 31.0575 41.4983 31.0583 43.152 31.0566C43.6573 31.0562 43.9992 30.7167 43.9992 30.2133C44 20.7448 44 11.276 43.9992 1.80708C43.9992 1.27634 43.6626 0.942871 43.1339 0.942871H38.213C37.661 0.942871 37.3123 1.29 37.3111 1.84323C37.3105 2.13155 37.3106 2.41999 37.3108 2.70842C37.311 2.95575 37.3111 3.20307 37.3107 3.45031C37.3099 3.93886 36.9685 4.27675 36.4752 4.27715C36.263 4.27746 36.0508 4.27723 35.8386 4.27699C35.5084 4.27661 35.1783 4.27624 34.8482 4.27795C34.3345 4.28036 33.9773 4.63955 33.9773 5.14859C33.9772 5.3295 33.9775 5.51041 33.9778 5.69132C33.9784 6.0528 33.9791 6.41427 33.9761 6.77575C33.9721 7.28158 33.6166 7.63152 33.1124 7.63313C32.7555 7.63393 32.3983 7.63366 32.0411 7.63339C31.8626 7.63326 31.6841 7.63313 31.5056 7.63313C30.946 7.63313 30.6046 7.29403 30.603 6.73437C30.6022 6.39071 30.6024 6.04687 30.6027 5.70309C30.6028 5.53122 30.603 5.35937 30.603 5.18756C30.6026 4.61664 30.2655 4.27876 29.6919 4.27755C29.4241 4.27695 29.1563 4.27715 28.8885 4.27735C28.6206 4.27755 28.3528 4.27775 28.085 4.27715C27.609 4.27635 27.268 3.93163 27.2672 3.45232C27.2669 3.2613 27.2674 3.07032 27.2679 2.87936C27.2688 2.52129 27.2697 2.16326 27.2656 1.80507C27.2595 1.28357 26.908 0.942871 26.3898 0.942871H0.741026H0.50482V4.27795H0.792846C1.65834 4.27795 2.52384 4.27795 3.38934 4.27794C8.58284 4.27789 13.7763 4.27784 18.9698 4.27956C19.1562 4.27996 19.3442 4.29362 19.5282 4.32175C20.0858 4.40612 20.4172 4.72593 20.5156 5.27956C20.5542 5.49572 20.5783 5.71749 20.5783 5.93646C20.5815 12.6195 20.5819 19.3025 20.5783 25.9855C20.5779 26.2378 20.5578 26.4942 20.512 26.7421C20.4357 27.1563 20.224 27.4873 19.7925 27.5962C19.5105 27.6673 19.2153 27.7212 18.9261 27.7212C13.8425 27.7269 8.75875 27.7267 3.67516 27.7265C2.70648 27.7264 1.73781 27.7264 0.769145 27.7264H0.503213Z" fill="currentColor"/></svg>
-            <span class="logo-sep"></span>
-            <svg viewBox="0 0 32 32" fill="none"><path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </div>
+          <span class="pipeline-node-sub"><svg viewBox="0 0 50 32" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M0.5 27.7V31h25.9c.5 0 .9-.3.9-.9v-1.5c0-.6.3-.9.9-.9h1.5c.5 0 .8-.3.8-.8v-1.6c0-.5.3-.9.9-.9h1.6c.6 0 .9.3.9.9v1.8c0 .5.3.8.8.8h1.6c.5 0 .9.3.9.9v1.6c0 .5.4.9.9.9h5c.5 0 .8-.3.8-.8V1.8c0-.5-.3-.9-.9-.9h-5c-.5 0-.9.3-.9.9v1.7c0 .5-.3.8-.8.8h-1.6c-.5 0-.9.4-.9.9v1.5c0 .5-.4.9-.9.9h-1.5c-.6 0-.9-.3-.9-.9V5.2c0-.5-.3-.9-.9-.9h-1.6c-.5 0-.8-.3-.8-.8V1.8c0-.5-.4-.9-.9-.9H.7V4.3h18.3c.6 0 1 .3 1 .9v20.8c0 .8-.4 1.1-1 1.2-.3.1-.6.1-.9.1H.5z" fill="currentColor"/></svg> WhisperKit / <svg viewBox="0 0 32 32" fill="none"><path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Whisper</span>
         </div>
         <span class="pipeline-arrow">&rsaquo;</span>
         <div class="pipeline-node">
@@ -1305,14 +1288,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           </div>
           <span class="pipeline-node-label">LLM</span>
-          <span class="pipeline-node-sub">Claude / OpenAI / Local</span>
-          <div class="pipeline-node-logos">
-            <svg viewBox="0 0 32 32" fill="none"><path d="M18.4 4L28 28h-5.6l-4-10.4L14.4 28H8.8L18.4 4z" fill="currentColor"/><path d="M13.6 4L4 28h5.6l4-10.4L17.6 28h5.6L13.6 4z" fill="currentColor" opacity="0.5"/></svg>
-            <span class="logo-sep"></span>
-            <svg viewBox="0 0 32 32" fill="none"><path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            <span class="logo-sep"></span>
-            <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M9 9h6v6H9z" stroke="currentColor" stroke-width="1.5"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" stroke="currentColor" stroke-width="1" opacity="0.5"/></svg>
-          </div>
+          <span class="pipeline-node-sub"><svg viewBox="0 0 32 32" fill="none"><path d="M18.4 4L28 28h-5.6l-4-10.4L14.4 28H8.8L18.4 4z" fill="currentColor"/><path d="M13.6 4L4 28h5.6l4-10.4L17.6 28h5.6L13.6 4z" fill="currentColor" opacity="0.5"/></svg> Claude / <svg viewBox="0 0 32 32" fill="none"><path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> OpenAI / <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M9 9h6v6H9z" stroke="currentColor" stroke-width="1.5"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" stroke="currentColor" stroke-width="1" opacity="0.5"/></svg> Local</span>
         </div>
         <span class="pipeline-arrow">&rsaquo;</span>
         <div class="pipeline-node">
@@ -1320,12 +1296,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
           </div>
           <span class="pipeline-node-label">TTS</span>
-          <span class="pipeline-node-sub">ElevenLabs / Kokoro</span>
-          <div class="pipeline-node-logos">
-            <svg viewBox="0 0 32 32" fill="none"><rect x="8" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/><rect x="18.5" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/></svg>
-            <span class="logo-sep"></span>
-            <svg viewBox="0 0 32 32" fill="none"><path d="M16 28s-10-6.5-10-14a6 6 0 0 1 10-4.47A6 6 0 0 1 26 14c0 7.5-10 14-10 14z" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.5"/></svg>
-          </div>
+          <span class="pipeline-node-sub"><svg viewBox="0 0 32 32" fill="none"><rect x="8" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/><rect x="18.5" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/></svg> ElevenLabs / <svg viewBox="0 0 32 32" fill="none"><path d="M16 28s-10-6.5-10-14a6 6 0 0 1 10-4.47A6 6 0 0 1 26 14c0 7.5-10 14-10 14z" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.5"/></svg> Kokoro</span>
         </div>
         <span class="pipeline-arrow">&rsaquo;</span>
         <div class="pipeline-node">
