@@ -1212,7 +1212,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
             );
           }
         }
-        if (callState.state == CallStateEnum.FAILED && _calls.isEmpty) {
+        if (callState.state == CallStateEnum.FAILED &&
+            _calls.isEmpty &&
+            callState.cause?.cause != 'Canceled') {
           reRegisterWithCurrentUser();
         }
         if (_calls.isEmpty) {

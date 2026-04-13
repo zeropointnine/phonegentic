@@ -136,6 +136,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             WebRTCAudioProcessor.shared.micMuted = muted
             NSLog("[AudioTap] setMicMute=%@", muted ? "YES" : "NO")
             result(nil)
+        case "setRemoteGain":
+            let gain = (call.arguments as? [String: Any])?["gain"] as? Double ?? 1.0
+            WebRTCAudioProcessor.shared.remoteGain = Float(gain)
+            NSLog("[AudioTap] setRemoteGain=%.2f", gain)
+            result(nil)
         case "getDominantSpeaker":
             let info = SpeakerIdentifier.shared.speakerInfo(dominantSource: dominantSpeaker)
             result(info)

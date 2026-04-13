@@ -61,6 +61,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   bool _videoMuted = false;
   bool _hold = false;
   bool _mirror = true;
+  bool _showLocalVideo = false;
   Originator? _holdOriginator;
   bool _callConfirmed = false;
   bool _enteredCallMode = false;
@@ -88,7 +89,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   late Timer _timer;
 
   SIPUAHelper? get helper => widget._helper;
-  bool get voiceOnly => call!.voiceOnly && !call!.remote_has_video;
+  bool get voiceOnly =>
+      call!.voiceOnly &&
+      (_remoteStream == null || _remoteStream!.getVideoTracks().isEmpty);
   String? get remoteIdentity => call!.remote_identity;
   Direction? get direction => call!.direction;
   Call? get call => widget._call;
@@ -223,8 +226,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     // _stopRecording can save the recording path after the file is finalized.
     if (callState.state == CallStateEnum.ENDED ||
         callState.state == CallStateEnum.FAILED) {
-      final history =
-          Provider.of<CallHistoryService>(context, listen: false);
+      final history = Provider.of<CallHistoryService>(context, listen: false);
       _endingCallRecordId = history.activeCallRecordId;
     }
     _pushCallPhase(callState.state);
@@ -258,12 +260,10 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       case CallStateEnum.ENDED:
       case CallStateEnum.FAILED:
         _stopRecording();
-        final tearSheet =
-            Provider.of<TearSheetService>(context, listen: false);
+        final tearSheet = Provider.of<TearSheetService>(context, listen: false);
         if (tearSheet.isActive) {
-          final status = callState.state == CallStateEnum.FAILED
-              ? 'failed'
-              : 'completed';
+          final status =
+              callState.state == CallStateEnum.FAILED ? 'failed' : 'completed';
           tearSheet.onCallEnded(status);
         }
         _backToDialPad();
@@ -357,7 +357,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _enteredCallMode = true;
     try {
       await _tapChannel.invokeMethod('enterCallMode');
-      debugPrint('[CallScreen] enterCallMode — AI audio routed through WebRTC pipeline');
+      await _tapChannel.invokeMethod('setRemoteGain', {'gain': 5.0});
+      debugPrint(
+          '[CallScreen] enterCallMode — AI audio routed through WebRTC pipeline');
     } catch (e) {
       debugPrint('[CallScreen] enterCallMode failed: $e');
     }
@@ -385,7 +387,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _recSeconds++;
       final m = _recSeconds ~/ 60;
       final s = _recSeconds % 60;
-      if (mounted) setState(() => _recLabel = '$m:${s.toString().padLeft(2, '0')}');
+      if (mounted)
+        setState(() => _recLabel = '$m:${s.toString().padLeft(2, '0')}');
     });
     if (mounted) setState(() {});
 
@@ -397,8 +400,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       _recordingPath = p.join(recDir.path, 'call_$timestamp.wav');
 
-      await _tapChannel.invokeMethod(
-          'startCallRecording', {'path': _recordingPath});
+      await _tapChannel
+          .invokeMethod('startCallRecording', {'path': _recordingPath});
       debugPrint('[CallScreen] Recording started → $_recordingPath');
     } catch (e) {
       debugPrint('[CallScreen] Recording failed to start: $e');
@@ -432,8 +435,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       if (recordId != null) {
         try {
           await CallHistoryDb.updateRecordingPath(recordId, savedPath);
-          debugPrint(
-              '[CallScreen] Recording path saved for record #$recordId');
+          debugPrint('[CallScreen] Recording path saved for record #$recordId');
         } catch (e) {
           debugPrint('[CallScreen] Failed to save recording path: $e');
         }
@@ -468,7 +470,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _sampleSeconds++;
       final m = _sampleSeconds ~/ 60;
       final s = _sampleSeconds % 60;
-      if (mounted) setState(() => _sampleLabel = '$m:${s.toString().padLeft(2, '0')}');
+      if (mounted)
+        setState(() => _sampleLabel = '$m:${s.toString().padLeft(2, '0')}');
     });
     if (mounted) setState(() {});
 
@@ -479,8 +482,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       await recDir.create(recursive: true);
 
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      _samplePath =
-          p.join(recDir.path, 'sample_${party}_$timestamp.wav');
+      _samplePath = p.join(recDir.path, 'sample_${party}_$timestamp.wav');
 
       await _tapChannel.invokeMethod(
           'startVoiceSample', {'path': _samplePath, 'party': party});
@@ -656,8 +658,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           title: const Text('Transfer Call'),
           content: TextField(
             onChanged: (text) => setState(() => _transferTarget = text),
-            decoration:
-                const InputDecoration(hintText: 'URI or Username'),
+            decoration: const InputDecoration(hintText: 'URI or Username'),
             textAlign: TextAlign.center,
           ),
           actions: [
@@ -734,11 +735,13 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   void _handleAddContact() async {
-    debugPrint('[CallScreen] _handleAddContact tapped, remoteIdentity=$remoteIdentity');
+    debugPrint(
+        '[CallScreen] _handleAddContact tapped, remoteIdentity=$remoteIdentity');
     if (remoteIdentity == null || remoteIdentity!.isEmpty) return;
     final contactService = context.read<ContactService>();
     await contactService.openContactForPhone(remoteIdentity!);
-    debugPrint('[CallScreen] openContactForPhone done, isOpen=${contactService.isOpen} autoFocus=${contactService.autoFocusName}');
+    debugPrint(
+        '[CallScreen] openContactForPhone done, isOpen=${contactService.isOpen} autoFocus=${contactService.autoFocusName}');
   }
 
   void _handleSendMessage() {
@@ -757,14 +760,10 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (voiceOnly) {
       setState(() => call!.voiceOnly = false);
       helper!.renegotiate(
-          call: call!,
-          voiceOnly: false,
-          done: (IncomingMessage? msg) {});
+          call: call!, voiceOnly: false, done: (IncomingMessage? msg) {});
     } else {
       helper!.renegotiate(
-          call: call!,
-          voiceOnly: true,
-          done: (IncomingMessage? msg) {});
+          call: call!, voiceOnly: true, done: (IncomingMessage? msg) {});
     }
   }
 
@@ -886,14 +885,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 ),
               ),
               _buildCallConferenceBadge(conf),
-              if (agent.whisperMode)
-                _buildWhisperBadge(),
+              if (agent.whisperMode) _buildWhisperBadge(),
               const Spacer(),
               if (wide) ...[
                 _buildBarBtn(
                   icon: Icons.chat_bubble_outline_rounded,
-                  onTap: () =>
-                      context.read<MessagingService>().toggleOpen(),
+                  onTap: () => context.read<MessagingService>().toggleOpen(),
                   active: context.read<MessagingService>().isOpen,
                   badge: context.read<MessagingService>().unreadCount,
                 ),
@@ -909,8 +906,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 const SizedBox(width: 4),
                 _buildBarBtn(
                   icon: Icons.contacts_rounded,
-                  onTap: () =>
-                      context.read<ContactService>().toggleContacts(),
+                  onTap: () => context.read<ContactService>().toggleContacts(),
                 ),
                 const SizedBox(width: 4),
                 _buildBarBtn(
@@ -924,6 +920,17 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   onTap: _showAudioDevices,
                 ),
                 const SizedBox(width: 4),
+                if (_callConfirmed && _localStream != null)
+                  _buildBarBtn(
+                    icon: _showLocalVideo
+                        ? Icons.videocam_rounded
+                        : Icons.videocam_off_rounded,
+                    onTap: () =>
+                        setState(() => _showLocalVideo = !_showLocalVideo),
+                    active: _showLocalVideo,
+                  ),
+                if (_callConfirmed && _localStream != null)
+                  const SizedBox(width: 4),
               ],
               _buildCallMenuButton(context, collapsed: !wide),
             ],
@@ -947,8 +954,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.hearing_disabled,
-                size: 12, color: AppColors.burntAmber),
+            Icon(Icons.hearing_disabled, size: 12, color: AppColors.burntAmber),
             const SizedBox(width: 4),
             Text(
               'Whisper',
@@ -992,9 +998,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   ? Icons.groups_rounded
                   : Icons.call_split_rounded,
               size: 12,
-              color: conf.hasConference
-                  ? AppColors.green
-                  : AppColors.burntAmber,
+              color:
+                  conf.hasConference ? AppColors.green : AppColors.burntAmber,
             ),
             const SizedBox(width: 4),
             Text(
@@ -1004,9 +1009,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
-                color: conf.hasConference
-                    ? AppColors.green
-                    : AppColors.burntAmber,
+                color:
+                    conf.hasConference ? AppColors.green : AppColors.burntAmber,
               ),
             ),
           ],
@@ -1044,8 +1048,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             ),
             child: Icon(icon,
                 size: 16,
-                color:
-                    active ? AppColors.accent : AppColors.textSecondary),
+                color: active ? AppColors.accent : AppColors.textSecondary),
           ),
           if (badge > 0)
             Positioned(
@@ -1057,8 +1060,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   color: AppColors.red,
                   shape: BoxShape.circle,
                 ),
-                constraints:
-                    const BoxConstraints(minWidth: 16, minHeight: 16),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
                 child: Text(
                   badge > 99 ? '99+' : '$badge',
                   style: TextStyle(
@@ -1215,7 +1217,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       ));
     }
 
-    if (!voiceOnly && _localStream != null) {
+    if (!voiceOnly && _localStream != null && _showLocalVideo) {
       stackWidgets.add(AnimatedContainer(
         height: _localVideoHeight,
         width: _localVideoWidth,
@@ -1237,18 +1239,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final matchedContact = remoteIdentity != null
           ? contactService.lookupByPhone(remoteIdentity!)
           : null;
-      final rawContactName =
-          matchedContact?['display_name'] as String?;
+      final rawContactName = matchedContact?['display_name'] as String?;
       final nameIsPhone = rawContactName != null &&
           rawContactName.replaceAll(RegExp(r'[^\d]'), '').length >= 7 &&
           RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(rawContactName);
-      final contactName =
-          (rawContactName != null && !nameIsPhone)
-              ? demoMode.maskDisplayName(rawContactName)
-              : null;
-      final formattedRemote = remoteIdentity != null
-          ? demoMode.maskPhone(remoteIdentity!)
+      final contactName = (rawContactName != null && !nameIsPhone)
+          ? demoMode.maskDisplayName(rawContactName)
           : null;
+      final formattedRemote =
+          remoteIdentity != null ? demoMode.maskPhone(remoteIdentity!) : null;
 
       // Center: status + timer + avatar + name + phone (grouped)
       stackWidgets.add(
@@ -1284,7 +1283,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                             fontWeight: FontWeight.w500,
                             color: AppColors.textSecondary,
                             fontFamily: AppColors.timerFontFamily,
-                            fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                            fontFamilyFallback:
+                                AppColors.timerFontFamilyFallback,
                             fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         );
@@ -1333,6 +1333,43 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       );
     }
 
+    if (_callConfirmed) {
+      stackWidgets.add(
+        Positioned(
+          top: 12,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: ValueListenableBuilder<String>(
+              valueListenable: _timeLabel,
+              builder: (context, value, _) {
+                if (value.isEmpty) return const SizedBox.shrink();
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.card.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textSecondary,
+                      fontFamily: AppColors.timerFontFamily,
+                      fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    }
+
     return Stack(children: stackWidgets);
   }
 
@@ -1345,14 +1382,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     switch (_state) {
       case CallStateEnum.NONE:
       case CallStateEnum.CONNECTING:
+      case CallStateEnum.CALL_INITIATION:
         if (direction == Direction.incoming) {
           bottomRow.add(_circleBtn(
               Icons.phone, AppColors.green, 'Accept', _handleAccept));
-          bottomRow
-              .add(_circleBtn(Icons.call_end, AppColors.red, 'Decline', _handleHangup));
+          bottomRow.add(_circleBtn(
+              Icons.call_end, AppColors.red, 'Decline', _handleHangup));
         } else {
-          bottomRow
-              .add(_circleBtn(Icons.call_end, AppColors.red, 'Cancel', _handleHangup));
+          bottomRow.add(_circleBtn(
+              Icons.call_end, AppColors.red, 'Cancel', _handleHangup));
         }
         break;
 
@@ -1376,7 +1414,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           if (voiceOnly)
             ActionButton(
               title: _isRecording ? _recLabel : 'Record',
-              icon: _isRecording ? Icons.stop_rounded : Icons.fiber_manual_record,
+              icon:
+                  _isRecording ? Icons.stop_rounded : Icons.fiber_manual_record,
               checked: _isRecording,
               fillColor: _isRecording ? AppColors.red : null,
               titleStyle: _isRecording
@@ -1450,12 +1489,20 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
-        bottomRow.add(_circleBtn(Icons.call_end, AppColors.burntAmber.withValues(alpha: 0.4), '', () {}));
+        bottomRow.add(_circleBtn(Icons.call_end,
+            AppColors.burntAmber.withValues(alpha: 0.4), '', () {}));
         break;
 
       case CallStateEnum.PROGRESS:
-        bottomRow
-            .add(_circleBtn(Icons.call_end, AppColors.red, 'Cancel', _handleHangup));
+        if (direction == Direction.incoming) {
+          bottomRow.add(_circleBtn(
+              Icons.phone, AppColors.green, 'Accept', _handleAccept));
+          bottomRow.add(_circleBtn(
+              Icons.call_end, AppColors.red, 'Decline', _handleHangup));
+        } else {
+          bottomRow.add(_circleBtn(
+              Icons.call_end, AppColors.red, 'Cancel', _handleHangup));
+        }
         break;
 
       default:
@@ -1464,9 +1511,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
     Widget wrapRow(List<Widget> items) {
       return Row(
-        children: items
-            .map((w) => Expanded(child: Center(child: w)))
-            .toList(),
+        children: items.map((w) => Expanded(child: Center(child: w))).toList(),
       );
     }
 
@@ -1514,8 +1559,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         if (label.isNotEmpty) ...[
           const SizedBox(height: 6),
           Text(label,
-              style:
-                  TextStyle(fontSize: 11, color: AppColors.textTertiary)),
+              style: TextStyle(fontSize: 11, color: AppColors.textTertiary)),
         ],
       ],
     );
@@ -1523,10 +1567,26 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   Widget _buildDtmfPad() {
     const labels = [
-      [{'1': ''}, {'2': 'ABC'}, {'3': 'DEF'}],
-      [{'4': 'GHI'}, {'5': 'JKL'}, {'6': 'MNO'}],
-      [{'7': 'PQRS'}, {'8': 'TUV'}, {'9': 'WXYZ'}],
-      [{'*': ''}, {'0': '+'}, {'#': ''}],
+      [
+        {'1': ''},
+        {'2': 'ABC'},
+        {'3': 'DEF'}
+      ],
+      [
+        {'4': 'GHI'},
+        {'5': 'JKL'},
+        {'6': 'MNO'}
+      ],
+      [
+        {'7': 'PQRS'},
+        {'8': 'TUV'},
+        {'9': 'WXYZ'}
+      ],
+      [
+        {'*': ''},
+        {'0': '+'},
+        {'#': ''}
+      ],
     ];
 
     return Padding(
@@ -1608,7 +1668,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         ),
       );
     } else {
-      debugPrint('[CallScreen] Auto-accepting video re-INVITE (already in video mode)');
+      debugPrint(
+          '[CallScreen] Auto-accepting video re-INVITE (already in video mode)');
       event.accept!({});
     }
   }

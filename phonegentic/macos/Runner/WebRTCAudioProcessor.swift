@@ -137,6 +137,11 @@ final class WebRTCAudioProcessor: NSObject {
     /// multiple peer connections (each would consume a portion, causing choppy audio).
     var conferenceMode = false
 
+    /// Linear gain applied to the remote party's audio in the render path.
+    /// Values > 1.0 boost volume; 1.0 = passthrough. Applied after whisper
+    /// tap / tone detection so those see the original signal.
+    var remoteGain: Float = 2.0
+
     /// Fired (on main thread) when a sustained beep tone is first confirmed.
     var beepDetectedCallback: (() -> Void)?
     /// Fired (on main thread) when a confirmed beep tone ends.
@@ -540,6 +545,13 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
         }
 
         writeToWhisper(src: buf, srcFrames: frames, srcRate: rate, owner: owner)
+
+        let gain = owner.remoteGain
+        if gain != 1.0 {
+            for i in 0..<frames {
+                buf[i] = max(-32768.0, min(32767.0, buf[i] * gain))
+            }
+        }
 
         if !inConference {
             mixTTSInto(buf: buf, frames: frames, ring: owner.ttsRenderRing, rate: rate)

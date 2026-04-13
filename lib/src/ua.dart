@@ -595,8 +595,13 @@ class UA extends EventManager {
     DartSIP_C.SipMethod? method = request.method;
 
     // Check that request URI points to us.
+    // Accept if R-URI user matches our SIP username, contact user, or our
+    // phone number (display_name stripped of leading '+').  Telnyx routes
+    // inbound calls using the DID as the R-URI user, not the SIP credential.
+    String? did = _configuration.display_name?.replaceFirst('+', '');
     if (request.ruri!.user != _configuration.uri!.user &&
-        request.ruri!.user != _contact!.uri!.user) {
+        request.ruri!.user != _contact!.uri!.user &&
+        (did == null || request.ruri!.user != did)) {
       logger.d('Request-URI does not point to us');
       if (request.method != SipMethod.ACK) {
         request.reply_sl(404);
