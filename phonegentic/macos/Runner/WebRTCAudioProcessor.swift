@@ -200,6 +200,15 @@ final class WebRTCAudioProcessor: NSObject {
         NSLog("[WebRTCAudioProcessor] Unregistered processors")
     }
 
+    /// Clear all TTS ring buffers immediately. Called on barge-in so the
+    /// agent's remaining audio is silenced mid-sentence.
+    func clearTTSBuffers() {
+        ttsCaptureRing.reset()
+        ttsRenderRing.reset()
+        ttsRecordingRing.reset()
+        NSLog("[WebRTCAudioProcessor] clearTTSBuffers — all TTS rings reset")
+    }
+
     /// Feed AI TTS audio (PCM16, 24 kHz mono) into the ring buffers.
     /// Stored at native 24 kHz; processors resample to pipeline rate on read.
     func feedTTS(pcm16Data: Data) {

@@ -131,6 +131,14 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "stopAudioPlayback":
             stopPlayback()
             result(nil)
+        case "clearTTSQueue":
+            WebRTCAudioProcessor.shared.clearTTSBuffers()
+            callModePlaybackTimer?.invalidate()
+            callModePlaybackTimer = nil
+            lastCallModeTTSTime = 0
+            NSLog("[AudioTap] clearTTSQueue — buffers flushed, playback timer cancelled")
+            methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+            result(nil)
         case "setMicMute":
             let muted = (call.arguments as? [String: Any])?["muted"] as? Bool ?? false
             WebRTCAudioProcessor.shared.micMuted = muted
@@ -332,6 +340,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         outputSuppressedUntil = 0
         playbackEndTimer?.invalidate()
         callModePlaybackTimer?.invalidate()
+        callModePlaybackTimer = nil
         dominantHistory.removeAll()
         dominantSpeaker = "unknown"
 
@@ -371,6 +380,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         outputSuppressedUntil = 0
         playbackEndTimer?.invalidate()
         callModePlaybackTimer?.invalidate()
+        callModePlaybackTimer = nil
         dominantHistory.removeAll()
         dominantSpeaker = "unknown"
 
@@ -463,12 +473,22 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             // can strip mic audio from the event sink during TTS playback.
             WebRTCAudioProcessor.shared.feedTTS(pcm16Data: data)
             lastCallModeTTSTime = Date().timeIntervalSince1970
-            
-            callModePlaybackTimer?.invalidate()
-            callModePlaybackTimer = Timer.scheduledTimer(
-                withTimeInterval: AudioTapChannel.callModeTTSSuppression, repeats: false
-            ) { [weak self] _ in
-                self?.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+
+            // Poll ring buffer depth instead of a fixed timeout — large
+            // responses can queue 20+ seconds of audio that outlives a 2s timer.
+            if callModePlaybackTimer == nil {
+                callModePlaybackTimer = Timer.scheduledTimer(
+                    withTimeInterval: 0.25, repeats: true
+                ) { [weak self] timer in
+                    guard let self = self else { timer.invalidate(); return }
+                    let ringEmpty = WebRTCAudioProcessor.shared.ttsRenderRing.availableToRead == 0
+                    let suppressionElapsed = Date().timeIntervalSince1970 - self.lastCallModeTTSTime >= AudioTapChannel.callModeTTSSuppression
+                    if ringEmpty && suppressionElapsed {
+                        timer.invalidate()
+                        self.callModePlaybackTimer = nil
+                        self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+                    }
+                }
             }
         } else {
             // In direct mode TTS plays through speakers. Block mic audio

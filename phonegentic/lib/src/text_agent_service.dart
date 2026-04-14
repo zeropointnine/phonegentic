@@ -31,6 +31,7 @@ class TextAgentService {
   HttpClient? _httpClient;
   bool _responding = false;
   bool _pendingRespond = false;
+  bool _cancelRequested = false;
   final Set<String> _pendingToolUseIds = {};
 
   static const _responseTimeoutSecs = 45;
@@ -67,6 +68,25 @@ class TextAgentService {
   /// response on its own — it will be included in the next flush.
   void addSystemContext(String text) {
     _pendingContext.add(text);
+  }
+
+  /// Discard any accumulated pending context without triggering an LLM
+  /// response. Used after pre-greeting flush so phase-transition context
+  /// (settling / connected) doesn't auto-fire a duplicate greeting.
+  void clearPendingContext() {
+    _debounceTimer?.cancel();
+    _pendingContext.clear();
+  }
+
+  /// Cancel the in-flight LLM response (if any). The streaming loop in
+  /// _callClaude checks this flag after each SSE chunk and breaks early,
+  /// emitting a final event with the partial text accumulated so far.
+  void cancelCurrentResponse() {
+    if (!_responding) return;
+    _cancelRequested = true;
+    _pendingRespond = false;
+    _debounceTimer?.cancel();
+    debugPrint('[TextAgentService] cancelCurrentResponse requested');
   }
 
   /// Host typed a direct message — flush any pending context and respond
@@ -449,7 +469,12 @@ class TextAgentService {
     String? activeToolName;
     final StringBuffer activeToolInput = StringBuffer();
 
+    bool cancelled = false;
     await for (final chunk in response.transform(utf8.decoder)) {
+      if (_cancelRequested) {
+        cancelled = true;
+        break;
+      }
       sseBuf += chunk;
       final lines = sseBuf.split('\n');
       sseBuf = lines.removeLast();
@@ -506,10 +531,32 @@ class TextAgentService {
           }
         } catch (_) {}
       }
+      if (_cancelRequested) {
+        cancelled = true;
+        break;
+      }
+    }
+
+    _cancelRequested = false;
+    final textResult = fullText.toString();
+
+    if (cancelled) {
+      debugPrint('[TextAgentService] Response cancelled — '
+          '${textResult.length} chars emitted');
+      if (textResult.isNotEmpty) {
+        _history.add({
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': textResult}
+          ],
+        });
+        _responseController
+            .add(ResponseTextEvent(text: textResult, isFinal: true));
+      }
+      return;
     }
 
     final contentBlocks = <Map<String, dynamic>>[];
-    final textResult = fullText.toString();
     if (textResult.isNotEmpty) {
       contentBlocks.add({'type': 'text', 'text': textResult});
     }
@@ -719,6 +766,7 @@ class TextAgentService {
     _pendingToolUseIds.clear();
     _responding = false;
     _pendingRespond = false;
+    _cancelRequested = false;
   }
 
   void dispose() {
