@@ -405,6 +405,9 @@ class AgentService extends ChangeNotifier {
   final List<TranscriptionEvent> _pendingTranscripts = [];
   Timer? _postSpeakFlushTimer;
   Timer? _playbackEndDebounce;
+  Timer? _ttsGenEndTimer;
+  Timer? _playbackSafetyTimer;
+  Timer? _vadInterruptDebounce;
   bool _ttsGenerationComplete = false;
 
   final List<String> _recentAgentTexts = [];
