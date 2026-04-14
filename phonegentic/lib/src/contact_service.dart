@@ -12,6 +12,8 @@ class ContactService extends ChangeNotifier {
   bool _isImporting = false;
   String _searchQuery = '';
   String? _importError;
+  bool _autoFocusName = false;
+  String? _multipleMatchMessage;
 
   /// Cached phone->contact lookup (normalized phone -> contact map).
   final Map<String, Map<String, dynamic>> _phoneCache = {};
@@ -24,6 +26,8 @@ class ContactService extends ChangeNotifier {
   bool get isImporting => _isImporting;
   String get searchQuery => _searchQuery;
   String? get importError => _importError;
+  bool get autoFocusName => _autoFocusName;
+  String? get multipleMatchMessage => _multipleMatchMessage;
 
   ContactService() {
     loadAll();
@@ -58,6 +62,17 @@ class ContactService extends ChangeNotifier {
     final normalized = CallHistoryDb.normalizePhone(phoneNumber);
     if (normalized.isEmpty) return null;
     return _phoneCache[normalized];
+  }
+
+  /// Returns every contact whose normalized phone matches [phoneNumber].
+  List<Map<String, dynamic>> lookupAllByPhone(String phoneNumber) {
+    final normalized = CallHistoryDb.normalizePhone(phoneNumber);
+    if (normalized.isEmpty) return [];
+    return _contacts.where((c) {
+      final phone = c['phone_number'] as String? ?? '';
+      return phone.isNotEmpty &&
+          CallHistoryDb.normalizePhone(phone) == normalized;
+    }).toList();
   }
 
   Future<void> search(String query) async {
@@ -139,7 +154,57 @@ class ContactService extends ChangeNotifier {
 
   void selectContact(Map<String, dynamic>? contact) {
     _selectedContact = contact;
+    _autoFocusName = false;
+    _multipleMatchMessage = null;
     notifyListeners();
+  }
+
+  /// Opens the contact panel for a phone number.
+  /// - No matches: creates a new contact with the phone pre-filled, focuses
+  ///   the name field so the user can type a display name and save.
+  /// - One match: navigates straight to that contact's detail card.
+  /// - Multiple matches: selects the first match and shows a warning banner.
+  Future<void> openContactForPhone(String phoneNumber) async {
+    debugPrint('[ContactService] openContactForPhone($phoneNumber)');
+    _multipleMatchMessage = null;
+    _autoFocusName = false;
+
+    final matches = lookupAllByPhone(phoneNumber);
+    debugPrint('[ContactService] matches=${matches.length} names=${matches.map((m) => m['display_name']).toList()}');
+
+    if (matches.isEmpty) {
+      final id = await CallHistoryDb.insertContact(
+        displayName: phoneNumber,
+        phoneNumber: phoneNumber,
+      );
+      await loadAll();
+      _selectedContact = _contacts.firstWhere(
+        (c) => c['id'] == id,
+        orElse: () => {
+          'id': id,
+          'display_name': phoneNumber,
+          'phone_number': phoneNumber,
+        },
+      );
+      _autoFocusName = true;
+    } else if (matches.length == 1) {
+      _selectedContact = matches.first;
+      final name = (matches.first['display_name'] as String? ?? '').trim();
+      _autoFocusName = name.isEmpty || _looksLikePhone(name);
+    } else {
+      _multipleMatchMessage =
+          '${matches.length} contacts share this number';
+      _selectedContact = matches.first;
+      final name = (matches.first['display_name'] as String? ?? '').trim();
+      _autoFocusName = name.isEmpty || _looksLikePhone(name);
+    }
+
+    _isOpen = true;
+    notifyListeners();
+  }
+
+  void consumeAutoFocusName() {
+    _autoFocusName = false;
   }
 
   void openContacts() {
@@ -150,6 +215,8 @@ class ContactService extends ChangeNotifier {
   void closeContacts() {
     _isOpen = false;
     _selectedContact = null;
+    _autoFocusName = false;
+    _multipleMatchMessage = null;
     notifyListeners();
   }
 

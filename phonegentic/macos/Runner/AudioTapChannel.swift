@@ -131,10 +131,23 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "stopAudioPlayback":
             stopPlayback()
             result(nil)
+        case "clearTTSQueue":
+            WebRTCAudioProcessor.shared.clearTTSBuffers()
+            callModePlaybackTimer?.invalidate()
+            callModePlaybackTimer = nil
+            lastCallModeTTSTime = 0
+            NSLog("[AudioTap] clearTTSQueue — buffers flushed, playback timer cancelled")
+            methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+            result(nil)
         case "setMicMute":
             let muted = (call.arguments as? [String: Any])?["muted"] as? Bool ?? false
             WebRTCAudioProcessor.shared.micMuted = muted
             NSLog("[AudioTap] setMicMute=%@", muted ? "YES" : "NO")
+            result(nil)
+        case "setRemoteGain":
+            let gain = (call.arguments as? [String: Any])?["gain"] as? Double ?? 1.0
+            WebRTCAudioProcessor.shared.remoteGain = Float(gain)
+            NSLog("[AudioTap] setRemoteGain=%.2f", gain)
             result(nil)
         case "getDominantSpeaker":
             let info = SpeakerIdentifier.shared.speakerInfo(dominantSource: dominantSpeaker)
@@ -327,6 +340,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         outputSuppressedUntil = 0
         playbackEndTimer?.invalidate()
         callModePlaybackTimer?.invalidate()
+        callModePlaybackTimer = nil
         dominantHistory.removeAll()
         dominantSpeaker = "unknown"
 
@@ -366,6 +380,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         outputSuppressedUntil = 0
         playbackEndTimer?.invalidate()
         callModePlaybackTimer?.invalidate()
+        callModePlaybackTimer = nil
         dominantHistory.removeAll()
         dominantSpeaker = "unknown"
 
@@ -458,12 +473,22 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             // can strip mic audio from the event sink during TTS playback.
             WebRTCAudioProcessor.shared.feedTTS(pcm16Data: data)
             lastCallModeTTSTime = Date().timeIntervalSince1970
-            
-            callModePlaybackTimer?.invalidate()
-            callModePlaybackTimer = Timer.scheduledTimer(
-                withTimeInterval: AudioTapChannel.callModeTTSSuppression, repeats: false
-            ) { [weak self] _ in
-                self?.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+
+            // Poll ring buffer depth instead of a fixed timeout — large
+            // responses can queue 20+ seconds of audio that outlives a 2s timer.
+            if callModePlaybackTimer == nil {
+                callModePlaybackTimer = Timer.scheduledTimer(
+                    withTimeInterval: 0.25, repeats: true
+                ) { [weak self] timer in
+                    guard let self = self else { timer.invalidate(); return }
+                    let ringEmpty = WebRTCAudioProcessor.shared.ttsRenderRing.availableToRead == 0
+                    let suppressionElapsed = Date().timeIntervalSince1970 - self.lastCallModeTTSTime >= AudioTapChannel.callModeTTSSuppression
+                    if ringEmpty && suppressionElapsed {
+                        timer.invalidate()
+                        self.callModePlaybackTimer = nil
+                        self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
+                    }
+                }
             }
         } else {
             // In direct mode TTS plays through speakers. Block mic audio
@@ -522,16 +547,17 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func schedulePlaybackEnd() {
         playbackEndTimer?.invalidate()
         playbackEndTimer = Timer.scheduledTimer(
-            withTimeInterval: 0.35, repeats: false
+            withTimeInterval: 0.10, repeats: false
         ) { [weak self] _ in
             guard let self = self else { return }
             self.bufferLock.lock()
             self.inputBuffer.removeAll(keepingCapacity: true)
             self.bufferLock.unlock()
             
-            // In direct mode TTS plays through speakers and the mic picks up the echo 
-            // — allow a 1.0s window for room reverberation to settle.
-            let suppressionSeconds: TimeInterval = 1.0
+            // Brief suppression for speaker-to-mic reverb tail.
+            // Native echo stripping in call mode is independent (callModeTTSSuppression).
+            // Server-side VAD (threshold 0.5) won't trigger on faint reverb.
+            let suppressionSeconds: TimeInterval = 0.20
             self.outputSuppressedUntil = Date().timeIntervalSince1970 + suppressionSeconds
             self.isPlayingResponse = false
             self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)

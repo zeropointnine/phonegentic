@@ -10,6 +10,7 @@ import '../demo_mode_service.dart';
 import '../messaging/messaging_service.dart';
 import '../messaging/models/sms_message.dart';
 import '../theme_provider.dart';
+import 'dialpad_contact_preview.dart';
 import 'emoji_picker.dart';
 
 class ConversationView extends StatefulWidget {
@@ -100,7 +101,7 @@ class _ConversationViewState extends State<ConversationView> {
                     children: [
                       messages.isEmpty
                           ? _buildEmptyThread()
-                          : _buildMessageList(messages),
+                          : _buildMessageList(messages, convo),
                       if (_isDragging)
                         Container(
                           color: AppColors.bg.withValues(alpha: 0.85),
@@ -165,24 +166,9 @@ class _ConversationViewState extends State<ConversationView> {
             ),
           ),
           const SizedBox(width: 10),
-          // Avatar
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.accent.withValues(alpha: 0.12),
-            ),
-            child: Center(
-              child: Text(
-                convo?.initials ?? '#',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.accent,
-                ),
-              ),
-            ),
+          ContactIdenticon(
+            seed: convo?.contactName ?? rawPhone,
+            size: 34,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -234,7 +220,7 @@ class _ConversationViewState extends State<ConversationView> {
     );
   }
 
-  Widget _buildMessageList(List<SmsMessage> messages) {
+  Widget _buildMessageList(List<SmsMessage> messages, dynamic convo) {
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
@@ -250,12 +236,20 @@ class _ConversationViewState extends State<ConversationView> {
             if (showDate) _buildDateSeparator(msg.createdAt),
             _MessageBubble(
               message: msg,
+              contactSeed: convo?.contactName as String? ??
+                  convo?.remotePhone as String? ??
+                  '?',
               showTail: msgIdx == messages.length - 1 ||
                   messages[msgIdx + 1].direction != msg.direction,
               onDelete: msg.localId != null
                   ? () => context
                       .read<MessagingService>()
                       .deleteMessage(msg.localId!)
+                  : null,
+              onResend: msg.status == SmsStatus.failed
+                  ? () => context
+                      .read<MessagingService>()
+                      .resendMessage(msg)
                   : null,
             ),
           ],
@@ -539,13 +533,17 @@ class _ConversationViewState extends State<ConversationView> {
 
 class _MessageBubble extends StatelessWidget {
   final SmsMessage message;
+  final String contactSeed;
   final bool showTail;
   final VoidCallback? onDelete;
+  final VoidCallback? onResend;
 
   const _MessageBubble({
     required this.message,
+    required this.contactSeed,
     this.showTail = false,
     this.onDelete,
+    this.onResend,
   });
 
   bool get _isOutbound => message.direction == SmsDirection.outbound;
@@ -566,100 +564,210 @@ class _MessageBubble extends StatelessWidget {
       bottomRight: Radius.circular(!_isOutbound || !showTail ? 18 : 4),
     );
 
-    return Align(
-      alignment: _isOutbound ? Alignment.centerRight : Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Column(
-          crossAxisAlignment: align,
-          children: [
-          if (message.mediaUrls.isNotEmpty)
-            Padding(
-              padding: EdgeInsets.only(
-                left: _isOutbound ? 60 : 0,
-                right: _isOutbound ? 0 : 60,
-                bottom: 4,
-              ),
-              child: Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                alignment:
-                    _isOutbound ? WrapAlignment.end : WrapAlignment.start,
-                children: message.mediaUrls
-                    .map((url) => ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.network(
-                            url,
+    const double avatarSize = 26;
+    const double avatarGap = 6;
+    const double avatarSlot = avatarSize + avatarGap;
+
+    Widget bubbleContent = Column(
+      crossAxisAlignment: align,
+      children: [
+        if (message.mediaUrls.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(
+              left: _isOutbound ? 60 : 0,
+              right: _isOutbound ? 0 : 60,
+              bottom: 4,
+            ),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              alignment:
+                  _isOutbound ? WrapAlignment.end : WrapAlignment.start,
+              children: message.mediaUrls
+                  .map((url) => ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          url,
+                          width: 180,
+                          height: 180,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
                             width: 180,
-                            height: 180,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              width: 180,
-                              height: 60,
-                              decoration: BoxDecoration(
-                                color: AppColors.card,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Center(
-                                child: Icon(Icons.broken_image_rounded,
-                                    size: 24, color: AppColors.textTertiary),
-                              ),
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: AppColors.card,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Center(
+                              child: Icon(Icons.broken_image_rounded,
+                                  size: 24, color: AppColors.textTertiary),
                             ),
                           ),
-                        ))
-                    .toList(),
+                        ),
+                      ))
+                  .toList(),
+            ),
+          ),
+
+        if (message.text.isNotEmpty)
+          GestureDetector(
+            onLongPress: () => _showContextMenu(context),
+            child: Container(
+              constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.65),
+              margin: EdgeInsets.only(
+                right: _isOutbound ? 0 : 60,
+              ),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: bubbleColor,
+                borderRadius: borderRadius,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Text(
+                message.text,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: textColor,
+                  height: 1.35,
+                ),
               ),
             ),
+          ),
 
-          if (message.text.isNotEmpty)
-            GestureDetector(
-              onLongPress: () => _showContextMenu(context),
-              child: Container(
-                constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.65),
-                margin: EdgeInsets.only(
-                  left: _isOutbound ? 60 : 0,
-                  right: _isOutbound ? 0 : 60,
+        if (_isOutbound && showTail)
+          message.status == SmsStatus.failed
+              ? _buildFailedStatus()
+              : Padding(
+                  padding: const EdgeInsets.only(top: 3, right: 4),
+                  child: Text(
+                    _statusLabel,
+                    style: TextStyle(
+                        fontSize: 10, color: AppColors.textTertiary),
+                  ),
                 ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: bubbleColor,
-                  borderRadius: borderRadius,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 4,
-                      offset: const Offset(0, 1),
+      ],
+    );
+
+    if (_isOutbound) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: EdgeInsets.only(top: 3, bottom: 3, left: avatarSlot),
+          child: bubbleContent,
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (showTail)
+            ContactIdenticon(seed: contactSeed, size: avatarSize)
+          else
+            SizedBox(width: avatarSize),
+          const SizedBox(width: avatarGap),
+          Expanded(child: bubbleContent),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFailedStatus() {
+    final bool hasError =
+        message.errorReason != null && message.errorReason!.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 3, right: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (hasError)
+            Tooltip(
+              message: message.errorReason!,
+              preferBelow: false,
+              triggerMode: TooltipTriggerMode.tap,
+              showDuration: const Duration(seconds: 6),
+              textStyle: const TextStyle(fontSize: 13, color: Colors.white),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.25),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: HoverButton(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.error_outline_rounded,
+                        size: 13, color: AppColors.red),
+                    const SizedBox(width: 3),
+                    Text(
+                      'Failed',
+                      style: TextStyle(fontSize: 10, color: AppColors.red),
                     ),
                   ],
                 ),
+              ),
+            )
+          else ...<Widget>[
+            Icon(Icons.error_outline_rounded, size: 13, color: AppColors.red),
+            const SizedBox(width: 3),
+            Text(
+              'Failed',
+              style: TextStyle(fontSize: 10, color: AppColors.red),
+            ),
+          ],
+          if (onResend != null) ...<Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              child: Text(
+                '\u00B7',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.textTertiary,
+                ),
+              ),
+            ),
+            HoverButton(
+              onTap: onResend,
+              borderRadius: BorderRadius.circular(4),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AppColors.green.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
                 child: Text(
-                  message.text,
+                  'Resend',
                   style: TextStyle(
-                    fontSize: 14,
-                    color: textColor,
-                    height: 1.35,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.green,
                   ),
                 ),
               ),
             ),
-
-          if (_isOutbound && showTail)
-            Padding(
-              padding: const EdgeInsets.only(top: 3, right: 4),
-              child: Text(
-                _statusLabel,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: message.status == SmsStatus.failed
-                      ? AppColors.red
-                      : AppColors.textTertiary,
-                ),
-              ),
-            ),
+          ],
         ],
-        ),
       ),
     );
   }
@@ -670,11 +778,6 @@ class _MessageBubble extends StatelessWidget {
         return 'Delivered';
       case SmsStatus.sent:
         return 'Sent';
-      case SmsStatus.failed:
-        if (message.errorReason != null && message.errorReason!.isNotEmpty) {
-          return 'Failed: ${message.errorReason}';
-        }
-        return 'Failed';
       case SmsStatus.queued:
         return 'Sending...';
       default:

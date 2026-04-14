@@ -218,6 +218,18 @@ class AgentConfigService {
     return stored;
   }
 
+  static const _validClaudeModels = {
+    'claude-sonnet-4-20250514',
+    'claude-haiku-4-5-20251001',
+  };
+
+  static String _migrateClaudeModel(String? stored) {
+    if (stored == null || !_validClaudeModels.contains(stored)) {
+      return 'claude-sonnet-4-20250514';
+    }
+    return stored;
+  }
+
   static String _migrateVoice(String? stored) {
     if (stored == null || !validVoices.contains(stored)) {
       return 'coral';
@@ -260,8 +272,8 @@ class AgentConfigService {
       claudeApiKey: prefs.getString('${_prefix}text_claude_key') ?? '',
       openaiModel:
           prefs.getString('${_prefix}text_openai_model') ?? 'gpt-4o',
-      claudeModel: prefs.getString('${_prefix}text_claude_model') ??
-          'claude-sonnet-4-20250514',
+      claudeModel: _migrateClaudeModel(
+          prefs.getString('${_prefix}text_claude_model')),
       systemPrompt: prefs.getString('${_prefix}text_system_prompt') ?? '',
     );
   }

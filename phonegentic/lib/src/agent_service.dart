@@ -25,6 +25,7 @@ import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
 import 'elevenlabs_api_service.dart';
+import 'ivr_detector.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
@@ -201,6 +202,7 @@ class AgentService extends ChangeNotifier {
 
   StreamSubscription<double>? _levelSub;
   StreamSubscription<bool>? _speakingSub;
+  StreamSubscription<bool>? _vadSub;
   StreamSubscription<AudioResponseEvent>? _audioSub;
   StreamSubscription<TranscriptionEvent>? _transcriptSub;
   StreamSubscription<ResponseTextEvent>? _responseTextSub;
@@ -216,6 +218,7 @@ class AgentService extends ChangeNotifier {
   KokoroTtsService? _kokoroTts;
   TtsConfig? _ttsConfig;
   bool _ttsMuted = false;
+  bool _ttsInterrupted = false;
   StreamSubscription<Uint8List>? _ttsAudioSub;
   StreamSubscription<bool>? _ttsSpeakingSub;
 
@@ -412,15 +415,45 @@ class AgentService extends ChangeNotifier {
   Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
   final List<TranscriptionEvent> _settleTranscripts = [];
+  final List<String> _settleAccumulatedTexts = [];
   static const _settleWindowMs = 4000;
+  static const _settleWindowOutboundMs = 2000;
   static const _settleExtendMs = 8000;
   static const _maxSettleMs = 20000;
   DateTime? _settleStartTime;
 
+  // Pre-greeting: on outbound calls, fire the greeting prompt during
+  // settling so LLM + TTS latency is absorbed by the settle window.
+  bool _preGreetInFlight = false;
+  StringBuffer? _preGreetTextBuffer;
+  String? _preGreetFinalText;
+  bool _preGreetReady = false;
+
+  /// Grace window after flushing the pre-greeting. Transcripts that arrive
+  /// within this window are added as system context (not addTranscript) so
+  /// the LLM doesn't generate a duplicate greeting in response to the
+  /// remote party's initial "Hello?".
+  DateTime? _preGreetGraceUntil;
+
+  // Beep-watch: after IVR detected and speech stops, wait for a beep.
+  Timer? _beepWatchTimer;
+  static const _beepWatchTimeoutMs = 3000;
+  static const _beepWatchSilenceMs = 1500;
+  Timer? _beepWatchSilenceTimer;
+  bool _inBeepWatchMode = false;
+
+  // Cadence tracking: monitor speech patterns during settling to detect
+  // automated greetings vs. human responses.
+  Timer? _cadenceTimer;
+  DateTime? _vadSpeechStartTime;
+  int _cumulativeSpeechMs = 0;
+  int _settleWordCount = 0;
+  static const _cadenceCheckIntervalMs = 500;
+
   // Deferred greeting: nudge the agent to begin if the line stays quiet
   // after transitioning to connected.
   Timer? _connectedGreetTimer;
-  static const _connectedGreetDelayMs = 1500;
+  static const _connectedGreetDelayMs = 500;
 
   bool get active => _active;
   bool get muted => _muted;
@@ -428,11 +461,50 @@ class AgentService extends ChangeNotifier {
   bool get whisperMode => _splitPipeline ? _ttsMuted : _whisperMode;
   bool get canToggleWhisper => true;
 
-  /// True when TTS is active and unmuted — used by the UI to slow down the
-  /// typewriter reveal so text matches speech pace.
-  bool get ttsActiveForUi => _splitPipeline && _hasTts && !_ttsMuted && !_muted;
+  /// True when TTS is actively playing — used by the UI to slow the typewriter
+  /// reveal so text matches speech pace. Goes false on interrupt so the widget
+  /// can snap any unrevealed text immediately.
+  bool get ttsActiveForUi =>
+      _splitPipeline &&
+      _hasTts &&
+      !_ttsMuted &&
+      !_muted &&
+      (_speaking || _whisper.isTtsPlaying);
   String get statusText => _statusText;
   List<double> get levels => _levels.toList();
+
+  /// Last pipeline error (Claude / TTS / Whisper). Null when healthy.
+  String? _pipelineError;
+  String? get pipelineError => _pipelineError;
+  void clearPipelineError() {
+    _pipelineError = null;
+    notifyListeners();
+  }
+
+  /// Extract a human-readable summary from a raw error string.
+  static String _formatPipelineError(String raw) {
+    // Claude credit / billing errors
+    if (raw.contains('credit balance is too low')) {
+      return 'Claude API: credit balance too low';
+    }
+    // Claude auth
+    if (raw.contains('401') || raw.contains('authentication_error')) {
+      return 'Claude API: invalid API key';
+    }
+    // Claude model not found
+    if (raw.contains('not_found_error') || raw.contains('model_not_found')) {
+      return 'Claude API: model not found';
+    }
+    // Claude rate limit
+    if (raw.contains('rate_limit') || raw.contains('429')) {
+      return 'Claude API: rate limited';
+    }
+    // Generic – trim to something readable
+    final match = RegExp(r'"message"\s*:\s*"([^"]+)"').firstMatch(raw);
+    if (match != null) return match.group(1)!;
+    if (raw.length > 120) return '${raw.substring(0, 117)}...';
+    return raw;
+  }
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
@@ -643,6 +715,9 @@ class AgentService extends ChangeNotifier {
         // In split pipeline mode, ignore OpenAI's speaking state — we're
         // throwing away its audio. ElevenLabs controls _speaking instead.
         if (_splitPipeline) return;
+        if (isSpeaking) {
+          _ttsGenEndTimer?.cancel();
+        }
         _speaking = isSpeaking;
         _statusText = isSpeaking
             ? 'Speaking'
@@ -650,6 +725,7 @@ class AgentService extends ChangeNotifier {
         if (!isSpeaking) {
           _speakingEndTime = DateTime.now();
           _schedulePostSpeakFlush();
+          _onTtsGenerationDone();
         }
         notifyListeners();
       });
@@ -671,6 +747,7 @@ class AgentService extends ChangeNotifier {
       _transcriptSub = _whisper.transcriptions.listen(_onTranscript);
       _responseTextSub = _whisper.responseTexts.listen(_onResponseText);
       _functionCallSub = _whisper.functionCalls.listen(_onFunctionCall);
+      _vadSub = _whisper.vadEvents.listen(_onVadEvent);
 
       _initTextAgent();
       _applyIntegrationTools();
@@ -685,6 +762,7 @@ class AgentService extends ChangeNotifier {
     } catch (e) {
       _statusText = 'Error';
       _active = false;
+      _pipelineError = _formatPipelineError('$e');
       _messages.add(ChatMessage.system('Error: $e'));
       debugPrint('[AgentService] Init failed: $e');
       notifyListeners();
@@ -756,7 +834,7 @@ class AgentService extends ChangeNotifier {
 
     int elChunkCount = 0;
     _ttsAudioSub = _tts!.audioChunks.listen((pcm) {
-      if (_ttsMuted) return;
+      if (_ttsMuted || _ttsInterrupted) return;
       _releaseVoiceUiIfWaitingForTts(pcm);
       _pushTtsAudioLevel(pcm);
       elChunkCount++;
@@ -768,15 +846,15 @@ class AgentService extends ChangeNotifier {
     });
 
     _ttsSpeakingSub = _tts!.speakingState.listen((speaking) {
-      // Only set _speaking = true here; playback outlasts generation, so
-      // _speaking = false is deferred to onPlaybackComplete to keep the
-      // echo guard active until audio actually stops.
       if (speaking) {
+        _ttsGenEndTimer?.cancel();
         _speaking = true;
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
         }
+      } else {
+        _onTtsGenerationDone();
       }
     });
 
@@ -804,7 +882,7 @@ class AgentService extends ChangeNotifier {
 
     int chunkCount = 0;
     _ttsAudioSub = kokoro.audioChunks.listen((pcm) {
-      if (_ttsMuted) return;
+      if (_ttsMuted || _ttsInterrupted) return;
       _releaseVoiceUiIfWaitingForTts(pcm);
       _pushTtsAudioLevel(pcm);
       chunkCount++;
@@ -842,6 +920,7 @@ class AgentService extends ChangeNotifier {
   bool get _hasTts => _tts != null || _kokoroTts != null;
 
   void _activeTtsStartGeneration() {
+    _ttsInterrupted = false;
     _tts?.startGeneration();
     _kokoroTts?.startGeneration();
   }
@@ -1599,6 +1678,37 @@ class AgentService extends ChangeNotifier {
     return false;
   }
 
+  /// TTS generation finished — all audio chunks have been emitted to native.
+  /// Transition UI to "Listening" quickly, but keep isTtsPlaying gated until
+  /// native confirms playback is done (onPlaybackComplete).  This gives a
+  /// responsive UI without letting Whisper hear the still-playing TTS audio.
+  void _onTtsGenerationDone() {
+    _ttsGenEndTimer?.cancel();
+    _ttsGenEndTimer = Timer(const Duration(milliseconds: 200), () {
+      if (_speaking) {
+        _speaking = false;
+        _speakingEndTime = DateTime.now();
+        _statusText = _muted ? 'Not Listening...' : 'Listening';
+        notifyListeners();
+        _schedulePostSpeakFlush();
+      }
+      debugPrint('[AgentService] Gen-done UI transition (isTtsPlaying still gated)');
+
+      // Safety: if native never sends onPlaybackComplete (e.g. no audio was
+      // queued, or direct-mode with no tap channel), force-clear after a
+      // generous timeout. The native ring-buffer-aware polling timer should
+      // fire first for normal operation — this is a last resort. Ring buffers
+      // hold up to 30s of audio, so 45s covers worst case.
+      _playbackSafetyTimer?.cancel();
+      _playbackSafetyTimer = Timer(const Duration(seconds: 45), () {
+        if (_whisper.isTtsPlaying) {
+          _whisper.isTtsPlaying = false;
+          debugPrint('[AgentService] Safety timeout: forced isTtsPlaying=false');
+        }
+      });
+    });
+  }
+
   /// Schedule a flush of buffered transcripts after the echo guard window.
   void _schedulePostSpeakFlush() {
     _postSpeakFlushTimer?.cancel();
@@ -1633,6 +1743,141 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  /// Handle VAD speech-start/stop events for fast barge-in detection.
+  /// When the remote party starts speaking while the agent is playing audio,
+  /// we immediately stop the agent without waiting for a full transcript.
+  /// A short debounce (300ms) avoids false triggers from brief noise.
+  void _onVadEvent(bool speechStarted) {
+    if (!speechStarted) {
+      _vadInterruptDebounce?.cancel();
+      _vadInterruptDebounce = null;
+      return;
+    }
+
+    // Only trigger during active agent audio playback.
+    if (!_speaking && !_whisper.isTtsPlaying) return;
+
+    // Don't re-trigger if we already interrupted.
+    if (_ttsInterrupted) return;
+
+    // Skip during settling — VAD activity is normal there.
+    if (_callPhase == CallPhase.settling) return;
+
+    _vadInterruptDebounce?.cancel();
+    _vadInterruptDebounce = Timer(const Duration(milliseconds: 300), () {
+      // Re-check conditions after debounce.
+      if (!_speaking && !_whisper.isTtsPlaying) return;
+      if (_ttsInterrupted) return;
+      _vadInterruptStop();
+    });
+  }
+
+  /// Fast barge-in: stop the agent immediately without a transcript.
+  /// The transcript will arrive later and be processed normally.
+  void _vadInterruptStop() {
+    debugPrint('[AgentService] VAD barge-in: stopping agent audio');
+
+    _ttsInterrupted = true;
+    _textAgent?.cancelCurrentResponse();
+    _activeTtsEndGeneration();
+
+    _whisper.stopResponseAudio();
+    _whisper.clearTTSQueue();
+    _whisper.isTtsPlaying = false;
+
+    _ttsGenEndTimer?.cancel();
+    _playbackEndDebounce?.cancel();
+    _playbackSafetyTimer?.cancel();
+    _postSpeakFlushTimer?.cancel();
+    _vadInterruptDebounce?.cancel();
+
+    _speaking = false;
+    _speakingEndTime = DateTime.now();
+    _statusText = _muted ? 'Not Listening...' : 'Listening';
+
+    if (_streamingMessageId != null) {
+      final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+      if (idx >= 0) {
+        if (_voiceHoldUntilFirstPcm && _voiceUiBuffer != null) {
+          _messages[idx].text = _voiceUiBuffer.toString();
+        }
+        _messages[idx].isStreaming = false;
+      }
+      _resetVoiceUiSyncState();
+      _streamingMessageId = null;
+    }
+
+    // The transcript for the interrupting speech hasn't arrived yet — it will
+    // come through _onTranscript after Whisper finishes processing. Schedule
+    // a post-speak flush so any transcript buffered during the echo guard
+    // gets processed.
+    _schedulePostSpeakFlush();
+    notifyListeners();
+  }
+
+  /// Barge-in: stop the agent mid-speech and respond to the interrupting
+  /// transcript. Cancels the in-flight LLM response, ends TTS generation,
+  /// clears queued audio, finalizes the interrupted UI message, flushes any
+  /// buffered transcripts, and processes the interrupting event.
+  void _interruptAgent(TranscriptionEvent event) {
+    debugPrint('[AgentService] Barge-in interrupt: "${event.text.trim()}"');
+
+    // 0. Gate the audio listener so in-flight TTS chunks are dropped.
+    _ttsInterrupted = true;
+
+    // 1. Cancel in-flight LLM response (emits partial final event).
+    _textAgent?.cancelCurrentResponse();
+
+    // 2. Stop TTS generation — no more text→audio conversion.
+    _activeTtsEndGeneration();
+
+    // 3. Stop native audio playback and clear call-mode TTS ring buffers.
+    _whisper.stopResponseAudio();
+    _whisper.clearTTSQueue();
+    _whisper.isTtsPlaying = false;
+
+    // 4. Cancel all post-speak / playback timers.
+    _ttsGenEndTimer?.cancel();
+    _playbackEndDebounce?.cancel();
+    _playbackSafetyTimer?.cancel();
+    _postSpeakFlushTimer?.cancel();
+    _vadInterruptDebounce?.cancel();
+
+    // 5. Transition from speaking → listening immediately.
+    _speaking = false;
+    _speakingEndTime = DateTime.now();
+    _statusText = _muted ? 'Not Listening...' : 'Listening';
+
+    // 6. Finalize the interrupted UI message.
+    if (_streamingMessageId != null) {
+      final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+      if (idx >= 0) {
+        if (_voiceHoldUntilFirstPcm && _voiceUiBuffer != null) {
+          _messages[idx].text = _voiceUiBuffer.toString();
+        }
+        _messages[idx].isStreaming = false;
+      }
+      _resetVoiceUiSyncState();
+      _streamingMessageId = null;
+    }
+
+    // 7. Flush any previously buffered transcripts (skip echo guard).
+    if (_pendingTranscripts.isNotEmpty) {
+      final batch = List<TranscriptionEvent>.from(_pendingTranscripts);
+      _pendingTranscripts.clear();
+      for (final buffered in batch) {
+        final text = buffered.text.trim();
+        if (text.isEmpty) continue;
+        if (_isEchoOfAgentResponse(text)) continue;
+        _processTranscript(buffered);
+      }
+    }
+
+    // 8. Process the interrupting transcript.
+    _processTranscript(event);
+    notifyListeners();
+  }
+
   void _onTranscript(TranscriptionEvent event) async {
     if (!event.isFinal || event.text.trim().isEmpty) return;
 
@@ -1643,39 +1888,85 @@ class AgentService extends ChangeNotifier {
       if (!(_splitPipeline && _callPhase == CallPhase.idle)) return;
     }
 
-    // During settling, check for IVR patterns. If detected, extend the
-    // settle window. If clean human speech arrives instead, promote to
-    // connected — but DON'T forward the transcript to the LLM yet.
-    // Buffer it so the VAD-aware connected greeting can forward it once
-    // the remote party stops speaking, preventing the agent from talking
-    // over them.
+    // During settling, classify each transcript to decide whether this is a
+    // human answering or an automated IVR/voicemail greeting. Buffer all
+    // transcripts — they are forwarded after promotion to connected.
     if (_callPhase.isSettling) {
-      final text = event.text.trim();
-      if (IvrDetector.isIvr(text)) {
+      final String text = event.text.trim();
+      _settleTranscripts.add(event);
+      _settleAccumulatedTexts.add(text);
+      _settleWordCount += text.split(RegExp(r'\s+')).where((String w) => w.isNotEmpty).length;
+
+      final IvrConfidence c = IvrDetector.confidence(text);
+      debugPrint(
+          '[AgentService] Settle transcript: "$text" → $c');
+
+      if (c.mailboxFull) {
+        debugPrint(
+            '[AgentService] Mailbox full detected — notifying host');
+        _ivrHeard = true;
+        _ivrHitsInSettle++;
+        _handleMailboxFull(text);
+        return;
+      }
+
+      if (c.type == CallPartyType.ivr) {
         _ivrHitsInSettle++;
         _ivrHeard = true;
         _extendSettleTimer();
-        debugPrint(
-            '[AgentService] IVR detected during settle: "$text" (hits=$_ivrHitsInSettle)');
+        if (c.ivrEnding) {
+          debugPrint(
+              '[AgentService] IVR ending phrase detected — entering beep watch');
+          _enterBeepWatchMode();
+        }
         return;
       }
-      _settleTranscripts.add(event);
-      if (text.length >= 3 && _ivrHitsInSettle == 0) {
-        debugPrint(
-            '[AgentService] Human speech during settle: "$text" — promoting (transcript buffered)');
-        _promoteToConnected();
+
+      if (c.type == CallPartyType.human && c.score >= 0.7) {
+        if (_ivrHitsInSettle == 0) {
+          debugPrint(
+              '[AgentService] Human speech during settle: "$text" — promoting');
+          _promoteToConnected();
+          return;
+        }
+        // IVR was heard before but now human-sounding text — could be the
+        // tail of a voicemail greeting. Check accumulated context.
+        final IvrConfidence acc =
+            IvrDetector.accumulatedConfidence(_settleAccumulatedTexts);
+        if (acc.type == CallPartyType.human) {
+          debugPrint(
+              '[AgentService] Accumulated context is human — promoting');
+          _promoteToConnected();
+          return;
+        }
       }
+
+      // Ambiguous — let more text arrive. If the initial settle timer hasn't
+      // been extended by IVR, it will fire naturally and promote.
       return;
     }
 
-    // While the agent is speaking (or within the echo guard cooldown after
-    // it stops), buffer transcripts instead of dropping them.  They will be
-    // processed once the echo guard clears via _flushPendingTranscripts().
-    // We intentionally do NOT interrupt TTS here — echo detection is not
-    // reliable enough mid-speech to distinguish the agent's own audio being
-    // transcribed back from genuine remote party speech.
-    if (_speaking) {
-      _pendingTranscripts.add(event);
+    // While the agent is speaking OR TTS audio is still draining through
+    // native ring buffers, check whether this transcript is TTS echo or
+    // genuine remote speech. The _speaking flag clears on gen-done (~200ms
+    // after TTS generation ends), but ring buffers may still have seconds of
+    // queued audio playing through the speakers.
+    if (_speaking || _whisper.isTtsPlaying) {
+      final text = event.text.trim();
+      if (_isEchoOfAgentResponse(text)) {
+        debugPrint('[AgentService] Echo during speak: "$text"');
+        return;
+      }
+      // During the pre-greeting grace window, add as context only.
+      if (_preGreetGraceUntil != null &&
+          DateTime.now().isBefore(_preGreetGraceUntil!)) {
+        _preGreetGraceUntil = null;
+        _textAgent?.addSystemContext('[Remote]: $text');
+        debugPrint(
+            '[AgentService] Pre-greet grace (during speak): "$text" as context');
+        return;
+      }
+      _interruptAgent(event);
       return;
     }
     final msSinceSpoke =
@@ -1798,6 +2089,19 @@ class AgentService extends ChangeNotifier {
     // Tag low-confidence transcripts so the agent can judge whether to respond
     final label =
         lowConfidence ? '${speaker.label} (low confidence)' : speaker.label;
+
+    // Post-pre-greeting grace: the first transcript(s) after the pre-greeting
+    // flush (typically the remote party's "Hello?") are added as context only
+    // so the LLM doesn't generate a duplicate greeting.
+    if (_preGreetGraceUntil != null &&
+        DateTime.now().isBefore(_preGreetGraceUntil!)) {
+      _preGreetGraceUntil = null;
+      _textAgent?.addSystemContext('[$label]: $text');
+      debugPrint(
+          '[AgentService] Post-pre-greet grace: added "$text" as context only');
+      return;
+    }
+
     _textAgent?.addTranscript(label, text);
   }
 
@@ -1810,9 +2114,55 @@ class AgentService extends ChangeNotifier {
   /// Realtime or the external text agent (Claude, etc.).
   void _appendStreamingResponse(ResponseTextEvent event) {
     if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) return;
+
+    // Pre-greeting: buffer the response during settling instead of the
+    // normal display/TTS path. Flushed on promotion to connected.
+    if (_preGreetInFlight) {
+      if (event.isFinal) {
+        _preGreetFinalText = event.text.isNotEmpty
+            ? event.text
+            : _preGreetTextBuffer?.toString();
+
+        // LLM error — discard and fall back to the normal greeting path.
+        if (_preGreetFinalText != null &&
+            _preGreetFinalText!.startsWith('Error:')) {
+          _pipelineError = _formatPipelineError(_preGreetFinalText!);
+          debugPrint('[AgentService] Pre-greeting error — discarding');
+          _discardPreGreeting();
+          if (_callPhase == CallPhase.connected) {
+            _connectedGreetTimer?.cancel();
+            _connectedGreetTimer = Timer(
+              const Duration(milliseconds: _connectedGreetDelayMs),
+              () => _tryFireConnectedGreeting(),
+            );
+          }
+          return;
+        }
+
+        _preGreetReady = true;
+        _preGreetInFlight = false;
+        final preview = _preGreetFinalText ?? '';
+        debugPrint('[AgentService] Pre-greeting ready: '
+            '${preview.length > 60 ? preview.substring(0, 60) : preview}...');
+        if (_callPhase == CallPhase.connected) {
+          _flushPreGreeting();
+        }
+      } else {
+        _preGreetTextBuffer ??= StringBuffer();
+        _preGreetTextBuffer!.write(event.text);
+      }
+      return;
+    }
+
     if (event.isFinal) {
       debugPrint('[AgentService] Claude response final: '
           '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
+
+      if (event.text.startsWith('Error:')) {
+        _pipelineError = _formatPipelineError(event.text);
+      } else if (_pipelineError != null) {
+        _pipelineError = null;
+      }
     }
 
     if (event.isFinal) {
@@ -3222,6 +3572,28 @@ class AgentService extends ChangeNotifier {
     );
   }
 
+  void sendFileAttachment({required String fileName, required String content}) {
+    if (content.trim().isEmpty) return;
+
+    _messages.add(ChatMessage.attachment(
+      'Attached file: $fileName',
+      fileName: fileName,
+    ));
+    notifyListeners();
+
+    final contextMsg = '[ATTACHED FILE "$fileName" — read silently, do NOT read '
+        'this aloud or repeat it back. Understand the content and use it as '
+        'context for the conversation.]\n\n$content';
+
+    if (_active) {
+      if (_splitPipeline && _textAgent != null) {
+        _textAgent!.addSystemContext(contextMsg);
+      } else {
+        _whisper.sendSystemContext(contextMsg);
+      }
+    }
+  }
+
   void updateSpeakerName(String speakerRole, String name) {
     final idx = _bootContext.speakers.indexWhere((s) => s.role == speakerRole);
     if (idx >= 0) {
@@ -3290,18 +3662,30 @@ class AgentService extends ChangeNotifier {
       _voicemailPromptSent = false;
       _ivrHeard = false;
       _hasConnectedBefore = false;
+      _inBeepWatchMode = false;
+      _settleWordCount = 0;
+      _preGreetInFlight = false;
+      _preGreetTextBuffer = null;
+      _preGreetFinalText = null;
+      _preGreetReady = false;
+      _preGreetGraceUntil = null;
+      _cumulativeSpeechMs = 0;
       _clearRemotePartyName();
       _cancelSettleTimer();
+      _cancelBeepWatch();
+      _stopCadenceTracking();
       _cancelConnectedGreeting();
       _recentAgentTexts.clear();
       _pendingTranscripts.clear();
       _settleTranscripts.clear();
+      _settleAccumulatedTexts.clear();
       _postSpeakFlushTimer?.cancel();
       _playbackEndDebounce?.cancel();
       _ttsGenerationComplete = false;
       _stopTtsLevelDrain();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
+      _whisper.inCallMode = false;
       _activeTtsEndGeneration();
       _textAgent?.reset();
 
@@ -3338,6 +3722,7 @@ class AgentService extends ChangeNotifier {
     }
 
     if (phase == CallPhase.settling) {
+      _whisper.inCallMode = true;
       _startSettleTimer();
       _activeTtsWarmUp();
     } else if (_callPhase != CallPhase.settling) {
@@ -3380,10 +3765,15 @@ class AgentService extends ChangeNotifier {
     if (_active) {
       _whisper.sendSystemContext(contextText);
     }
-    // Skip text agent context when promoting to connected after the
-    // pre-greeting already fired — that context would flush into a
-    // duplicate greeting response.
-    if (!(phase == CallPhase.connected && _hasConnectedBefore)) {
+    // Skip text agent context when (a) promoting to connected after the
+    // pre-greeting already fired, or (b) during settling while a
+    // pre-greeting LLM call is in flight — that context would accumulate
+    // in _pendingContext and trigger a duplicate greeting via the
+    // _respond() finally block's _scheduleFlush().
+    final skipContext =
+        (phase == CallPhase.connected && _hasConnectedBefore) ||
+        _preGreetInFlight;
+    if (!skipContext) {
       _textAgent?.addSystemContext(contextText);
     }
 
@@ -3406,10 +3796,20 @@ class AgentService extends ChangeNotifier {
     _settleTimer?.cancel();
     _preGreetTimer?.cancel();
     _ivrHitsInSettle = 0;
+    _settleAccumulatedTexts.clear();
     _settleStartTime = DateTime.now();
-    _settleTimer = Timer(const Duration(milliseconds: _settleWindowMs), () {
+    _cancelBeepWatch();
+    _startCadenceTracking();
+    final windowMs = _isOutbound ? _settleWindowOutboundMs : _settleWindowMs;
+    _settleTimer = Timer(Duration(milliseconds: windowMs), () {
       _tryPromoteFromSettle();
     });
+
+    // Outbound split-pipeline: pre-generate the greeting during settle
+    // so LLM + TTS latency is absorbed by the settle window.
+    if (_isOutbound && _splitPipeline && _textAgent != null) {
+      _firePreGreeting();
+    }
   }
 
   /// Extend settling when IVR audio keeps arriving, up to the hard ceiling.
@@ -3432,9 +3832,12 @@ class AgentService extends ChangeNotifier {
   /// Only promote to connected if no one is currently speaking (VAD inactive).
   /// If speech is ongoing (e.g. voicemail greeting still playing), reschedule
   /// — but honour the hard ceiling so we never stay in settling forever.
+  ///
+  /// When IVR has been detected, instead of promoting immediately on silence,
+  /// enter beep-watch mode to wait for the voicemail recording tone.
   void _tryPromoteFromSettle() {
     if (_callPhase != CallPhase.settling) return;
-    final elapsed = _settleStartTime != null
+    final int elapsed = _settleStartTime != null
         ? DateTime.now().difference(_settleStartTime!).inMilliseconds
         : 0;
     if (_whisper.vadActive && elapsed < _maxSettleMs) {
@@ -3448,7 +3851,19 @@ class AgentService extends ChangeNotifier {
     if (elapsed >= _maxSettleMs) {
       debugPrint(
           '[AgentService] Settle ceiling reached in VAD loop — force-promoting');
+      _promoteToConnected();
+      return;
     }
+
+    // If we heard IVR content and speech just stopped, enter beep-watch
+    // instead of promoting immediately — the voicemail beep may be imminent.
+    if (_ivrHeard && !_inBeepWatchMode) {
+      debugPrint(
+          '[AgentService] Settle timer fired with IVR heard — entering beep watch');
+      _enterBeepWatchMode();
+      return;
+    }
+
     _promoteToConnected();
   }
 
@@ -3458,6 +3873,9 @@ class AgentService extends ChangeNotifier {
     _preGreetTimer?.cancel();
     _preGreetTimer = null;
     _ivrHitsInSettle = 0;
+    _settleAccumulatedTexts.clear();
+    _cancelBeepWatch();
+    _stopCadenceTracking();
   }
 
   void _promoteToConnected() {
@@ -3489,6 +3907,19 @@ class AgentService extends ChangeNotifier {
   void _scheduleConnectedGreeting() {
     _connectedGreetTimer?.cancel();
     _greetDeferStart = null;
+
+    // Pre-greeting already buffered — flush immediately.
+    if (_preGreetReady) {
+      _flushPreGreeting();
+      return;
+    }
+    // Pre-greeting still streaming — it will flush on arrival.
+    if (_preGreetInFlight) {
+      debugPrint(
+          '[AgentService] Pre-greeting in flight — will flush on arrival');
+      return;
+    }
+
     _connectedGreetTimer = Timer(
       const Duration(milliseconds: _connectedGreetDelayMs),
       () => _tryFireConnectedGreeting(),
@@ -3535,6 +3966,106 @@ class AgentService extends ChangeNotifier {
   void _cancelConnectedGreeting() {
     _connectedGreetTimer?.cancel();
     _connectedGreetTimer = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pre-greeting: fire LLM during settle, flush on connect
+  // ---------------------------------------------------------------------------
+
+  void _firePreGreeting() {
+    _preGreetInFlight = true;
+    _preGreetTextBuffer = StringBuffer();
+    _preGreetFinalText = null;
+    _preGreetReady = false;
+    const prompt =
+        '[SYSTEM] The call is connected and the line is quiet. '
+        'Begin the conversation per your job function instructions.';
+    _textAgent!.sendUserMessage(prompt);
+    debugPrint('[AgentService] Pre-greeting fired during settle');
+  }
+
+  /// Play the pre-generated greeting through TTS and add it to chat.
+  void _flushPreGreeting() {
+    final text = _preGreetFinalText;
+    if (text == null || text.isEmpty) {
+      _discardPreGreeting();
+      return;
+    }
+    _preGreetReady = false;
+    _preGreetFinalText = null;
+    _preGreetTextBuffer = null;
+    _cancelConnectedGreeting();
+
+    if (_ivrHeard) {
+      debugPrint('[AgentService] Pre-greeting discarded — IVR detected');
+      return;
+    }
+
+    debugPrint('[AgentService] Flushing pre-generated greeting');
+
+    _preGreetGraceUntil = DateTime.now().add(const Duration(seconds: 10));
+
+    // Insert settle-phase transcripts BEFORE the greeting so the UI
+    // reflects chronological order (remote "Hello?" → agent greeting).
+    // Added as system context (not addTranscript) to avoid triggering a
+    // duplicate LLM response.
+    if (_settleTranscripts.isNotEmpty) {
+      final speaker = remoteSpeaker;
+      for (final event in _settleTranscripts) {
+        final settleText = event.text.trim();
+        if (settleText.isEmpty) continue;
+        if (IvrDetector.isIvr(settleText)) continue;
+        _messages.add(ChatMessage.transcript(
+          ChatRole.remoteParty,
+          settleText,
+          speakerName: speaker.label,
+        ));
+        callHistory?.addTranscript(
+          role: 'remote',
+          speakerName: speaker.label,
+          text: settleText,
+        );
+        _textAgent?.addSystemContext('[${speaker.label}]: $settleText');
+      }
+      _settleTranscripts.clear();
+      debugPrint(
+          '[AgentService] Pre-greet: added settle transcripts as context');
+    }
+
+    _recentAgentTexts.add(text);
+    while (_recentAgentTexts.length > _maxRecentAgentTexts) {
+      _recentAgentTexts.removeAt(0);
+    }
+    callHistory?.addTranscript(role: 'agent', text: text);
+
+    final msg = ChatMessage.agent(text);
+    _messages.add(msg);
+    notifyListeners();
+
+    if (_hasTts && !_ttsMuted && !_muted) {
+      _ttsBracketDepth = 0;
+      _activeTtsStartGeneration();
+      final ttsText = _flattenMarkdownForTtsDelta(
+        _stripBracketsForTts(text),
+      ).trim();
+      if (ttsText.isNotEmpty) {
+        _activeTtsSendText(ttsText);
+      }
+      _activeTtsEndGeneration();
+    }
+
+    // Discard any phase-transition context (settling / connected) that
+    // accumulated in the text agent while the pre-greeting was streaming.
+    // Without this, the text agent's _respond() finally block sees non-empty
+    // _pendingContext and auto-fires another LLM call → duplicate greeting.
+    _textAgent?.clearPendingContext();
+  }
+
+  void _discardPreGreeting() {
+    _preGreetInFlight = false;
+    _preGreetTextBuffer = null;
+    _preGreetFinalText = null;
+    _preGreetReady = false;
   }
 
   /// Forward any transcripts captured during the settling phase to the LLM.
@@ -3594,6 +4125,157 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] Voicemail prompt triggered immediately');
   }
 
+  // MARK: - Beep-watch mode
+
+  /// Enter beep-watch: after IVR content is detected and speech stops, wait
+  /// up to [_beepWatchTimeoutMs] for the native Goertzel filter to detect a
+  /// recording tone. If no beep arrives, trigger the voicemail prompt anyway
+  /// (many systems don't produce a detectable beep).
+  void _enterBeepWatchMode() {
+    if (_inBeepWatchMode) return;
+    _inBeepWatchMode = true;
+    _beepWatchTimer?.cancel();
+    _beepWatchSilenceTimer?.cancel();
+
+    // If VAD is still active, wait for silence first before starting the
+    // beep timeout. Otherwise start immediately.
+    if (_whisper.vadActive) {
+      debugPrint('[AgentService] Beep-watch: waiting for silence');
+      _beepWatchSilenceTimer =
+          Timer(const Duration(milliseconds: _beepWatchSilenceMs), () {
+        if (_whisper.vadActive) {
+          // Still speaking — recheck in 500ms, up to settle ceiling.
+          final int elapsed = _settleStartTime != null
+              ? DateTime.now().difference(_settleStartTime!).inMilliseconds
+              : 0;
+          if (elapsed < _maxSettleMs) {
+            _beepWatchSilenceTimer =
+                Timer(const Duration(milliseconds: 500), () {
+              _enterBeepWatchMode();
+            });
+            _inBeepWatchMode = false;
+            return;
+          }
+        }
+        _startBeepWatchTimeout();
+      });
+    } else {
+      _startBeepWatchTimeout();
+    }
+  }
+
+  void _startBeepWatchTimeout() {
+    debugPrint('[AgentService] Beep-watch: started ${_beepWatchTimeoutMs}ms timeout');
+    _beepWatchTimer?.cancel();
+    _beepWatchTimer =
+        Timer(const Duration(milliseconds: _beepWatchTimeoutMs), () {
+      debugPrint('[AgentService] Beep-watch: timeout — no beep detected');
+      _inBeepWatchMode = false;
+      // Promote to connected so the voicemail prompt can fire.
+      if (_callPhase == CallPhase.settling) {
+        _promoteToConnected();
+      }
+      // Trigger voicemail even without a beep — many systems don't beep.
+      if (!_voicemailPromptSent && _ivrHeard) {
+        _triggerVoicemailPrompt();
+      }
+    });
+  }
+
+  void _cancelBeepWatch() {
+    _beepWatchTimer?.cancel();
+    _beepWatchTimer = null;
+    _beepWatchSilenceTimer?.cancel();
+    _beepWatchSilenceTimer = null;
+    _inBeepWatchMode = false;
+  }
+
+  // MARK: - Cadence tracking
+
+  /// Start periodic cadence checks during settling. Monitors cumulative
+  /// VAD-active time and word count to detect long automated greetings.
+  void _startCadenceTracking() {
+    _cadenceTimer?.cancel();
+    _cumulativeSpeechMs = 0;
+    _settleWordCount = 0;
+    _vadSpeechStartTime = _whisper.vadActive ? DateTime.now() : null;
+    _cadenceTimer = Timer.periodic(
+      const Duration(milliseconds: _cadenceCheckIntervalMs),
+      (_) => _cadenceTick(),
+    );
+  }
+
+  void _cadenceTick() {
+    if (_callPhase != CallPhase.settling) {
+      _stopCadenceTracking();
+      return;
+    }
+
+    // Accumulate VAD-active time.
+    if (_whisper.vadActive) {
+      _vadSpeechStartTime ??= DateTime.now();
+    } else if (_vadSpeechStartTime != null) {
+      _cumulativeSpeechMs +=
+          DateTime.now().difference(_vadSpeechStartTime!).inMilliseconds;
+      _vadSpeechStartTime = null;
+    }
+
+    final int totalSpeechMs = _cumulativeSpeechMs +
+        (_vadSpeechStartTime != null
+            ? DateTime.now().difference(_vadSpeechStartTime!).inMilliseconds
+            : 0);
+
+    // Long continuous speech (>5s) with many words and no IVR keyword hits
+    // yet — run accumulated confidence check.
+    if (totalSpeechMs > 5000 && _settleWordCount >= 15 && !_ivrHeard) {
+      final IvrConfidence acc =
+          IvrDetector.accumulatedConfidence(_settleAccumulatedTexts);
+      if (acc.type == CallPartyType.ivr) {
+        debugPrint(
+            '[AgentService] Cadence: long speech (${totalSpeechMs}ms, $_settleWordCount words) '
+            'classified as IVR by accumulated analysis');
+        _ivrHeard = true;
+        _ivrHitsInSettle++;
+        _extendSettleTimer();
+        if (acc.ivrEnding) {
+          _enterBeepWatchMode();
+        }
+      }
+    }
+  }
+
+  void _stopCadenceTracking() {
+    _cadenceTimer?.cancel();
+    _cadenceTimer = null;
+    _vadSpeechStartTime = null;
+  }
+
+  // MARK: - Mailbox full / undeliverable
+
+  /// Handle "mailbox is full" or "not in service" detections. These mean
+  /// leaving a voicemail is not possible — notify the host via a system
+  /// message instead of attempting to record.
+  void _handleMailboxFull(String transcriptText) {
+    _cancelSettleTimer();
+    _cancelBeepWatch();
+
+    if (_callPhase == CallPhase.settling) {
+      _promoteToConnected();
+    }
+    _voicemailPromptSent = true; // prevent normal voicemail prompt
+
+    const String prompt =
+        '[SYSTEM] The voicemail box is full or the number is not accepting '
+        'messages. You cannot leave a voicemail. Inform the host briefly '
+        'and do NOT attempt to record a message.';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(prompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(prompt);
+    }
+    debugPrint('[AgentService] Mailbox full — voicemail skipped');
+  }
+
   // MARK: - Native beep tone detection (Goertzel)
 
   /// Whether the beep arrived in a plausible voicemail window: during
@@ -3634,6 +4316,7 @@ class AgentService extends ChangeNotifier {
             }
           });
         } else {
+          _playbackSafetyTimer?.cancel();
           _whisper.isTtsPlaying = false;
         }
         break;
@@ -3644,6 +4327,8 @@ class AgentService extends ChangeNotifier {
           break;
         }
         _beepDetected = true;
+        // Cancel beep-watch timeout — we found the beep.
+        _beepWatchTimer?.cancel();
         debugPrint('[AgentService] Native beep tone DETECTED (IVR confirmed)');
         if (_callPhase == CallPhase.settling) {
           _promoteToConnected();
@@ -3652,8 +4337,12 @@ class AgentService extends ChangeNotifier {
       case 'onBeepEnded':
         if (!_beepDetected) break;
         debugPrint('[AgentService] Native beep tone ENDED');
+        _cancelBeepWatch();
         if (_callPhase == CallPhase.connected) {
           _cancelConnectedGreeting();
+          _triggerVoicemailPrompt();
+        } else if (_callPhase == CallPhase.settling) {
+          _promoteToConnected();
           _triggerVoicemailPrompt();
         }
         _beepDetected = false;
@@ -3695,6 +4384,8 @@ class AgentService extends ChangeNotifier {
     _ttsConfig = null;
     _levelSub?.cancel();
     _speakingSub?.cancel();
+    _vadSub?.cancel();
+    _vadInterruptDebounce?.cancel();
     _audioSub?.cancel();
     _transcriptSub?.cancel();
     _responseTextSub?.cancel();
@@ -3704,6 +4395,7 @@ class AgentService extends ChangeNotifier {
     _speaking = false;
     _muted = false;
     _ttsMuted = false;
+    _ttsInterrupted = false;
     _userMuteOverride = false;
     _callPhase = CallPhase.idle;
     _levels.clear();
@@ -3732,6 +4424,8 @@ class AgentService extends ChangeNotifier {
     _activeTtsDispose();
     _levelSub?.cancel();
     _speakingSub?.cancel();
+    _vadSub?.cancel();
+    _vadInterruptDebounce?.cancel();
     _audioSub?.cancel();
     _transcriptSub?.cancel();
     _responseTextSub?.cancel();

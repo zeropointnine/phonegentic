@@ -15,65 +15,62 @@ class DialpadContactPreview extends StatelessWidget {
   String get _rawName => contact['display_name'] as String? ?? 'Unknown';
   String get _company => contact['company'] as String? ?? '';
 
+  static bool _looksLikePhone(String s) {
+    final digits = s.replaceAll(RegExp(r'[^\d]'), '');
+    return digits.length >= 7 && RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(s);
+  }
+
   @override
   Widget build(BuildContext context) {
     final demo = context.watch<DemoModeService>();
     final displayName = demo.maskDisplayName(_rawName);
+    final nameIsPhone = _looksLikePhone(_rawName);
 
-    return Container(
-      width: 260,
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: AppColors.accent.withValues(alpha: 0.18),
-          width: 0.5,
+    final hasText = !nameIsPhone || _company.isNotEmpty;
+
+    if (!hasText) {
+      return ContactIdenticon(seed: _rawName, size: 48);
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ContactIdenticon(seed: _rawName, size: 44),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!nameIsPhone)
+                Text(
+                  displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              if (_company.isNotEmpty) ...[
+                if (!nameIsPhone) const SizedBox(height: 2),
+                Text(
+                  _company,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.accent.withValues(alpha: 0.06),
-            blurRadius: 24,
-            spreadRadius: 2,
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ContactIdenticon(seed: _rawName, size: 56),
-          const SizedBox(height: 10),
-          Text(
-            displayName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-              letterSpacing: -0.3,
-            ),
-          ),
-          if (_company.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              _company,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textTertiary,
-              ),
-            ),
-          ],
-        ],
-      ),
+      ],
     );
   }
 }

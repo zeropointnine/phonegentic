@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../contact_service.dart';
 import '../demo_mode_service.dart';
 import '../theme_provider.dart';
 import 'dialpad_contact_preview.dart';
@@ -26,21 +27,64 @@ class ContactCard extends StatefulWidget {
 class _ContactCardState extends State<ContactCard> {
   String? _editingField;
   late TextEditingController _editController;
+  final FocusNode _nameFocusNode = FocusNode();
+  bool _didAutoFocus = false;
 
   @override
   void initState() {
     super.initState();
     _editController = TextEditingController();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+  }
+
+  @override
+  void didUpdateWidget(covariant ContactCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_didAutoFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _tryAutoFocus());
+    }
+  }
+
+  void _tryAutoFocus() {
+    if (_didAutoFocus || !mounted) return;
+    final service = context.read<ContactService>();
+    if (!service.autoFocusName) return;
+    _didAutoFocus = true;
+    service.consumeAutoFocusName();
+    debugPrint('[ContactCard] autoFocus triggered, nameIsPhone=$_nameIsPhone');
+
+    setState(() {
+      _editingField = 'display_name';
+      _editController.text = _nameIsPhone ? '' : _rawDisplayName;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      debugPrint('[ContactCard] requesting focus, attached=${_nameFocusNode.context != null}');
+      FocusScope.of(context).requestFocus(_nameFocusNode);
+      if (!_nameIsPhone && _editController.text.isNotEmpty) {
+        _editController.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _editController.text.length,
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
     _editController.dispose();
+    _nameFocusNode.dispose();
     super.dispose();
   }
 
   String get _rawDisplayName =>
       widget.contact['display_name'] as String? ?? 'Unknown';
+
+  bool get _nameIsPhone {
+    final digits = _rawDisplayName.replaceAll(RegExp(r'[^\d]'), '');
+    return digits.length >= 7 &&
+        RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(_rawDisplayName);
+  }
 
   String _displayName(DemoModeService demo) =>
       demo.maskDisplayName(_rawDisplayName);
@@ -146,38 +190,45 @@ class _ContactCardState extends State<ContactCard> {
           ContactIdenticon(seed: _rawDisplayName, size: 72),
           const SizedBox(height: 12),
           // Name
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+          FractionallySizedBox(
+            widthFactor: 0.65,
             child: HoverButton(
-              onTap: () =>
-                  _startEditing('display_name', _rawDisplayName),
+              onTap: () => _startEditing(
+                  'display_name', _nameIsPhone ? '' : _rawDisplayName),
               child: _editingField == 'display_name'
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: TextField(
-                          controller: _editController,
-                          autofocus: true,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.textPrimary,
-                          ),
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                            isDense: true,
-                          ),
-                          onSubmitted: (_) => _finishEditing(),
-                          onTapOutside: (_) => _finishEditing(),
-                        ),
-                      )
-                    : Text(
-                        _displayName(demo),
+                    ? TextField(
+                        controller: _editController,
+                        focusNode: _nameFocusNode,
+                        autofocus: true,
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.w600,
                           color: AppColors.textPrimary,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Add Name',
+                          hintStyle: TextStyle(
+                            color: AppColors.textTertiary.withValues(alpha: 0.5),
+                            fontWeight: FontWeight.w400,
+                          ),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                        ),
+                        onSubmitted: (_) => _finishEditing(),
+                        onTapOutside: (_) => _finishEditing(),
+                      )
+                    : Text(
+                        _nameIsPhone ? 'Add Name' : _displayName(demo),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600,
+                          color: _nameIsPhone
+                              ? AppColors.textTertiary.withValues(alpha: 0.5)
+                              : AppColors.textPrimary,
                           letterSpacing: -0.3,
                         ),
                       ),

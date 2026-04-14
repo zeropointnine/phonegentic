@@ -1,3 +1,5 @@
+export '../ivr_detector.dart' show IvrDetector;
+
 enum CallPhase {
   idle,
   initiating,
@@ -115,62 +117,6 @@ extension CallPhaseX on CallPhase {
   }
 }
 
-/// Detects common IVR / automated attendant / voicemail patterns in
-/// transcribed audio so they can be filtered before reaching the agent.
-class IvrDetector {
-  static final _patterns = [
-    // IVR / phone menu
-    RegExp(
-        r'press\s+(\d|one|two|three|four|five|six|seven|eight|nine|zero|pound|star|hash)',
-        caseSensitive: false),
-    RegExp(r'(para\s+espa[nñ]ol|for\s+spanish)', caseSensitive: false),
-    RegExp(r'(please\s+hold|your\s+call\s+(is|will\s+be))',
-        caseSensitive: false),
-    RegExp(r'(menu|extension|operator|directory)', caseSensitive: false),
-    RegExp(r'(call\s+(may|is)\s+(being\s+)?recorded)', caseSensitive: false),
-    RegExp(r'(quality\s+(assurance|purposes))', caseSensitive: false),
-    RegExp(r'(estimated\s+wait|queue\s+position)', caseSensitive: false),
-    RegExp(r'(thank\s+you\s+for\s+calling)', caseSensitive: false),
-    RegExp(r'(business\s+hours|office\s+hours|currently\s+closed)',
-        caseSensitive: false),
-    RegExp(r'(dial\s+by\s+name|spell\s+the\s+name)', caseSensitive: false),
-    RegExp(r'(listen\s+carefully|options\s+have\s+changed)',
-        caseSensitive: false),
-    RegExp(r'(if\s+you\s+know\s+your\s+party)', caseSensitive: false),
-    RegExp(r'(all\s+(of\s+our\s+)?(representatives|agents)\s+(are|is))',
-        caseSensitive: false),
-    RegExp(r'(pound\s+sign|star\s+key)', caseSensitive: false),
-    RegExp(r'(main\s+menu|previous\s+menu|return\s+to)', caseSensitive: false),
-    // Voicemail
-    RegExp(r'(leave\s+(a\s+|your\s+)?message)', caseSensitive: false),
-    RegExp(r'(after\s+the\s+(beep|tone|signal))', caseSensitive: false),
-    RegExp(r'(at\s+the\s+(beep|tone|signal))', caseSensitive: false),
-    RegExp(r'(voicemail|voice\s+mail|mail\s*box)', caseSensitive: false),
-    RegExp(
-        r'(is\s+not\s+available|cannot\s+(take|answer)|unable\s+to\s+(take|answer))',
-        caseSensitive: false),
-    RegExp(r'(not\s+(here|in|around)\s+right\s+now)', caseSensitive: false),
-    RegExp(r"(can'?t\s+(come|get)\s+to\s+the\s+phone)", caseSensitive: false),
-    RegExp(r'(reached\s+(the\s+)?(voicemail|phone|number|cell))',
-        caseSensitive: false),
-    RegExp(r"(you'?ve\s+reached)", caseSensitive: false),
-    RegExp(r'(record\s+(your|a)\s+message)', caseSensitive: false),
-    RegExp(r'(call\s+(me|us|you)\s+back)', caseSensitive: false),
-    RegExp(r'(get\s+back\s+to\s+you)', caseSensitive: false),
-    RegExp(r'(please\s+(try|call)\s+(again|back|later))', caseSensitive: false),
-    RegExp(r'(unavailable|currently\s+unavailable)', caseSensitive: false),
-    RegExp(r'(inbox\s+is\s+full)', caseSensitive: false),
-    RegExp(r'(press\s+\d.*to\s+leave)', caseSensitive: false),
-    RegExp(r'(the\s+person.*is\s+not\s+available)', caseSensitive: false),
-    RegExp(r'(google\s+voice|google\s+subscriber)', caseSensitive: false),
-  ];
-
-  static bool isIvr(String text) {
-    final lower = text.toLowerCase().trim();
-    if (lower.length < 4) return false;
-    return _patterns.any((p) => p.hasMatch(lower));
-  }
-}
 
 class Speaker {
   final String role;

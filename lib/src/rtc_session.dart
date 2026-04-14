@@ -708,7 +708,7 @@ class RTCSession extends EventManager implements Owner {
       _handleSessionTimersInIncomingRequest(request, extraHeaders);
       request.reply(200, null, extraHeaders, desc.sdp, () {
         _state = RtcSessionState.waitingForAck;
-        _setInvite2xxTimer(request, desc.sdp);
+        _setInvite2xxTimer(request, desc.sdp, extraHeaders);
         _setACKTimer();
         _accepted(Originator.local);
       }, () {
@@ -1600,14 +1600,15 @@ class RTCSession extends EventManager implements Owner {
    * Response retransmissions cannot be accomplished by transaction layer
    *  since it is destroyed when receiving the first 2xx answer
    */
-  void _setInvite2xxTimer(dynamic request, String? body) {
+  void _setInvite2xxTimer(
+      dynamic request, String? body, List<dynamic> extraHeaders) {
     int timeout = Timers.T1;
 
     void invite2xxRetransmission() {
       if (_state != RtcSessionState.waitingForAck) {
         return;
       }
-      request.reply(200, null, <String>['Contact: $_contact'], body);
+      request.reply(200, null, extraHeaders, body);
       if (timeout < Timers.T2) {
         timeout = timeout * 2;
         if (timeout > Timers.T2) {
@@ -1973,7 +1974,7 @@ class RTCSession extends EventManager implements Owner {
 
       request.reply(200, null, extraHeaders, sdp, () {
         _state = RtcSessionState.waitingForAck;
-        _setInvite2xxTimer(request, sdp);
+        _setInvite2xxTimer(request, sdp, extraHeaders);
         _setACKTimer();
       });
 

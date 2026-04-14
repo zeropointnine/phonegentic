@@ -30,6 +30,11 @@ class TextAgentService {
 
   HttpClient? _httpClient;
   bool _responding = false;
+  bool _pendingRespond = false;
+  bool _cancelRequested = false;
+  final Set<String> _pendingToolUseIds = {};
+
+  static const _responseTimeoutSecs = 45;
 
   final _responseController = StreamController<ResponseTextEvent>.broadcast();
   Stream<ResponseTextEvent> get responses => _responseController.stream;
@@ -65,6 +70,25 @@ class TextAgentService {
     _pendingContext.add(text);
   }
 
+  /// Discard any accumulated pending context without triggering an LLM
+  /// response. Used after pre-greeting flush so phase-transition context
+  /// (settling / connected) doesn't auto-fire a duplicate greeting.
+  void clearPendingContext() {
+    _debounceTimer?.cancel();
+    _pendingContext.clear();
+  }
+
+  /// Cancel the in-flight LLM response (if any). The streaming loop in
+  /// _callClaude checks this flag after each SSE chunk and breaks early,
+  /// emitting a final event with the partial text accumulated so far.
+  void cancelCurrentResponse() {
+    if (!_responding) return;
+    _cancelRequested = true;
+    _pendingRespond = false;
+    _debounceTimer?.cancel();
+    debugPrint('[TextAgentService] cancelCurrentResponse requested');
+  }
+
   /// Host typed a direct message — flush any pending context and respond
   /// immediately.
   void sendUserMessage(String text) {
@@ -81,16 +105,19 @@ class TextAgentService {
 
   /// Submit the result of a tool call so the model can continue.
   void addToolResult(String toolUseId, String result) {
-    _history.add({
-      'role': 'user',
-      'content': [
-        {
-          'type': 'tool_result',
-          'tool_use_id': toolUseId,
-          'content': result,
-        }
-      ],
+    _debounceTimer?.cancel();
+    _pendingToolUseIds.remove(toolUseId);
+    final blocks = <Map<String, dynamic>>[];
+    if (_pendingContext.isNotEmpty) {
+      blocks.add({'type': 'text', 'text': _pendingContext.join('\n')});
+      _pendingContext.clear();
+    }
+    blocks.add({
+      'type': 'tool_result',
+      'tool_use_id': toolUseId,
+      'content': result,
     });
+    _history.add({'role': 'user', 'content': blocks});
     _respond();
   }
 
@@ -113,6 +140,7 @@ class TextAgentService {
 
   void _flushAndRespond() {
     if (_pendingContext.isEmpty) return;
+    if (_pendingToolUseIds.isNotEmpty) return;
     _flushPendingToHistory();
     _respond();
   }
@@ -120,8 +148,17 @@ class TextAgentService {
   static const _maxRetries = 2;
 
   Future<void> _respond() async {
-    if (_responding) return;
+    if (_responding) {
+      _pendingRespond = true;
+      debugPrint('[TextAgentService] _respond: already responding, will retry after');
+      return;
+    }
+    if (_pendingToolUseIds.isNotEmpty) {
+      debugPrint('[TextAgentService] _respond: waiting for ${_pendingToolUseIds.length} tool result(s)');
+      return;
+    }
     _responding = true;
+    _pendingRespond = false;
 
     try {
       if (_config.provider == TextAgentProvider.claude) {
@@ -135,20 +172,35 @@ class TextAgentService {
       }
     } finally {
       _responding = false;
-      if (_pendingContext.isNotEmpty) _scheduleFlush();
+      if (_pendingRespond && _pendingToolUseIds.isEmpty) {
+        _pendingRespond = false;
+        debugPrint('[TextAgentService] _respond: processing queued request');
+        unawaited(_respond());
+      } else if (_pendingContext.isNotEmpty) {
+        _scheduleFlush();
+      }
     }
   }
 
   Future<void> _callClaudeWithRetry() async {
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
-        await _callClaude();
+        await _callClaude().timeout(
+          const Duration(seconds: _responseTimeoutSecs),
+          onTimeout: () {
+            throw TimeoutException(
+                'Claude API timed out after ${_responseTimeoutSecs}s — '
+                'check network or API key');
+          },
+        );
         return;
       } catch (e) {
         final isTransient = e is HttpException ||
+            e is TimeoutException ||
             e.toString().contains('Connection closed') ||
             e.toString().contains('Connection reset') ||
-            e.toString().contains('SocketException');
+            e.toString().contains('SocketException') ||
+            e.toString().contains('timed out');
         if (!isTransient || attempt >= _maxRetries) rethrow;
         final delayMs = 500 * (attempt + 1);
         debugPrint('[TextAgentService] Transient error (attempt ${attempt + 1}/$_maxRetries), retrying in ${delayMs}ms: $e');
@@ -379,6 +431,8 @@ class TextAgentService {
   Future<void> _callClaude() async {
     if (_history.isEmpty) return;
 
+    final merged = _mergedHistory();
+
     final uri = Uri.parse('https://api.anthropic.com/v1/messages');
     final request = await _httpClient!.postUrl(uri);
 
@@ -390,7 +444,7 @@ class TextAgentService {
       'model': _config.activeModel,
       'max_tokens': 1024,
       'system': _systemInstructions,
-      'messages': _mergedHistory(),
+      'messages': merged,
       'tools': _allTools,
       'stream': true,
     });
@@ -398,8 +452,13 @@ class TextAgentService {
 
     final response = await request.close();
     if (response.statusCode != 200) {
-      final body = await response.transform(utf8.decoder).join();
-      throw Exception('Claude API ${response.statusCode}: $body');
+      final respBody = await response.transform(utf8.decoder).join();
+      if (response.statusCode == 400 &&
+          respBody.contains('tool_use')) {
+        _dumpMergedHistory(merged);
+        _repairHistory();
+      }
+      throw Exception('Claude API ${response.statusCode}: $respBody');
     }
 
     final fullText = StringBuffer();
@@ -410,7 +469,12 @@ class TextAgentService {
     String? activeToolName;
     final StringBuffer activeToolInput = StringBuffer();
 
+    bool cancelled = false;
     await for (final chunk in response.transform(utf8.decoder)) {
+      if (_cancelRequested) {
+        cancelled = true;
+        break;
+      }
       sseBuf += chunk;
       final lines = sseBuf.split('\n');
       sseBuf = lines.removeLast();
@@ -467,10 +531,32 @@ class TextAgentService {
           }
         } catch (_) {}
       }
+      if (_cancelRequested) {
+        cancelled = true;
+        break;
+      }
+    }
+
+    _cancelRequested = false;
+    final textResult = fullText.toString();
+
+    if (cancelled) {
+      debugPrint('[TextAgentService] Response cancelled — '
+          '${textResult.length} chars emitted');
+      if (textResult.isNotEmpty) {
+        _history.add({
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': textResult}
+          ],
+        });
+        _responseController
+            .add(ResponseTextEvent(text: textResult, isFinal: true));
+      }
+      return;
     }
 
     final contentBlocks = <Map<String, dynamic>>[];
-    final textResult = fullText.toString();
     if (textResult.isNotEmpty) {
       contentBlocks.add({'type': 'text', 'text': textResult});
     }
@@ -486,10 +572,12 @@ class TextAgentService {
     }
 
     for (final tool in toolBlocks) {
+      final id = tool['id'] as String;
+      _pendingToolUseIds.add(id);
       debugPrint('[TextAgent] Tool call: ${tool['name']} '
-          'id=${tool['id']} input=${tool['input']}');
+          'id=$id input=${tool['input']}');
       _toolCallController.add(ToolCallRequest(
-        id: tool['id'] as String,
+        id: id,
         name: tool['name'] as String,
         arguments: tool['input'] as Map<String, dynamic>,
       ));
@@ -497,6 +585,21 @@ class TextAgentService {
 
     while (_history.length > _maxHistory) {
       _history.removeAt(0);
+    }
+    while (_history.isNotEmpty) {
+      final first = _history.first;
+      if (first['role'] == 'assistant') {
+        _history.removeAt(0);
+        continue;
+      }
+      final content = first['content'];
+      if (content is List &&
+          (content).any(
+              (b) => b is Map && b['type'] == 'tool_result')) {
+        _history.removeAt(0);
+        continue;
+      }
+      break;
     }
   }
 
@@ -508,28 +611,162 @@ class TextAgentService {
     for (final m in _history) {
       final role = m['role'] as String;
       final content = m['content'];
-      final isStructured = content is List;
 
-      if (!isStructured &&
-          out.isNotEmpty &&
-          out.last['role'] == role &&
-          out.last['content'] is String) {
-        out.last = {
-          'role': role,
-          'content': '${out.last['content']}\n\n$content',
-        };
+      if (out.isNotEmpty && out.last['role'] == role) {
+        final prev = out.last['content'];
+        if (prev is String && content is String) {
+          out.last = {'role': role, 'content': '$prev\n\n$content'};
+        } else {
+          out.last = {
+            'role': role,
+            'content': [..._toBlocks(prev), ..._toBlocks(content)],
+          };
+        }
       } else {
         out.add(Map<String, dynamic>.of(m));
       }
     }
+    _stripDanglingToolUse(out);
     return out;
+  }
+
+  /// Remove tool_use blocks from assistant messages when the next message
+  /// doesn't contain the matching tool_result.  This prevents a permanently
+  /// stuck history if a tool_result was never delivered or a transcript
+  /// was flushed between the tool_use and its result.
+  static void _stripDanglingToolUse(List<Map<String, dynamic>> messages) {
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      if (m['role'] != 'assistant') continue;
+      final content = m['content'];
+      if (content is! List) continue;
+
+      final toolUseIds = <String>{};
+      for (final block in content) {
+        if (block is Map && block['type'] == 'tool_use') {
+          toolUseIds.add(block['id'] as String);
+        }
+      }
+      if (toolUseIds.isEmpty) continue;
+
+      // Collect tool_result IDs from the next message (if it's a user message).
+      final resultIds = <String>{};
+      if (i + 1 < messages.length && messages[i + 1]['role'] == 'user') {
+        final next = messages[i + 1]['content'];
+        if (next is List) {
+          for (final block in next) {
+            if (block is Map && block['type'] == 'tool_result') {
+              resultIds.add(block['tool_use_id'] as String);
+            }
+          }
+        }
+      }
+
+      final dangling = toolUseIds.difference(resultIds);
+      if (dangling.isEmpty) continue;
+
+      final cleaned = content
+          .where((b) =>
+              b is! Map ||
+              b['type'] != 'tool_use' ||
+              !dangling.contains(b['id']))
+          .toList();
+
+      if (cleaned.isEmpty) {
+        messages.removeAt(i);
+        i--;
+      } else {
+        messages[i] = {'role': 'assistant', 'content': cleaned};
+      }
+    }
+  }
+
+  static List<Map<String, dynamic>> _toBlocks(dynamic content) {
+    if (content is String) return [{'type': 'text', 'text': content}];
+    if (content is List) return List<Map<String, dynamic>>.from(content);
+    return [];
+  }
+
+  /// Dump merged history structure for debugging 400 errors.
+  static void _dumpMergedHistory(List<Map<String, dynamic>> merged) {
+    debugPrint('[TextAgent] === MERGED HISTORY DUMP (${merged.length} msgs) ===');
+    for (var i = 0; i < merged.length; i++) {
+      final m = merged[i];
+      final role = m['role'];
+      final content = m['content'];
+      if (content is String) {
+        debugPrint('  [$i] $role: String(${content.length} chars)');
+      } else if (content is List) {
+        final types = (content)
+            .map((b) {
+              if (b is Map) {
+                final t = b['type'] ?? '?';
+                if (t == 'tool_use') return 'tool_use(${b['id']})';
+                if (t == 'tool_result') return 'tool_result(${b['tool_use_id']})';
+                return '$t';
+              }
+              return '${b.runtimeType}';
+            })
+            .join(', ');
+        debugPrint('  [$i] $role: [$types]');
+      } else {
+        debugPrint('  [$i] $role: ${content.runtimeType}');
+      }
+    }
+    debugPrint('[TextAgent] === END DUMP ===');
+  }
+
+  /// Repair _history directly by stripping tool_use blocks that have no
+  /// matching tool_result anywhere after them.  Called on 400 errors to
+  /// break the stuck-error loop.
+  void _repairHistory() {
+    final allResultIds = <String>{};
+    for (final m in _history) {
+      final content = m['content'];
+      if (content is! List) continue;
+      for (final b in content) {
+        if (b is Map && b['type'] == 'tool_result') {
+          allResultIds.add(b['tool_use_id'] as String);
+        }
+      }
+    }
+
+    for (var i = _history.length - 1; i >= 0; i--) {
+      final m = _history[i];
+      if (m['role'] != 'assistant') continue;
+      final content = m['content'];
+      if (content is! List) continue;
+
+      final hasToolUse =
+          (content).any((b) => b is Map && b['type'] == 'tool_use');
+      if (!hasToolUse) continue;
+
+      final cleaned = (content)
+          .where((b) {
+            if (b is! Map || b['type'] != 'tool_use') return true;
+            return allResultIds.contains(b['id'] as String);
+          })
+          .toList();
+
+      if (cleaned.isEmpty) {
+        _history.removeAt(i);
+        debugPrint('[TextAgent] _repairHistory: removed empty assistant msg at $i');
+      } else if (cleaned.length != content.length) {
+        _history[i] = {'role': 'assistant', 'content': cleaned};
+        debugPrint('[TextAgent] _repairHistory: stripped dangling tool_use at $i');
+      }
+    }
+    _pendingToolUseIds.clear();
   }
 
   void reset() {
     _debounceTimer?.cancel();
     _pendingContext.clear();
     _history.clear();
+    _pendingToolUseIds.clear();
     _responding = false;
+    _pendingRespond = false;
+    _cancelRequested = false;
   }
 
   void dispose() {

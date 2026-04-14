@@ -58,7 +58,11 @@ class WhisperRealtimeService {
   bool _vadActive = false;
   bool _isTtsPlaying = false;
   DateTime _ttsSuppressedUntil = DateTime(0);
-  static const int _ttsEchoCooldownMs = 1500;
+  static const int _ttsEchoCooldownMs = 300;
+
+  /// When true, the native layer strips mic echo and sends remote-only audio
+  /// during TTS playback, so Flutter-level suppression is unnecessary.
+  bool inCallMode = false;
 
   final _transcriptionController =
       StreamController<TranscriptionEvent>.broadcast();
@@ -70,6 +74,7 @@ class WhisperRealtimeService {
       StreamController<FunctionCallEvent>.broadcast();
   final _audioLevelController = StreamController<double>.broadcast();
   final _speakingController = StreamController<bool>.broadcast();
+  final _vadController = StreamController<bool>.broadcast();
 
   // Accumulate function call arguments by call_id
   final Map<String, _PendingFunctionCall> _pendingFunctionCalls = {};
@@ -84,6 +89,7 @@ class WhisperRealtimeService {
       _functionCallController.stream;
   Stream<double> get audioLevels => _audioLevelController.stream;
   Stream<bool> get speakingState => _speakingController.stream;
+  Stream<bool> get vadEvents => _vadController.stream;
   bool get isConnected => _connected;
   bool get vadActive => _vadActive;
 
@@ -734,7 +740,12 @@ class WhisperRealtimeService {
   int _audioSendCount = 0;
   void sendAudio(Uint8List pcm16Mono24kHz) {
     _emitAudioLevel(pcm16Mono24kHz);
-    if (muted || !_connected || _ws == null || _ttsSuppressed) return;
+    if (muted || !_connected || _ws == null) return;
+    // In call mode, native flushBuffers strips mic echo and sends
+    // remote-only audio during TTS — no Flutter-level suppression needed.
+    // In direct mode, native blocks the event sink entirely via
+    // isPlayingResponse, so _ttsSuppressed is the safety net.
+    if (!inCallMode && _ttsSuppressed) return;
     _audioSendCount++;
     if (_audioSendCount == 1 || _audioSendCount == 50 || _audioSendCount % 500 == 0) {
       debugPrint('[Whisper] sendAudio #$_audioSendCount: ${pcm16Mono24kHz.length} bytes '
@@ -889,11 +900,13 @@ class WhisperRealtimeService {
 
         case 'input_audio_buffer.speech_started':
           _vadActive = true;
+          if (!_vadController.isClosed) _vadController.add(true);
           debugPrint('[Whisper] VAD: speech started');
           break;
 
         case 'input_audio_buffer.speech_stopped':
           _vadActive = false;
+          if (!_vadController.isClosed) _vadController.add(false);
           debugPrint('[Whisper] VAD: speech stopped');
           break;
 
@@ -965,6 +978,15 @@ class WhisperRealtimeService {
     } catch (_) {}
   }
 
+  /// Clear the native TTS ring buffers (call mode) so queued agent audio
+  /// is silenced immediately on barge-in. Also cancels the call-mode
+  /// playback timer and fires onPlaybackComplete.
+  Future<void> clearTTSQueue() async {
+    try {
+      await _methodChannel.invokeMethod('clearTTSQueue');
+    } catch (_) {}
+  }
+
   Future<void> stopAudioTap() async {
     await _audioSub?.cancel();
     _audioSub = null;
@@ -980,6 +1002,7 @@ class WhisperRealtimeService {
     muted = false;
     _isTtsPlaying = false;
     _ttsSuppressedUntil = DateTime(0);
+    inCallMode = false;
     await _ws?.sink.close();
     _ws = null;
   }
@@ -992,6 +1015,7 @@ class WhisperRealtimeService {
     _functionCallController.close();
     _audioLevelController.close();
     _speakingController.close();
+    _vadController.close();
   }
 }
 

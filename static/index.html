@@ -4,25 +4,81 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Phonegentic AI — Your AI Voice Agent on Every Call</title>
-  <meta name="description" content="Bring your AI agent via voice onto your calls. Transcriptions, call assistance, operator routing, and more — all running locally on macOS.">
+  <meta name="description" content="Bring your AI agent via voice onto your calls. Transcriptions, call assistance, browser extensions, operator routing, and more — running locally on macOS and Ubuntu.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cpath d='M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z' fill='%23efc35a'/%3E%3Cpath d='M22 16l1.5 3.3L27 21l-3.5 1.7L22 26l-1.5-3.3L17 21l3.5-1.7L22 16z' fill='%23efc35a' opacity='.85'/%3E%3Cpath d='M7 18l1 2.2L10 21.5l-2 1.3L7 25l-1-2.2L4 21.5l2-1.3L7 18z' fill='%23d4a853' opacity='.4'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    @property --gold-bright {
+      syntax: '<color>';
+      inherits: true;
+      initial-value: #efc35a;
+    }
+
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
+      --radius: 12px;
+      --theme-transition: 5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Amber VT-100 (default) */
+    :root, .theme-vt100 {
       --bg: #0c0a09;
       --bg-card: #1a1714;
       --bg-card-hover: #231f1a;
       --gold: #d4a853;
       --gold-dim: #b8923f;
+      --gold-bright: #efc35a;
       --gold-glow: rgba(212, 168, 83, 0.15);
       --gold-glow-strong: rgba(212, 168, 83, 0.25);
       --text: #e8e0d4;
       --text-dim: #9a917f;
       --border: rgba(212, 168, 83, 0.12);
-      --radius: 12px;
+    }
+
+    /* Miami Vice Neon */
+    .theme-miami {
+      --bg: #0a0c12;
+      --bg-card: #0f1623;
+      --bg-card-hover: #151d2e;
+      --gold: #00e5ff;
+      --gold-dim: #00b8d4;
+      --gold-bright: #18ffff;
+      --gold-glow: rgba(0, 229, 255, 0.15);
+      --gold-glow-strong: rgba(0, 229, 255, 0.25);
+      --text: #e0f2fe;
+      --text-dim: #7fa8c9;
+      --border: rgba(0, 229, 255, 0.12);
+    }
+
+    /* Smooth 5s transition on all themed elements */
+    body, nav, .nav-brand, .nav-links a,
+    .hero-badge, .hero h1 .gold,
+    .hero p, .btn, .btn-primary, .btn-secondary,
+    .feature-card, .feature-icon, .feature-card h3, .feature-card p,
+    .section-label, .section-title, .section-sub,
+    .step-number, .step h3, .step p,
+    .use-case, .use-case-icon, .use-case h3, .use-case p,
+    .pipeline-hero, .pipeline-node-icon, .pipeline-node-label, .pipeline-node-sub,
+    .pipeline-arrow, .pipeline-caption, .pipeline-card, .pipeline-card-icon,
+    .pipeline-card h3, .pipeline-card p, .pipeline-card .tag,
+    .extension-card, .extension-logo, .extension-card h3, .extension-card > p,
+    .extension-examples li, .extension-privacy,
+    .platform-item, .platform-item span,
+    .partner-item, .partner-item .partner-name, .partner-item span.partner-sub,
+    .partner-divider,
+    .cta-box, .cta-box h2, .cta-box p,
+    footer, .footer-left, .footer-right a,
+    .hero-platforms .platform-badge, .hero-platforms .divider,
+    .hero-media, .theme-toggle, .theme-dropdown, .theme-dropdown button,
+    a {
+      transition: color var(--theme-transition),
+                  background-color var(--theme-transition),
+                  background var(--theme-transition),
+                  border-color var(--theme-transition),
+                  box-shadow var(--theme-transition);
     }
 
     html { scroll-behavior: smooth; }
@@ -36,7 +92,7 @@
       overflow-x: hidden;
     }
 
-    a { color: var(--gold); text-decoration: none; transition: opacity 0.2s; }
+    a { color: var(--gold); text-decoration: none; }
     a:hover { opacity: 0.85; }
 
     .container {
@@ -54,7 +110,7 @@
       z-index: 100;
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      background: rgba(12, 10, 9, 0.8);
+      background: color-mix(in srgb, var(--bg) 80%, transparent);
       border-bottom: 1px solid var(--border);
     }
 
@@ -82,7 +138,6 @@
       font-size: 0.9rem;
       font-weight: 500;
       color: var(--text-dim);
-      transition: color 0.2s;
     }
 
     .nav-links a:hover { color: var(--gold); opacity: 1; }
@@ -94,15 +149,15 @@
       align-items: center;
       gap: 8px;
       padding: 8px 18px;
-      background: #efc35a;
+      background-color: var(--gold-bright);
       color: #000;
       font-weight: 600;
       font-size: 0.875rem;
       border-radius: 8px;
-      transition: background 0.2s, transform 0.15s;
+      transition: background-color var(--theme-transition), transform 0.15s;
     }
 
-    .btn-github:hover { background: var(--gold-dim); opacity: 1; transform: translateY(-1px); }
+    .btn-github:hover { background-color: var(--gold-dim); opacity: 1; transform: translateY(-1px); }
 
     .btn-github svg { width: 18px; height: 18px; fill: #000; }
 
@@ -162,7 +217,6 @@
       border-radius: 10px;
       border: none;
       cursor: pointer;
-      transition: all 0.2s;
     }
 
     .btn-primary {
@@ -180,26 +234,9 @@
 
     .btn-secondary:hover { border-color: var(--gold-dim); opacity: 1; }
 
-    .hero-image {
-      max-width: 900px;
-      margin: 0 auto;
-      border-radius: 16px;
-      overflow: hidden;
-      box-shadow:
-        0 0 0 1px var(--border),
-        0 24px 80px rgba(0, 0, 0, 0.6),
-        0 0 120px var(--gold-glow);
-    }
-
-    .hero-image img {
-      width: 100%;
-      height: auto;
-      display: block;
-    }
-
     /* ---- FEATURES ---- */
     .features {
-      padding: 100px 0;
+      padding: 40px 0;
     }
 
     .section-label {
@@ -238,12 +275,11 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      transition: background 0.2s, border-color 0.2s;
     }
 
     .feature-card:hover {
       background: var(--bg-card-hover);
-      border-color: rgba(212, 168, 83, 0.25);
+      border-color: var(--gold-glow-strong);
     }
 
     .feature-icon {
@@ -256,6 +292,7 @@
       border-radius: 10px;
       margin-bottom: 18px;
       font-size: 1.3rem;
+      color: var(--gold);
     }
 
     .feature-card h3 {
@@ -345,7 +382,6 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      transition: background 0.2s;
     }
 
     .use-case:hover { background: var(--bg-card-hover); }
@@ -359,6 +395,7 @@
       justify-content: center;
       background: var(--gold-glow);
       border-radius: 8px;
+      color: var(--gold);
       font-size: 1.15rem;
     }
 
@@ -388,8 +425,8 @@
     .platform-logos {
       display: flex;
       justify-content: center;
-      align-items: center;
-      gap: 40px;
+      align-items: flex-start;
+      gap: 56px;
       flex-wrap: wrap;
       margin-top: 36px;
     }
@@ -399,19 +436,23 @@
       flex-direction: column;
       align-items: center;
       gap: 10px;
-      color: var(--text-dim);
-      font-size: 0.85rem;
-      font-weight: 500;
+      opacity: 0.7;
+      color: var(--gold-bright);
     }
+
+    .platform-item:hover { opacity: 1; }
 
     .platform-item svg {
-      width: 48px;
-      height: 48px;
-      opacity: 0.7;
-      transition: opacity 0.2s;
+      width: 52px;
+      height: 52px;
     }
 
-    .platform-item:hover svg { opacity: 1; }
+    .platform-item span {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      letter-spacing: 0.02em;
+    }
 
     /* ---- CTA ---- */
     .cta-section {
@@ -421,7 +462,7 @@
     .cta-box {
       text-align: center;
       padding: 60px 40px;
-      background: linear-gradient(135deg, var(--bg-card) 0%, rgba(212, 168, 83, 0.06) 100%);
+      background: linear-gradient(135deg, var(--bg-card) 0%, var(--gold-glow) 100%);
       border: 1px solid var(--border);
       border-radius: 20px;
       position: relative;
@@ -496,6 +537,158 @@
       padding: 4px;
     }
 
+    /* ---- THEME SELECTOR ---- */
+    .theme-selector {
+      position: relative;
+    }
+
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-width: 140px;
+      padding: 6px 14px;
+      background: var(--gold-glow);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--gold);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+    }
+
+    .theme-toggle:hover {
+      border-color: var(--gold-dim);
+    }
+
+    .theme-toggle svg {
+      width: 12px;
+      height: 12px;
+      transition: transform 0.2s;
+    }
+
+    .theme-selector.open .theme-toggle svg {
+      transform: rotate(180deg);
+    }
+
+    .theme-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 180px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 6px;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-4px);
+      transition: opacity 0.2s, transform 0.2s, visibility 0.2s;
+      z-index: 200;
+    }
+
+    .theme-selector.open .theme-dropdown {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    .theme-dropdown button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 14px;
+      background: none;
+      border: none;
+      border-radius: 7px;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .theme-dropdown button:hover {
+      background: var(--gold-glow);
+      color: var(--text);
+    }
+
+    .theme-dropdown button.active {
+      color: var(--gold);
+    }
+
+    .theme-dropdown button .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid currentColor;
+      flex-shrink: 0;
+    }
+
+    .theme-dropdown button[data-theme="vt100"] .swatch {
+      background: #d4a853;
+    }
+
+    .theme-dropdown button[data-theme="miami"] .swatch {
+      background: #00e5ff;
+    }
+
+    /* ---- HERO CROSSFADE ---- */
+    .hero-image {
+      position: relative;
+    }
+
+    .hero-shot {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .hero-shot-miami {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: fill;
+      opacity: 0;
+      transition: opacity var(--theme-transition);
+    }
+
+    .theme-miami .hero-shot-miami {
+      opacity: 1;
+    }
+
+    /* ---- HERO VIDEO ---- */
+    .hero-media {
+      max-width: 900px;
+      margin: 0 auto;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px var(--border),
+        0 24px 80px rgba(0, 0, 0, 0.6),
+        0 0 120px var(--gold-glow);
+    }
+
+    .hero-video {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      display: none;
+      border-radius: 16px;
+    }
+
+    .hero-media.has-video .hero-video {
+      display: block;
+    }
+
+    .hero-media.has-video .hero-image {
+      display: none;
+    }
+
     /* ---- RESPONSIVE ---- */
     @media (max-width: 768px) {
       .nav-links { display: none; }
@@ -510,7 +703,7 @@
         top: 64px;
         left: 0;
         right: 0;
-        background: rgba(12, 10, 9, 0.97);
+        background: color-mix(in srgb, var(--bg) 97%, transparent);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
         padding: 20px 24px;
@@ -528,7 +721,7 @@
       .hero-cta { flex-direction: column; align-items: center; }
       .btn { width: 100%; max-width: 300px; justify-content: center; }
 
-      .features, .how-it-works, .use-cases, .platforms, .cta-section {
+      .features, .pipeline, .how-it-works, .use-cases, .extensions, .platforms, .cta-section {
         padding: 60px 0;
       }
 
@@ -541,9 +734,400 @@
       }
     }
 
+    /* ---- HERO PLATFORM BADGES ---- */
+    .hero-platforms {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hero-platforms .platform-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--gold);
+    }
+
+    .hero-platforms .platform-badge svg {
+      width: 16px;
+      height: 16px;
+      opacity: 0.9;
+    }
+
+    .hero-platforms .divider {
+      color: var(--text-dim);
+      opacity: 0.4;
+    }
+
+    /* ---- MODEL PIPELINE ---- */
+    .pipeline {
+      padding: 80px 0 100px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pipeline::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, var(--gold-glow) 0%, transparent 70%);
+      pointer-events: none;
+      opacity: 0.4;
+    }
+
+    .pipeline .section-label,
+    .pipeline .section-title,
+    .pipeline .section-sub {
+      text-align: center;
+      position: relative;
+    }
+
+    .pipeline .section-sub {
+      margin-left: auto;
+      margin-right: auto;
+      max-width: 600px;
+    }
+
+    .pipeline-hero {
+      position: relative;
+      margin-bottom: 48px;
+      padding: 36px;
+      background: linear-gradient(135deg, var(--bg-card) 0%, var(--gold-glow) 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .pipeline-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .pipeline-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 20px;
+      min-width: 130px;
+      max-width: 160px;
+    }
+
+    .pipeline-node-icon {
+      width: 52px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--gold-glow-strong);
+      border: 1px solid var(--gold);
+      border-radius: 14px;
+      color: var(--gold);
+    }
+
+    .pipeline-node:hover .pipeline-node-icon {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px var(--gold-glow);
+    }
+
+    .pipeline-node-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+      text-align: center;
+    }
+
+    .pipeline-node-sub {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      text-align: center;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      line-height: 1.6;
+    }
+
+    .pipeline-node-sub svg {
+      width: 13px;
+      height: 13px;
+      color: var(--gold);
+      opacity: 0.75;
+      flex-shrink: 0;
+      display: inline-block;
+    }
+
+    .pipeline-arrow {
+      color: var(--gold);
+      font-size: 1.4rem;
+      opacity: 0.4;
+      padding: 0 4px;
+    }
+
+    .pipeline-caption {
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .pipeline-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .pipeline-card {
+      padding: 28px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .pipeline-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--gold-glow-strong);
+    }
+
+    .pipeline-card-icon {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--gold-glow);
+      border-radius: 10px;
+      margin-bottom: 16px;
+      color: var(--gold);
+    }
+
+    .pipeline-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .pipeline-card p {
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .pipeline-card .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 14px;
+    }
+
+    .pipeline-card .tag {
+      display: inline-block;
+      padding: 3px 10px;
+      background: var(--gold-glow);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--gold);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ---- BROWSER EXTENSIONS ---- */
+    .extensions {
+      padding: 80px 0 100px;
+    }
+
+    .extensions .section-label,
+    .extensions .section-title,
+    .extensions .section-sub {
+      text-align: center;
+    }
+
+    .extensions .section-sub {
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .extension-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    .extension-card {
+      padding: 28px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .extension-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--gold-glow-strong);
+    }
+
+    .extension-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .extension-logo {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--gold-glow);
+      border-radius: 10px;
+      flex-shrink: 0;
+      color: var(--gold);
+    }
+
+    .extension-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+
+    .extension-card > p {
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+
+    .extension-examples {
+      list-style: none;
+      margin-bottom: 16px;
+    }
+
+    .extension-examples li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      font-size: 0.85rem;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .extension-examples li::before {
+      content: '\203A';
+      color: var(--gold);
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .extension-privacy {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      background: rgba(74, 222, 128, 0.08);
+      border: 1px solid rgba(74, 222, 128, 0.15);
+      border-radius: 100px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #6ee7a0;
+    }
+
+    .extension-privacy svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    /* ---- PARTNER LOGOS ---- */
+    .partners {
+      padding: 60px 0 80px;
+      text-align: center;
+    }
+
+    .partners-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      margin-bottom: 28px;
+    }
+
+    .partner-logos {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 48px;
+      flex-wrap: wrap;
+    }
+
+    .partner-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      opacity: 0.55;
+      color: var(--gold);
+    }
+
+    .partner-item:hover { opacity: 0.9; }
+
+    .partner-item .partner-logo-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .partner-item .partner-logo-row svg {
+      height: 32px;
+      width: 32px;
+      flex-shrink: 0;
+    }
+
+    .partner-item .partner-name {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+
+    .partner-item span.partner-sub {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-dim);
+    }
+
+    .partner-divider {
+      width: 1px;
+      height: 48px;
+      background: var(--border);
+    }
+
+    @media (max-width: 768px) {
+      .pipeline-grid { grid-template-columns: 1fr; }
+      .pipeline-flow { gap: 0; }
+      .pipeline-node { min-width: 90px; padding: 12px 10px; }
+      .pipeline-arrow { font-size: 1rem; }
+      .extension-grid { grid-template-columns: 1fr; }
+      .partner-logos { gap: 32px; }
+      .partner-divider { display: none; }
+    }
+
     @media (max-width: 480px) {
       .hero h1 { font-size: 1.7rem; }
-      .platform-logos { gap: 24px; }
+      .platform-logos { gap: 28px; }
+      .platform-item svg { width: 40px; height: 40px; }
     }
   </style>
 </head>
@@ -554,16 +1138,28 @@
   <div class="container">
     <a href="#" class="nav-brand">
       <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-        <path d="M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z" fill="#efc35a"/>
-        <path d="M22 16l1.5 3.3L27 21l-3.5 1.7L22 26l-1.5-3.3L17 21l3.5-1.7L22 16z" fill="#efc35a" opacity="0.85"/>
-        <path d="M7 18l1 2.2L10 21.5l-2 1.3L7 25l-1-2.2L4 21.5l2-1.3L7 18z" fill="#d4a853" opacity="0.4"/>
+        <path d="M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z" fill="currentColor"/>
+        <path d="M22 16l1.5 3.3L27 21l-3.5 1.7L22 26l-1.5-3.3L17 21l3.5-1.7L22 16z" fill="currentColor" opacity="0.85"/>
+        <path d="M7 18l1 2.2L10 21.5l-2 1.3L7 25l-1-2.2L4 21.5l2-1.3L7 18z" fill="currentColor" opacity="0.4"/>
       </svg>
       Phonegentic AI
     </a>
     <div class="nav-links" id="navLinks">
       <a href="#features">Features</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#extensions">Extensions</a>
       <a href="#how-it-works">How It Works</a>
       <a href="#use-cases">Use Cases</a>
+      <div class="theme-selector" id="themeSelector">
+        <button class="theme-toggle" id="themeToggle" aria-label="Switch theme">
+          <span class="theme-label" id="themeLabel">VT-100</span>
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2 4 6 8 10 4"/></svg>
+        </button>
+        <div class="theme-dropdown" id="themeDropdown">
+          <button data-theme="vt100" class="active"><span class="swatch"></span>Amber VT-100</button>
+          <button data-theme="miami"><span class="swatch"></span>Miami Vice Neon</button>
+        </div>
+      </div>
       <a href="https://github.com/reduxdj/phonegentic" class="btn-github" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
         GitHub
@@ -579,20 +1175,32 @@
 <section class="hero">
   <div class="container">
     <div class="hero-badge">
-      <svg width="14" height="14" viewBox="0 0 28 28" fill="none"><path d="M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z" fill="#d4a853"/></svg>
-      Open Source &middot; Built for macOS
+      <svg width="14" height="14" viewBox="0 0 28 28" fill="none"><path d="M14 2l2.5 5.5L22 10l-5.5 2.5L14 18l-2.5-5.5L6 10l5.5-2.5L14 2z" fill="currentColor"/></svg>
+      Open Source &middot;
+      <span class="hero-platforms">
+        <span class="platform-badge">
+          <!-- Apple logo -->
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11"/></svg>
+          macOS
+        </span>
+        <span class="divider">&amp;</span>
+        <span class="platform-badge">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="2.5" r="2" fill="currentColor"/><circle cx="3.74" cy="17.5" r="2" fill="currentColor"/><circle cx="20.26" cy="17.5" r="2" fill="currentColor"/></svg>
+          Ubuntu
+        </span>
+      </span>
     </div>
     <h1>Your <span class="gold">AI voice agent</span><br>on every call</h1>
-    <p>Bring your agent via voice onto your calls — take transcriptions, get real-time help, connect calls as an operator, and anything else you can think of. All running locally.</p>
-    <div class="hero-cta">
-      <a href="https://github.com/reduxdj/phonegentic" class="btn btn-primary" target="_blank" rel="noopener">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
-        View on GitHub
-      </a>
-      <a href="#features" class="btn btn-secondary">Learn More</a>
-    </div>
-    <div class="hero-image">
-      <img src="images/phonegentic_shot.png" alt="Phonegentic AI — SIP softphone with real-time AI voice agent" loading="eager">
+    <p>Bring your agent via voice onto your calls — take transcriptions, get real-time help, connect calls as an operator, and anything else you can think of.</p>
+  
+    <div class="hero-media" id="heroMedia">
+      <video class="hero-video" preload="none" controls playsinline>
+        <source src="" type="video/mp4">
+      </video>
+      <div class="hero-image">
+        <img class="hero-shot hero-shot-vt100" src="shot_vt100.png" alt="Phonegentic AI — Amber VT-100 theme" loading="eager">
+        <img class="hero-shot hero-shot-miami" src="shot_miami_vice.png" alt="Phonegentic AI — Miami Vice Neon theme" loading="eager">
+      </div>
     </div>
   </div>
 </section>
@@ -606,45 +1214,138 @@
     <div class="feature-grid">
       <div class="feature-card">
         <div class="feature-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </div>
         <h3>Live AI Voice Agent</h3>
         <p>A real-time AI agent joins your calls as a third party — listening, thinking, and speaking with sub-second latency via the OpenAI Realtime API.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         </div>
         <h3>Real-Time Transcription</h3>
         <p>Both sides of the conversation are transcribed live with speaker identification. Every word captured and attributed to the right person.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         </div>
         <h3>Call History &amp; Recording</h3>
         <p>Automatic call logging, recording, and transcript storage. Search through past calls and replay conversations anytime.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         </div>
         <h3>Tear Sheets</h3>
         <p>Describe who to call in plain English. The AI searches your contacts, builds a call queue, and dials through it automatically.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         </div>
         <h3>Whisper Mode</h3>
         <p>Send silent commands to the agent mid-call. Adjust its behavior without the other party hearing a thing.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         </div>
         <h3>Switchable Personas</h3>
         <p>Define reusable agent personas — trivia host, meeting assistant, compliance monitor — and swap instantly mid-session.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MODEL PIPELINE -->
+<section class="pipeline" id="pipeline">
+  <div class="container">
+    <span class="section-label">Your Models, Your Rules</span>
+    <h2 class="section-title">Orchestrate the entire voice pipeline</h2>
+    <p class="section-sub">Run models on-device for speed and privacy, or route to the cloud for power. Mix providers, swap voices, and wire them together your way.</p>
+
+    <div class="pipeline-hero">
+      <div class="pipeline-flow">
+        <div class="pipeline-node">
+          <div class="pipeline-node-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+          </div>
+          <span class="pipeline-node-label">Audio In</span>
+          <span class="pipeline-node-sub">Caller voice</span>
+        </div>
+        <span class="pipeline-arrow">&rsaquo;</span>
+        <div class="pipeline-node">
+          <div class="pipeline-node-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </div>
+          <span class="pipeline-node-label">STT</span>
+          <span class="pipeline-node-sub"><svg viewBox="0 0 50 32" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M0.5 27.7V31h25.9c.5 0 .9-.3.9-.9v-1.5c0-.6.3-.9.9-.9h1.5c.5 0 .8-.3.8-.8v-1.6c0-.5.3-.9.9-.9h1.6c.6 0 .9.3.9.9v1.8c0 .5.3.8.8.8h1.6c.5 0 .9.3.9.9v1.6c0 .5.4.9.9.9h5c.5 0 .8-.3.8-.8V1.8c0-.5-.3-.9-.9-.9h-5c-.5 0-.9.3-.9.9v1.7c0 .5-.3.8-.8.8h-1.6c-.5 0-.9.4-.9.9v1.5c0 .5-.4.9-.9.9h-1.5c-.6 0-.9-.3-.9-.9V5.2c0-.5-.3-.9-.9-.9h-1.6c-.5 0-.8-.3-.8-.8V1.8c0-.5-.4-.9-.9-.9H.7V4.3h18.3c.6 0 1 .3 1 .9v20.8c0 .8-.4 1.1-1 1.2-.3.1-.6.1-.9.1H.5z" fill="currentColor"/></svg> WhisperKit / <svg viewBox="0 0 32 32" fill="none"><path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> Whisper</span>
+        </div>
+        <span class="pipeline-arrow">&rsaquo;</span>
+        <div class="pipeline-node">
+          <div class="pipeline-node-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          </div>
+          <span class="pipeline-node-label">LLM</span>
+          <span class="pipeline-node-sub"><svg viewBox="0 0 32 32" fill="none"><path d="M18.4 4L28 28h-5.6l-4-10.4L14.4 28H8.8L18.4 4z" fill="currentColor"/><path d="M13.6 4L4 28h5.6l4-10.4L17.6 28h5.6L13.6 4z" fill="currentColor" opacity="0.5"/></svg> Claude / <svg viewBox="0 0 32 32" fill="none"><path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> OpenAI / <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M9 9h6v6H9z" stroke="currentColor" stroke-width="1.5"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" stroke="currentColor" stroke-width="1" opacity="0.5"/></svg> Local</span>
+        </div>
+        <span class="pipeline-arrow">&rsaquo;</span>
+        <div class="pipeline-node">
+          <div class="pipeline-node-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+          </div>
+          <span class="pipeline-node-label">TTS</span>
+          <span class="pipeline-node-sub"><svg viewBox="0 0 32 32" fill="none"><rect x="8" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/><rect x="18.5" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/></svg> ElevenLabs / <svg viewBox="0 0 32 32" fill="none"><path d="M16 28s-10-6.5-10-14a6 6 0 0 1 10-4.47A6 6 0 0 1 26 14c0 7.5-10 14-10 14z" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.5"/></svg> Kokoro</span>
+        </div>
+        <span class="pipeline-arrow">&rsaquo;</span>
+        <div class="pipeline-node">
+          <div class="pipeline-node-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          </div>
+          <span class="pipeline-node-label">Audio Out</span>
+          <span class="pipeline-node-sub">Caller hears reply</span>
+        </div>
+      </div>
+      <p class="pipeline-caption">Every stage is a swappable component. Replace any piece without touching the rest. Your pipeline, your latency budget, your privacy threshold.</p>
+    </div>
+
+    <div class="pipeline-grid">
+      <div class="pipeline-card">
+        <div class="pipeline-card-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+        </div>
+        <h3>On-Device Models</h3>
+        <p>Run Whisper, Llama, and other models directly on your hardware. Zero network round-trips, zero data leaving your machine. Sub-100ms latency for transcription when the model runs next to the audio.</p>
+        <div class="tag-row">
+          <span class="tag">whisper.cpp</span>
+          <span class="tag">llama.cpp</span>
+          <span class="tag">zero latency</span>
+        </div>
+      </div>
+      <div class="pipeline-card">
+        <div class="pipeline-card-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+        </div>
+        <h3>Cloud Powerhouses</h3>
+        <p>Route to OpenAI Realtime, Claude, or GPT-4o when you need frontier reasoning or multilingual support. Switch between providers with a single config change — no code rewrites.</p>
+        <div class="tag-row">
+          <span class="tag">OpenAI</span>
+          <span class="tag">Claude</span>
+          <span class="tag">OpenAI Whisper</span>
+        </div>
+      </div>
+      <div class="pipeline-card">
+        <div class="pipeline-card-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        </div>
+        <h3>Custom Voices via ElevenLabs</h3>
+        <p>Clone any voice or design one from scratch. Your agent speaks in the voice of your brand, your persona, or your own voice — with ElevenLabs' studio-grade synthesis running in the TTS slot.</p>
+        <div class="tag-row">
+          <span class="tag">voice cloning</span>
+          <span class="tag">29 languages</span>
+          <span class="tag">sub-300ms</span>
+        </div>
       </div>
     </div>
   </div>
@@ -685,7 +1386,7 @@
     <div class="use-case-list">
       <div class="use-case">
         <div class="use-case-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
         </div>
         <div>
           <h3>AI Receptionist</h3>
@@ -694,7 +1395,7 @@
       </div>
       <div class="use-case">
         <div class="use-case-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         </div>
         <div>
           <h3>Meeting Notes &amp; Transcription</h3>
@@ -703,7 +1404,7 @@
       </div>
       <div class="use-case">
         <div class="use-case-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         </div>
         <div>
           <h3>QA &amp; Compliance Monitoring</h3>
@@ -712,7 +1413,7 @@
       </div>
       <div class="use-case">
         <div class="use-case-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d4a853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
         </div>
         <div>
           <h3>Accessibility</h3>
@@ -723,47 +1424,124 @@
   </div>
 </section>
 
+<!-- BROWSER EXTENSIONS -->
+<section class="extensions" id="extensions">
+  <div class="container">
+    <span class="section-label">Browser Extensions</span>
+    <h2 class="section-title">Your agent reaches beyond the call</h2>
+    <p class="section-sub">Connect your browser to let the agent read, search, and act on your behalf — with granular privacy controls on every integration.</p>
+    <div class="extension-grid">
+
+      <div class="extension-card">
+        <div class="extension-header">
+          <div class="extension-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 18h-2V9.25C18 7.45 16.21 6 14 6h-4C7.79 6 6 7.45 6 9.25V18H4V9.25C4 6.35 6.69 4 10 4h4c3.31 0 6 2.35 6 5.25V18zM3 18h18v2H3v-2z" fill="currentColor"/><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" fill="currentColor" opacity="0.5"/></svg>
+          </div>
+          <h3>Manage Gmail</h3>
+        </div>
+        <p>Your agent reads, summarizes, and drafts emails during calls. Stay in context without switching tabs or losing focus on the conversation.</p>
+        <ul class="extension-examples">
+          <li>"Read my last email from Sarah"</li>
+          <li>"Summarize unread messages from today"</li>
+          <li>"Draft a follow-up to that invoice thread"</li>
+          <li>"Search my inbox for the contract PDF"</li>
+        </ul>
+        <div class="extension-privacy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Read-only by default &middot; Draft approval required
+        </div>
+      </div>
+
+      <div class="extension-card">
+        <div class="extension-header">
+          <div class="extension-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="2"/><line x1="9" y1="4" x2="9" y2="10" stroke="currentColor" stroke-width="2"/><line x1="15" y1="4" x2="15" y2="10" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="16" r="2" fill="currentColor" opacity="0.5"/></svg>
+          </div>
+          <h3>Manage Google Calendar</h3>
+        </div>
+        <p>Check availability, schedule meetings, and resolve conflicts — all by voice while you're on the phone. No more "let me check my calendar and get back to you."</p>
+        <ul class="extension-examples">
+          <li>"Am I free Thursday at 2pm?"</li>
+          <li>"Schedule a call with this person for next week"</li>
+          <li>"Move my 3 o'clock to Friday"</li>
+          <li>"What's on my calendar tomorrow?"</li>
+        </ul>
+        <div class="extension-privacy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Per-calendar access controls &middot; Confirm before booking
+        </div>
+      </div>
+
+      <div class="extension-card">
+        <div class="extension-header">
+          <div class="extension-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M2 17l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>FlightAware Flights</h3>
+        </div>
+        <p>Track live flights, check gate changes, and get arrival times — perfect for travel agents, logistics teams, or anyone coordinating airport pickups.</p>
+        <ul class="extension-examples">
+          <li>"Is flight UA 227 on time?"</li>
+          <li>"What gate does the Delta flight land at?"</li>
+          <li>"Track all flights from JFK to LAX right now"</li>
+          <li>"When does the next flight to Chicago depart?"</li>
+        </ul>
+        <div class="extension-privacy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Public data only &middot; No account linking required
+        </div>
+      </div>
+
+      <div class="extension-card">
+        <div class="extension-header">
+          <div class="extension-logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Google Search</h3>
+        </div>
+        <p>Your agent can look things up live — verifying facts, finding business info, or pulling up answers during a call so you never have to say "I'll look that up later."</p>
+        <ul class="extension-examples">
+          <li>"What's the phone number for that restaurant?"</li>
+          <li>"Look up the current exchange rate for EUR to USD"</li>
+          <li>"Find the address for their downtown office"</li>
+          <li>"What are today's headlines about the merger?"</li>
+        </ul>
+        <div class="extension-privacy">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Searches stay local &middot; No query history stored
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
 <!-- PLATFORMS -->
 <section class="platforms" id="platforms">
   <div class="container">
     <span class="section-label">Compatibility</span>
     <h2 class="section-title">Works with the platforms you already use</h2>
-    <p class="section-sub">Connect to any SIP provider with WebSocket support. Built primarily for macOS with cross-platform potential.</p>
+    <p class="section-sub">Connect to any SIP provider with WebSocket support. Built primarily for macOS and Linux.</p>
     <div class="platform-logos">
       <div class="platform-item">
-        <svg viewBox="0 0 48 48" fill="none">
-          <rect width="48" height="48" rx="10" fill="#1a1714"/>
-          <text x="24" y="30" text-anchor="middle" fill="#d4a853" font-family="Inter, sans-serif" font-weight="700" font-size="11">Telnyx</text>
-        </svg>
-        Telnyx
+        <svg viewBox="0 0 390 360" fill="none"><path d="M376.033 322.631C382.445 311.064 384.269 297.54 381.15 284.708C380.256 281.162 379.02 277.708 377.459 274.396C376.966 273.309 376.406 272.254 375.782 271.236L324.947 176.013H272.939L326.122 275.81C327.791 278.71 328.67 281.992 328.67 285.332C328.67 288.672 327.791 291.954 326.122 294.854C324.495 297.564 322.187 299.809 319.422 301.369C316.658 302.929 313.532 303.75 310.351 303.753H249.702C249.031 313.044 246.121 322.039 241.217 329.984C236.312 337.928 229.557 344.59 221.517 349.41H333C340.443 348.919 347.687 346.819 354.223 343.256C363.448 338.751 371.059 331.553 376.033 322.631Z" fill="currentColor"/><path d="M90.9084 113.732H142.917L168.838 65.9127C171.031 61.7857 174.319 58.3308 178.347 55.9206C182.375 53.5105 186.991 52.2367 191.696 52.2367C196.401 52.2367 201.017 53.5105 205.046 55.9206C209.074 58.3308 212.362 61.7857 214.555 65.9127L239.721 113.732H291.729L254.82 44.5395C248.7 33.1074 239.556 23.5431 228.369 16.873C217.181 10.2029 204.373 6.67871 191.319 6.67871C178.264 6.67871 165.456 10.2029 154.269 16.873C143.082 23.5431 133.938 33.1074 127.818 44.5395L90.9084 113.732Z" fill="currentColor"/><path d="M132.851 167.707C133.396 158.454 136.191 149.47 140.996 141.52C145.802 133.569 152.476 126.89 160.449 122.05H59.7869V167.707H132.851Z" fill="currentColor"/><path d="M141.153 171.034V295.78H164.809C169.742 295.725 174.522 294.069 178.415 291.065C182.309 288.061 185.102 283.875 186.367 279.147C186.876 277.333 187.131 275.458 187.122 273.575V198.727C187.144 190.602 190.398 182.813 196.178 177.052C201.958 171.29 209.796 168.022 217.992 167.956H323.268V122.05H190.478C177.388 122.072 164.843 127.242 155.595 136.426C146.347 145.61 141.153 158.057 141.153 171.034Z" fill="currentColor"/><path d="M5.17648 274.402C3.61573 277.714 2.37973 281.168 1.48554 284.714C-1.63066 297.573 0.193473 311.122 6.60253 322.72C11.5903 331.612 19.2003 338.779 28.4126 343.262C34.9489 346.825 42.1929 348.925 49.6356 349.416H191.317C204.666 349.416 217.468 344.159 226.907 334.801C236.346 325.443 241.648 312.751 241.648 299.518V175.936H217.657C211.759 176.086 206.152 178.505 202.019 182.679C197.887 186.854 195.553 192.458 195.512 198.307V273.154C195.489 281.279 192.218 289.063 186.416 294.8C180.613 300.537 172.753 303.759 164.558 303.759H72.7039C69.5232 303.756 66.3976 302.935 63.6332 301.375C60.8688 299.815 58.5603 297.57 56.9336 294.86C55.2645 291.944 54.387 288.649 54.387 285.296C54.387 281.944 55.2645 278.648 56.9336 275.733L110.117 175.936H57.6885L6.85418 271.159C6.26699 272.323 5.67979 273.321 5.17648 274.402Z" fill="currentColor"/></svg>
+        <span>Telnyx</span>
       </div>
       <div class="platform-item">
-        <svg viewBox="0 0 48 48" fill="none">
-          <rect width="48" height="48" rx="10" fill="#1a1714"/>
-          <text x="24" y="30" text-anchor="middle" fill="#d4a853" font-family="Inter, sans-serif" font-weight="700" font-size="9">Asterisk</text>
-        </svg>
-        Asterisk
+        <svg viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="11" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M14 3v22M3 14h22" stroke="currentColor" stroke-width="1.2" opacity="0.4"/><circle cx="14" cy="14" r="4.5" fill="currentColor" opacity="0.25"/><path d="M9 9l10 10M19 9L9 19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>Asterisk</span>
       </div>
       <div class="platform-item">
-        <svg viewBox="0 0 48 48" fill="none">
-          <rect width="48" height="48" rx="10" fill="#1a1714"/>
-          <text x="24" y="30" text-anchor="middle" fill="#d4a853" font-family="Inter, sans-serif" font-weight="700" font-size="7">FreeSWITCH</text>
-        </svg>
-        FreeSWITCH
+        <svg viewBox="0 0 28 28" fill="none"><rect x="3" y="8" width="22" height="12" rx="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" stroke="currentColor" stroke-width="1.8"/><path d="M8 20v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="14" r="1.5" fill="currentColor"/><circle cx="18" cy="14" r="1.5" fill="currentColor"/><path d="M12.5 14h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>FreeSWITCH</span>
       </div>
       <div class="platform-item">
-        <svg viewBox="0 0 48 48" fill="none">
-          <rect width="48" height="48" rx="10" fill="#1a1714"/>
-          <text x="24" y="30" text-anchor="middle" fill="#d4a853" font-family="Inter, sans-serif" font-weight="700" font-size="11">3CX</text>
-        </svg>
-        3CX
+        <svg viewBox="0 0 28 28" fill="none"><path d="M4 10a10 10 0 0 1 20 0" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M4 10v8a4 4 0 0 0 4 4h2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M24 10v8a4 4 0 0 1-4 4h-2" stroke="currentColor" stroke-width="1.8" fill="none"/><rect x="2" y="10" width="5" height="8" rx="2" fill="currentColor" opacity="0.45"/><rect x="21" y="10" width="5" height="8" rx="2" fill="currentColor" opacity="0.45"/></svg>
+        <span>3CX</span>
       </div>
       <div class="platform-item">
-        <svg viewBox="0 0 48 48" fill="none">
-          <rect width="48" height="48" rx="10" fill="#1a1714"/>
-          <text x="24" y="30" text-anchor="middle" fill="#d4a853" font-family="Inter, sans-serif" font-weight="700" font-size="7">OpenSIPS</text>
-        </svg>
-        OpenSIPS
+        <svg viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="11" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 11c0-2.2 2.7-4 6-4s6 1.8 6 4" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 17c0 2.2 2.7 4 6 4s6-1.8 6-4" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 11v6M20 11v6" stroke="currentColor" stroke-width="1.5" opacity="0.5"/><circle cx="14" cy="14" r="2.5" fill="currentColor" opacity="0.35"/></svg>
+        <span>OpenSIPS</span>
       </div>
     </div>
   </div>
@@ -779,6 +1557,76 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
         Get Started on GitHub
       </a>
+    </div>
+  </div>
+</section>
+
+<!-- PARTNERS -->
+<section class="partners">
+  <div class="container">
+    <p class="partners-label">Powered By</p>
+    <div class="partner-logos">
+      <a href="https://anthropic.com" target="_blank" rel="noopener" class="partner-item">
+        <div class="partner-logo-row">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18.4 4L28 28h-5.6l-4-10.4L14.4 28H8.8L18.4 4z" fill="currentColor"/>
+            <path d="M13.6 4L4 28h5.6l4-10.4L17.6 28h5.6L13.6 4z" fill="currentColor" opacity="0.5"/>
+          </svg>
+          <span class="partner-name">Claude</span>
+        </div>
+        <span class="partner-sub">Works with Claude</span>
+      </a>
+
+      <div class="partner-divider"></div>
+
+
+     
+
+      <a href="https://openai.com" target="_blank" rel="noopener" class="partner-item">
+        <div class="partner-logo-row">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M27.2 13.6c.6-1.8.2-3.8-1-5.2a5.8 5.8 0 0 0-6.2-2 5.8 5.8 0 0 0-4.4-2 5.8 5.8 0 0 0-5.5 4 5.8 5.8 0 0 0-3.9 2.8 5.8 5.8 0 0 0 .7 6.8 5.8 5.8 0 0 0 1 5.2 5.8 5.8 0 0 0 6.2 2 5.8 5.8 0 0 0 4.4 2 5.8 5.8 0 0 0 5.5-4 5.8 5.8 0 0 0 3.9-2.8 5.8 5.8 0 0 0-.7-6.8z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <path d="M15.6 8.8v8l6.9 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M9.5 19.2l6.1-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span class="partner-name">OpenAI</span>
+        </div>
+        <span class="partner-sub">Realtime Voice API</span>
+      </a>
+
+      <div class="partner-divider"></div>
+
+      <a href="https://github.com/hexgrad/kokoro" target="_blank" rel="noopener" class="partner-item">
+        <div class="partner-logo-row">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 28s-10-6.5-10-14a6 6 0 0 1 10-4.47A6 6 0 0 1 26 14c0 7.5-10 14-10 14z" fill="currentColor" opacity="0.2" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+          <span class="partner-name">Kokoro</span>
+        </div>
+        <span class="partner-sub">On-Device TTS </span>
+      </a>
+
+      <div class="partner-divider"></div>
+
+      <a href="https://github.com/argmaxinc/whisperkit" target="_blank" rel="noopener" class="partner-item">
+        <div class="partner-logo-row">
+          <svg width="32" height="20" viewBox="0 0 50 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M0.503213 27.7264V31.0566H0.726162H26.375C26.9173 31.0566 27.2652 30.7087 27.2668 30.1647C27.2679 29.7991 27.2676 29.4334 27.2674 29.0677C27.2673 28.9111 27.2672 28.7545 27.2672 28.5978C27.2672 28.0345 27.5986 27.7047 28.1682 27.7035C28.4531 27.7028 28.7379 27.703 29.0227 27.7032C29.2668 27.7033 29.5108 27.7035 29.755 27.7031C30.2547 27.7027 30.6014 27.3588 30.6026 26.8626C30.603 26.6456 30.6028 26.4286 30.6025 26.2117C30.602 25.8862 30.6016 25.5608 30.6038 25.2354C30.6074 24.7027 30.9436 24.3692 31.4707 24.3692H33.0775C33.6451 24.3696 33.9757 24.6975 33.9773 25.2643C33.9781 25.532 33.9779 25.7997 33.9777 26.0675C33.9775 26.3355 33.9773 26.6035 33.9781 26.8714C33.9793 27.3568 34.3268 27.7027 34.8125 27.7035C35.0468 27.7038 35.2811 27.7036 35.5155 27.7035C35.8168 27.7032 36.1181 27.703 36.4193 27.7039C36.9833 27.7055 37.318 28.0474 37.3135 28.6063C37.3091 29.1354 37.3063 29.6645 37.3127 30.1932C37.3188 30.7123 37.6735 31.0566 38.1909 31.0566H38.1913C39.845 31.0575 41.4983 31.0583 43.152 31.0566C43.6573 31.0562 43.9992 30.7167 43.9992 30.2133C44 20.7448 44 11.276 43.9992 1.80708C43.9992 1.27634 43.6626 0.942871 43.1339 0.942871H38.213C37.661 0.942871 37.3123 1.29 37.3111 1.84323C37.3105 2.13155 37.3106 2.41999 37.3108 2.70842C37.311 2.95575 37.3111 3.20307 37.3107 3.45031C37.3099 3.93886 36.9685 4.27675 36.4752 4.27715C36.263 4.27746 36.0508 4.27723 35.8386 4.27699C35.5084 4.27661 35.1783 4.27624 34.8482 4.27795C34.3345 4.28036 33.9773 4.63955 33.9773 5.14859C33.9772 5.3295 33.9775 5.51041 33.9778 5.69132C33.9784 6.0528 33.9791 6.41427 33.9761 6.77575C33.9721 7.28158 33.6166 7.63152 33.1124 7.63313C32.7555 7.63393 32.3983 7.63366 32.0411 7.63339C31.8626 7.63326 31.6841 7.63313 31.5056 7.63313C30.946 7.63313 30.6046 7.29403 30.603 6.73437C30.6022 6.39071 30.6024 6.04687 30.6027 5.70309C30.6028 5.53122 30.603 5.35937 30.603 5.18756C30.6026 4.61664 30.2655 4.27876 29.6919 4.27755C29.4241 4.27695 29.1563 4.27715 28.8885 4.27735C28.6206 4.27755 28.3528 4.27775 28.085 4.27715C27.609 4.27635 27.268 3.93163 27.2672 3.45232C27.2669 3.2613 27.2674 3.07032 27.2679 2.87936C27.2688 2.52129 27.2697 2.16326 27.2656 1.80507C27.2595 1.28357 26.908 0.942871 26.3898 0.942871H0.741026H0.50482V4.27795H0.792846C1.65834 4.27795 2.52384 4.27795 3.38934 4.27794C8.58284 4.27789 13.7763 4.27784 18.9698 4.27956C19.1562 4.27996 19.3442 4.29362 19.5282 4.32175C20.0858 4.40612 20.4172 4.72593 20.5156 5.27956C20.5542 5.49572 20.5783 5.71749 20.5783 5.93646C20.5815 12.6195 20.5819 19.3025 20.5783 25.9855C20.5779 26.2378 20.5578 26.4942 20.512 26.7421C20.4357 27.1563 20.224 27.4873 19.7925 27.5962C19.5105 27.6673 19.2153 27.7212 18.9261 27.7212C13.8425 27.7269 8.75875 27.7267 3.67516 27.7265C2.70648 27.7264 1.73781 27.7264 0.769145 27.7264H0.503213ZM39.8049 24.37H38.9814L38.9834 24.3704C38.9102 24.3704 38.8367 24.3686 38.7632 24.3668C38.6018 24.3628 38.4404 24.3588 38.2809 24.374C37.6598 24.4327 37.2629 23.9759 37.3071 23.4122C37.3296 23.1266 37.3145 22.8375 37.2994 22.5493C37.2959 22.4828 37.2924 22.4163 37.2894 22.3499C37.2493 21.4773 36.7809 21.0482 35.8577 21.0349C35.6518 21.032 35.4457 21.0326 35.2397 21.0333C35.1109 21.0338 34.9822 21.0342 34.8535 21.0337C34.3039 21.0321 33.9673 20.6918 33.9597 20.1466C33.9581 20.0423 33.9579 19.9376 33.9577 19.833C33.957 19.4955 33.9563 19.1574 33.9119 18.8256C33.8134 18.092 33.5427 17.8244 32.8071 17.726C32.4548 17.679 32.0849 17.6818 31.733 17.7316C31.0139 17.8336 30.6761 18.2366 30.6459 18.9666C30.6323 19.2905 30.6297 19.6146 30.6271 19.9388C30.6265 20.016 30.6258 20.0932 30.6251 20.1703C30.6202 20.677 30.2756 21.0261 29.767 21.0341C29.636 21.0362 29.5047 21.0355 29.3735 21.0348C29.0894 21.0334 28.8053 21.032 28.5237 21.0578C27.6869 21.1346 27.3101 21.5564 27.2889 22.3921C27.2792 22.7798 27.274 23.1675 27.27 23.5556C27.2652 24.0213 26.9233 24.3688 26.4613 24.37C25.8853 24.3716 25.3096 24.372 24.734 24.37C24.2881 24.3684 23.9298 24.0454 23.9181 23.5998C23.9024 22.9976 23.904 22.3941 23.9173 21.7919C23.9269 21.3592 24.2965 21.0229 24.7356 21.0152C24.8669 21.0129 24.9983 21.0122 25.1297 21.0114C25.4063 21.0098 25.6829 21.0083 25.9588 20.9919C26.8044 20.9421 27.2194 20.5098 27.2483 19.6649C27.2611 19.284 27.2656 18.9027 27.2684 18.5215C27.2724 18.0092 27.607 17.6673 28.1216 17.6589C28.2562 17.6565 28.391 17.6568 28.5257 17.6571C28.8062 17.6576 29.0865 17.6582 29.3649 17.6352C30.1543 17.5697 30.5134 17.2217 30.5789 16.4383C30.6094 16.0691 30.5977 15.6874 30.5375 15.3222C30.4439 14.7533 30.137 14.4604 29.5629 14.3905C29.1652 14.3421 28.7614 14.3359 28.3588 14.3297C28.2869 14.3286 28.2151 14.3275 28.1433 14.3262C27.597 14.3161 27.2716 13.9975 27.268 13.4544C27.2656 13.0795 27.2591 12.7051 27.2479 12.3306C27.2206 11.4411 26.7445 11.0003 25.8001 10.9899C25.6256 10.9881 25.4511 10.9886 25.2766 10.9892C25.1096 10.9897 24.9427 10.9903 24.7758 10.9887C24.272 10.9839 23.9149 10.6283 23.9129 10.1285C23.9105 9.57287 23.9101 9.01682 23.9129 8.46117C23.9153 7.98266 24.2664 7.62228 24.7476 7.61585C25.31 7.60822 25.8724 7.60781 26.4348 7.61585C26.9446 7.62308 27.2708 7.97905 27.274 8.49412C27.2744 8.56488 27.2745 8.63575 27.2746 8.70666C27.2751 9.06373 27.2756 9.42206 27.3142 9.77536C27.3985 10.552 27.7709 10.8939 28.5575 10.9449C28.8652 10.9647 29.1744 10.9662 29.4834 10.9676C29.5757 10.9681 29.668 10.9685 29.7602 10.9694C30.2708 10.9746 30.6178 11.3173 30.6235 11.8244C30.6246 11.9288 30.625 12.0334 30.6254 12.1379C30.6266 12.4283 30.6277 12.7188 30.6451 13.008C30.6954 13.8352 31.042 14.2004 31.8688 14.2864C32.1524 14.3161 32.4448 14.3129 32.7288 14.2828C33.533 14.1976 33.8809 13.8348 33.9335 13.0309C33.9531 12.7317 33.9546 12.4316 33.9562 12.1315C33.9567 12.0302 33.9572 11.9289 33.9585 11.8276C33.9645 11.3153 34.3059 10.9746 34.8169 10.9694C34.9086 10.9685 35.0002 10.968 35.0919 10.9676C35.395 10.9662 35.698 10.9647 35.9999 10.9453C36.8544 10.8903 37.2569 10.47 37.2878 9.61867C37.3019 9.23136 37.3067 8.84325 37.3107 8.45555C37.3155 7.97664 37.6409 7.6267 38.1238 7.61705C38.699 7.6058 39.2751 7.6058 39.8507 7.61705C40.3215 7.6263 40.661 7.98829 40.663 8.46077C40.6654 9.02324 40.6662 9.58572 40.663 10.1482C40.6606 10.6243 40.3055 10.9791 39.8246 10.9891C39.6815 10.9921 39.5382 10.9919 39.3948 10.9917C39.1164 10.9913 38.838 10.9909 38.5616 11.014C37.7385 11.0823 37.3589 11.5026 37.3348 12.331C37.3236 12.7251 37.3172 13.1197 37.3123 13.5142C37.3067 13.9775 36.9632 14.319 36.4981 14.3242C36.1036 14.3286 35.7091 14.3342 35.315 14.3467C34.4955 14.372 34.0717 14.7485 34.0051 15.5588C33.9749 15.928 33.9906 16.3081 34.0408 16.6757C34.1119 17.194 34.4417 17.5291 34.9615 17.5938C35.4235 17.6516 35.8947 17.6629 36.3607 17.6524C36.9492 17.6396 37.3537 18.0281 37.3188 18.6231C37.2959 19.0148 37.3155 19.413 37.3549 19.8043C37.4341 20.587 37.8149 20.9445 38.6038 20.9915C38.9081 21.0099 39.2133 21.0112 39.5185 21.0126C39.6146 21.013 39.7108 21.0135 39.807 21.0144C40.3151 21.0193 40.6614 21.3628 40.6634 21.8738C40.6658 22.423 40.6662 22.9719 40.6634 23.5211C40.6606 24.0377 40.3232 24.3692 39.8049 24.37ZM0.5 7.63395V10.9702V10.9714H0.778385C1.53453 10.9714 2.29067 10.9714 3.04681 10.9714C6.07317 10.9714 9.09953 10.9713 12.1259 10.9723C12.299 10.9723 12.4734 10.9775 12.6461 10.9919C13.3909 11.0542 13.7645 11.4162 13.8524 12.1647C13.8749 12.3567 13.8886 12.5508 13.889 12.7441C13.8922 13.9024 13.893 15.0611 13.8898 16.2194C13.8895 16.3338 13.8892 16.4482 13.8889 16.5626C13.8861 17.5928 13.8834 18.623 13.8689 19.6529C13.8581 20.4431 13.5238 20.8558 12.8068 20.9831C12.5915 21.0213 12.3685 21.0325 12.1488 21.0325C9.95305 21.0362 7.7569 21.0358 5.56115 21.0329C5.3615 21.0325 5.16024 21.0189 4.9622 20.9932C4.33352 20.9112 3.97238 20.6131 3.89485 20.0056C3.83781 19.5609 3.84946 19.0984 3.90008 18.6517C3.95672 18.1503 4.2813 17.8357 4.78344 17.7429C5.04455 17.6942 5.31289 17.6637 5.57802 17.6625C6.75271 17.6571 7.92764 17.6578 9.10261 17.6584C9.49428 17.6587 9.88595 17.6589 10.2776 17.6589H10.5014V14.3242H10.2692C9.7601 14.3242 9.25101 14.325 8.74192 14.3258C7.43006 14.3279 6.1182 14.33 4.80633 14.3182C4.21984 14.313 3.80889 14.7155 3.83821 15.2848C3.86231 15.7553 3.82576 16.2338 3.7651 16.7023C3.70002 17.2065 3.37705 17.5151 2.87732 17.6091C2.63589 17.6541 2.38683 17.6701 2.14099 17.6746C1.75847 17.6811 1.37554 17.6798 0.989084 17.6785C0.829677 17.6779 0.669668 17.6774 0.508838 17.6774V21.0153C0.541693 21.0153 0.572667 21.0152 0.602412 21.0151C0.658494 21.0149 0.710204 21.0147 0.761915 21.0153C0.946601 21.0171 1.13136 21.0173 1.31613 21.0175C1.74022 21.018 2.16434 21.0184 2.58769 21.0386C3.32322 21.0735 3.72373 21.4464 3.80166 22.1756C3.83887 22.5247 3.8415 22.8782 3.84412 23.2309C3.84478 23.3198 3.84544 23.4087 3.84665 23.4974C3.85388 24.0193 4.1865 24.3684 4.71274 24.3688C7.48454 24.372 10.2559 24.372 13.0277 24.3688C13.521 24.3684 13.8653 24.0076 13.8709 23.5131C13.8722 23.4057 13.8728 23.2983 13.8735 23.1909C13.8754 22.8835 13.8772 22.5759 13.893 22.2692C13.9292 21.5649 14.2554 21.172 14.9511 21.0703C15.2955 21.02 15.648 21.0194 15.9994 21.0188C16.0968 21.0187 16.1942 21.0185 16.2912 21.0173C16.8934 21.0092 17.2256 20.6862 17.2256 20.088C17.2257 19.3327 17.2252 18.5775 17.2247 17.8224C17.2234 15.8589 17.2221 13.8956 17.2316 11.9321C17.2344 11.3644 16.8247 10.9558 16.2892 10.9795C15.8052 11.0012 15.3139 10.9626 14.8322 10.9023C14.4393 10.8529 14.1336 10.632 14.0071 10.2318C13.9533 10.0614 13.9047 9.88306 13.8946 9.70588C13.8725 9.31214 13.8537 8.9156 13.8757 8.52267C13.9035 8.0297 13.47 7.62552 12.9856 7.62712C9.84454 7.63638 6.70377 7.63545 3.56286 7.63452C2.61329 7.63423 1.66371 7.63395 0.714112 7.63395H0.5Z" fill="currentColor"/></svg>
+          <span class="partner-name">WhisperKit</span>
+        </div>
+        <span class="partner-sub">On-Device STT by Argmax</span>
+      </a>
+      <a href="https://elevenlabs.io" target="_blank" rel="noopener" class="partner-item">
+        <div class="partner-logo-row">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/>
+            <rect x="18.5" y="4" width="5.5" height="24" rx="2.75" fill="currentColor"/>
+          </svg>
+          <span class="partner-name">ElevenLabs</span>
+        </div>
+        <span class="partner-sub">Custom Voice Synthesis</span>
+      </a>
+
+      <div class="partner-divider"></div>
     </div>
   </div>
 </section>
@@ -800,15 +1648,82 @@
 </footer>
 
 <script>
-  document.getElementById('mobileToggle').addEventListener('click', function () {
-    document.getElementById('navLinks').classList.toggle('open');
-  });
+  (function() {
+    var root = document.documentElement;
+    var selector = document.getElementById('themeSelector');
+    var toggle = document.getElementById('themeToggle');
+    var dropdown = document.getElementById('themeDropdown');
+    var label = document.getElementById('themeLabel');
+    var buttons = dropdown.querySelectorAll('button[data-theme]');
+    var themes = { vt100: 'VT-100', miami: 'Miami Vice' };
+    var themeKeys = ['vt100', 'miami'];
+    var userChose = false;
+    var cycleTimer = null;
+    var FIRST_DELAY = 5000;
+    var CYCLE_INTERVAL = 10000;
 
-  document.querySelectorAll('.nav-links a').forEach(function (link) {
-    link.addEventListener('click', function () {
-      document.getElementById('navLinks').classList.remove('open');
+    function applyTheme(key) {
+      root.className = 'theme-' + key;
+      label.textContent = themes[key];
+      buttons.forEach(function(btn) {
+        btn.classList.toggle('active', btn.dataset.theme === key);
+      });
+    }
+
+    var saved = localStorage.getItem('pg-theme');
+    if (saved && themes[saved]) {
+      applyTheme(saved);
+      userChose = true;
+    }
+
+    toggle.addEventListener('click', function(e) {
+      e.stopPropagation();
+      selector.classList.toggle('open');
     });
-  });
+
+    function stopCycle() {
+      if (cycleTimer) { clearTimeout(cycleTimer); cycleTimer = null; }
+    }
+
+    buttons.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var key = btn.dataset.theme;
+        applyTheme(key);
+        localStorage.setItem('pg-theme', key);
+        userChose = true;
+        selector.classList.remove('open');
+        stopCycle();
+      });
+    });
+
+    document.addEventListener('click', function(e) {
+      if (!selector.contains(e.target)) selector.classList.remove('open');
+    });
+
+    function autoCycle() {
+      if (userChose) return;
+      var current = root.className.replace('theme-', '') || 'vt100';
+      var idx = themeKeys.indexOf(current);
+      var next = themeKeys[(idx + 1) % themeKeys.length];
+      applyTheme(next);
+      cycleTimer = setTimeout(autoCycle, CYCLE_INTERVAL);
+    }
+
+    if (!userChose) {
+      cycleTimer = setTimeout(autoCycle, FIRST_DELAY);
+    }
+
+    // Mobile menu
+    document.getElementById('mobileToggle').addEventListener('click', function() {
+      document.getElementById('navLinks').classList.toggle('open');
+    });
+
+    document.querySelectorAll('.nav-links a').forEach(function(link) {
+      link.addEventListener('click', function() {
+        document.getElementById('navLinks').classList.remove('open');
+      });
+    });
+  })();
 </script>
 
 </body>

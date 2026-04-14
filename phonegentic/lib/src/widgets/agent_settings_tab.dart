@@ -572,7 +572,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             _text.claudeModel,
             const {
               'claude-sonnet-4-20250514': 'Claude Sonnet 4',
-              'claude-haiku': 'Claude Haiku',
+              'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
             },
             (v) => _updateText(_text.copyWith(claudeModel: v)),
           ),

@@ -12,6 +12,7 @@ import '../demo_mode_service.dart';
 import '../messaging/phone_numbers.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
+import '../transcript_exporter.dart';
 import 'dialpad_contact_preview.dart';
 
 class CallHistoryPanel extends StatefulWidget {
@@ -561,7 +562,35 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     );
   }
 
+  Future<void> _downloadTranscript(BuildContext context) async {
+    if (_transcripts == null || _transcripts!.isEmpty) return;
+
+    final record = widget.record;
+    final content = TranscriptExporter.formatCallTranscript(
+      transcripts: _transcripts!,
+      remoteIdentity: record['remote_identity'] as String?,
+      remoteDisplayName: record['remote_display_name'] as String?,
+      direction: record['direction'] as String?,
+      status: record['status'] as String?,
+      startedAt: record['started_at'] as String?,
+      durationSeconds: record['duration_seconds'] as int?,
+    );
+
+    final name = (record['remote_display_name'] as String?)?.isNotEmpty == true
+        ? record['remote_display_name'] as String
+        : record['remote_identity'] as String? ?? 'call';
+    final safeName = name.replaceAll(RegExp(r'[^\w\-]'), '_');
+
+    await TranscriptExporter.saveToDownloads(
+      content,
+      filenamePrefix: 'transcript_$safeName',
+      context: context,
+    );
+  }
+
   Widget _buildTranscriptSection() {
+    final hasTranscripts = _transcripts != null && _transcripts!.isNotEmpty;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -584,7 +613,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                 ),
               ),
             ))
-          : (_transcripts == null || _transcripts!.isEmpty)
+          : !hasTranscripts
               ? Text(
                   'No transcript recorded',
                   style: TextStyle(
@@ -596,14 +625,52 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Transcript',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textTertiary,
-                        letterSpacing: 0.5,
-                      ),
+                    Row(
+                      children: [
+                        Text(
+                          'Transcript',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textTertiary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const Spacer(),
+                        HoverButton(
+                          onTap: () => _downloadTranscript(context),
+                          tooltip: 'Download transcript',
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(6),
+                              color: AppColors.accent.withValues(alpha: 0.10),
+                              border: Border.all(
+                                color: AppColors.accent.withValues(alpha: 0.25),
+                                width: 0.5,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.download_rounded,
+                                    size: 11, color: AppColors.accent),
+                                const SizedBox(width: 3),
+                                Text(
+                                  'Save',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.accent,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     ..._transcripts!
@@ -907,6 +974,8 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
             style: TextStyle(
               fontSize: 10,
               color: AppColors.textTertiary,
+              fontFamily: AppColors.timerFontFamily,
+              fontFamilyFallback: AppColors.timerFontFamilyFallback,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),

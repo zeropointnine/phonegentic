@@ -8,6 +8,10 @@ class AppColors {
 
   static void _update(AppTheme theme) => _theme = theme;
 
+  /// Monospace font stack for timers / durations (SF Mono on macOS, Menlo fallback).
+  static const String timerFontFamily = 'SF Mono';
+  static const List<String> timerFontFamilyFallback = ['Menlo', 'Courier New'];
+
   static bool get _isMiami => _theme == AppTheme.miamiVice;
   static bool get _isLight => _theme == AppTheme.light;
 

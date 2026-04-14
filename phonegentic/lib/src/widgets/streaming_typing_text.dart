@@ -30,6 +30,7 @@ class _StreamingTypingTextState extends State<StreamingTypingText> {
   int _revealed = 0;
   Timer? _timer;
   Timer? _pauseTimer;
+  bool _frozenByInterrupt = false;
 
   static const _tickMs = 40;
   static const _boundaryPauseMs = 2000;
@@ -56,6 +57,23 @@ class _StreamingTypingTextState extends State<StreamingTypingText> {
     if (widget.fullText.length < oldWidget.fullText.length) {
       _revealed = widget.fullText.length;
     }
+
+    // Voice-sync turned off (e.g. TTS playback ended or barge-in interrupt)
+    // while we were still draining — freeze at the current reveal position
+    // so the user only sees text that was actually spoken.
+    if (!widget.voiceSync && oldWidget.voiceSync && !widget.isStreaming) {
+      _frozenByInterrupt = true;
+      _stopTimer();
+      _cancelPause();
+      return;
+    }
+
+    // New streaming message resets the interrupt freeze.
+    if (widget.isStreaming && !oldWidget.isStreaming) {
+      _frozenByInterrupt = false;
+    }
+
+    if (_frozenByInterrupt) return;
 
     // voiceSync changed — restart timer at new cadence.
     if (widget.voiceSync != oldWidget.voiceSync) {
@@ -143,8 +161,10 @@ class _StreamingTypingTextState extends State<StreamingTypingText> {
   @override
   Widget build(BuildContext context) {
     final len = _revealed.clamp(0, widget.fullText.length);
+    final text = widget.fullText.substring(0, len);
+    final truncated = _frozenByInterrupt && len < widget.fullText.length;
     return Text(
-      widget.fullText.substring(0, len),
+      truncated ? '$text…' : text,
       style: widget.style,
     );
   }

@@ -346,11 +346,6 @@
         return;
       }
       var consent = document.getElementById('sms_consent');
-      if (!consent.checked) {
-        showFormError('Please check the SMS consent box to subscribe.');
-        consent.focus();
-        return;
-      }
       input.value = e164;
 
       var btn = form.querySelector('button[type="submit"]');
@@ -360,7 +355,7 @@
       params.set('name', String(document.getElementById('name').value || '').trim());
       params.set('company', String(document.getElementById('company').value || '').trim());
       params.set('website', String(hp.value || ''));
-      params.set('sms_consent', 'yes');
+      params.set('sms_consent', consent.checked ? 'yes' : 'no');
 
       btn.disabled = true;
       fetch(form.action, {
