@@ -219,6 +219,7 @@ class CallHistoryDb {
       CREATE TABLE IF NOT EXISTS job_functions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
+        agent_name TEXT,
         role TEXT NOT NULL,
         job_description TEXT NOT NULL,
         speakers_json TEXT NOT NULL,
