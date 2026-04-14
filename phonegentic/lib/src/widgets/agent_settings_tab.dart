@@ -30,6 +30,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _voiceInstructionsCtrl = TextEditingController();
   final _textOpenaiKeyCtrl = TextEditingController();
   final _textClaudeKeyCtrl = TextEditingController();
+  final _textCustomKeyCtrl = TextEditingController();
+  final _textCustomEndpointCtrl = TextEditingController();
+  final _textCustomModelCtrl = TextEditingController();
   final _systemPromptCtrl = TextEditingController();
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
@@ -60,6 +63,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     _voiceInstructionsCtrl.dispose();
     _textOpenaiKeyCtrl.dispose();
     _textClaudeKeyCtrl.dispose();
+    _textCustomKeyCtrl.dispose();
+    _textCustomEndpointCtrl.dispose();
+    _textCustomModelCtrl.dispose();
     _systemPromptCtrl.dispose();
     _ttsApiKeyCtrl.dispose();
     _ttsVoiceIdCtrl.dispose();
@@ -85,6 +91,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _voiceInstructionsCtrl.text = v.instructions;
       _textOpenaiKeyCtrl.text = t.openaiApiKey;
       _textClaudeKeyCtrl.text = t.claudeApiKey;
+      _textCustomKeyCtrl.text = t.customApiKey;
+      _textCustomEndpointCtrl.text = t.customEndpointUrl;
+      _textCustomModelCtrl.text = t.customModel;
       _systemPromptCtrl.text = t.systemPrompt;
       _ttsApiKeyCtrl.text = tts.elevenLabsApiKey;
       _ttsVoiceIdCtrl.text = tts.elevenLabsVoiceId;
@@ -536,17 +545,34 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   // ───── Text Agent ─────
 
   Widget _buildTextAgentCard() {
+    final isClaude = _text.provider == TextAgentProvider.claude;
     final isOpenai = _text.provider == TextAgentProvider.openai;
+    final isCustom = _text.provider == TextAgentProvider.custom;
+
+    final subtitle = switch (_text.provider) {
+      TextAgentProvider.openai => 'OpenAI',
+      TextAgentProvider.claude => 'Claude',
+      TextAgentProvider.custom => 'Custom',
+    };
 
     return _AgentCard(
       icon: Icons.chat_bubble_outline_rounded,
       title: 'Text Agent',
-      subtitle: isOpenai ? 'OpenAI' : 'Claude',
+      subtitle: subtitle,
       enabled: _text.enabled,
       configured: _text.isConfigured,
       onToggle: (v) => _updateText(_text.copyWith(enabled: v)),
       children: [
-        _buildProviderSelector(),
+        _buildDropdown<TextAgentProvider>(
+          'Provider',
+          _text.provider,
+          const {
+            TextAgentProvider.claude: 'Claude',
+            TextAgentProvider.openai: 'OpenAI',
+            TextAgentProvider.custom: 'Custom',
+          },
+          (v) => _updateText(_text.copyWith(provider: v)),
+        ),
         _divider(),
         if (isOpenai) ...[
           _buildKeyField('API Key', _textOpenaiKeyCtrl, (val) {
@@ -562,7 +588,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             },
             (v) => _updateText(_text.copyWith(openaiModel: v)),
           ),
-        ] else ...[
+        ] else if (isClaude) ...[
           _buildKeyField('API Key', _textClaudeKeyCtrl, (val) {
             _updateText(_text.copyWith(claudeApiKey: val));
           }),
@@ -576,69 +602,28 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             },
             (v) => _updateText(_text.copyWith(claudeModel: v)),
           ),
+        ] else if (isCustom) ...[
+          _buildKeyField('API Key', _textCustomKeyCtrl, (val) {
+            _updateText(_text.copyWith(customApiKey: val));
+          }),
+          _divider(),
+          _buildTextField(
+            'Endpoint',
+            _textCustomEndpointCtrl,
+            hint: 'https://openrouter.ai/api/v1/chat/completions',
+            onChanged: (val) => _updateText(_text.copyWith(customEndpointUrl: val)),
+          ),
+          _divider(),
+          _buildTextField(
+            'Model',
+            _textCustomModelCtrl,
+            hint: 'e.g. meta-llama/llama-3.3-70b-instruct',
+            onChanged: (val) => _updateText(_text.copyWith(customModel: val)),
+          ),
         ],
         _divider(),
         _buildPromptField(),
       ],
-    );
-  }
-
-  Widget _buildProviderSelector() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text('Provider',
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-          ),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-              ),
-              child: Row(
-                children: [
-                  _providerChip('OpenAI', TextAgentProvider.openai),
-                  _providerChip('Claude', TextAgentProvider.claude),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _providerChip(String label, TextAgentProvider provider) {
-    final selected = _text.provider == provider;
-    return Expanded(
-      child: HoverButton(
-        onTap: () => _updateText(_text.copyWith(provider: provider)),
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.accent : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: selected ? AppColors.onAccent : AppColors.textTertiary,
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 

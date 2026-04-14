@@ -35,6 +35,7 @@ import 'tear_sheet_service.dart';
 import 'elevenlabs_tts_service.dart';
 import 'kokoro_tts_service.dart';
 import 'on_device_config.dart';
+import 'llm/llm_interfaces.dart';
 import 'text_agent_service.dart';
 import 'whisper_realtime_service.dart';
 
@@ -488,19 +489,19 @@ class AgentService extends ChangeNotifier {
   static String _formatPipelineError(String raw) {
     // Claude credit / billing errors
     if (raw.contains('credit balance is too low')) {
-      return 'Claude API: credit balance too low';
+      return 'LLM API: credit balance too low';
     }
     // Claude auth
     if (raw.contains('401') || raw.contains('authentication_error')) {
-      return 'Claude API: invalid API key';
+      return 'LLM API: invalid API key';
     }
     // Claude model not found
     if (raw.contains('not_found_error') || raw.contains('model_not_found')) {
-      return 'Claude API: model not found';
+      return 'LLM API: model not found';
     }
     // Claude rate limit
     if (raw.contains('rate_limit') || raw.contains('429')) {
-      return 'Claude API: rate limited';
+      return 'LLM API: rate limited';
     }
     // Generic – trim to something readable
     final match = RegExp(r'"message"\s*:\s*"([^"]+)"').firstMatch(raw);
@@ -1163,13 +1164,13 @@ class AgentService extends ChangeNotifier {
     },
   ];
 
-  static const _flightToolsClaude = [
-    {
-      'name': 'lookup_flight',
-      'description': 'Look up real-time flight information by flight number. '
+  static final _flightToolsLlm = <LlmTool>[
+    LlmTool(
+      name: 'lookup_flight',
+      description: 'Look up real-time flight information by flight number. '
           'Returns airline, origin, destination, departure/arrival times, '
           'status, gate info.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'flight_number': {
@@ -1180,13 +1181,12 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['flight_number'],
       },
-    },
-    {
-      'name': 'search_flights_by_route',
-      'description':
-          'Search all flights between two airports. Returns upcoming and '
-              'recent flights with airline, ident, aircraft, status, and times.',
-      'input_schema': {
+    ),
+    LlmTool(
+      name: 'search_flights_by_route',
+      description: 'Search all flights between two airports. Returns upcoming and '
+          'recent flights with airline, ident, aircraft, status, and times.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'origin': {
@@ -1201,7 +1201,7 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['origin', 'destination'],
       },
-    },
+    ),
   ];
 
   // ── Gmail tools ─────────────────────────────────────────────────────
@@ -1272,11 +1272,11 @@ class AgentService extends ChangeNotifier {
     },
   ];
 
-  static const _gmailToolsClaude = [
-    {
-      'name': 'send_gmail',
-      'description': 'Send an email via Gmail. Composes and sends immediately.',
-      'input_schema': {
+  static final _gmailToolsLlm = <LlmTool>[
+    LlmTool(
+      name: 'send_gmail',
+      description: 'Send an email via Gmail. Composes and sends immediately.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'to': {
@@ -1294,13 +1294,12 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['to', 'subject', 'body'],
       },
-    },
-    {
-      'name': 'search_gmail',
-      'description':
-          'Search the user\'s Gmail inbox. Returns matching emails with '
-              'sender, subject, snippet, and date.',
-      'input_schema': {
+    ),
+    LlmTool(
+      name: 'search_gmail',
+      description: 'Search the user\'s Gmail inbox. Returns matching emails with '
+          'sender, subject, snippet, and date.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'query': {
@@ -1311,12 +1310,11 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['query'],
       },
-    },
-    {
-      'name': 'read_gmail',
-      'description':
-          'Read the full content of a specific email found by searching Gmail.',
-      'input_schema': {
+    ),
+    LlmTool(
+      name: 'read_gmail',
+      description: 'Read the full content of a specific email found by searching Gmail.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'query': {
@@ -1331,7 +1329,7 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['query'],
       },
-    },
+    ),
   ];
 
   // ── Google Calendar tools ──────────────────────────────────────────
@@ -1401,11 +1399,11 @@ class AgentService extends ChangeNotifier {
     },
   ];
 
-  static const _googleCalendarToolsClaude = [
-    {
-      'name': 'create_google_calendar_event',
-      'description': 'Create an event on Google Calendar.',
-      'input_schema': {
+  static final _googleCalendarToolsLlm = <LlmTool>[
+    LlmTool(
+      name: 'create_google_calendar_event',
+      description: 'Create an event on Google Calendar.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'title': {
@@ -1435,12 +1433,11 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['title', 'date', 'start_time', 'end_time'],
       },
-    },
-    {
-      'name': 'read_google_calendar',
-      'description':
-          'Read all events from Google Calendar for a specific date.',
-      'input_schema': {
+    ),
+    LlmTool(
+      name: 'read_google_calendar',
+      description: 'Read all events from Google Calendar for a specific date.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'date': {
@@ -1450,16 +1447,15 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['date'],
       },
-    },
-    {
-      'name': 'sync_google_calendar',
-      'description':
-          'Synchronize local calendar with Google Calendar (bidirectional).',
-      'input_schema': {
+    ),
+    LlmTool(
+      name: 'sync_google_calendar',
+      description: 'Synchronize local calendar with Google Calendar (bidirectional).',
+      inputSchema: {
         'type': 'object',
         'properties': {},
       },
-    },
+    ),
   ];
 
   // ── Google Search tools ─────────────────────────────────────────────
@@ -1494,12 +1490,11 @@ class AgentService extends ChangeNotifier {
     },
   ];
 
-  static const _googleSearchToolsClaude = [
-    {
-      'name': 'google_search',
-      'description':
-          'Search Google and return top results with title, URL, and snippet.',
-      'input_schema': {
+  static final _googleSearchToolsLlm = <LlmTool>[
+    LlmTool(
+      name: 'google_search',
+      description: 'Search Google and return top results with title, URL, and snippet.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'query': {
@@ -1509,33 +1504,33 @@ class AgentService extends ChangeNotifier {
         },
         'required': ['query'],
       },
-    },
+    ),
   ];
 
   /// Push integration-specific tools and instructions to both pipelines.
   void _applyIntegrationTools() {
     final oaiExtra = <Map<String, dynamic>>[];
-    final claudeExtra = <Map<String, dynamic>>[];
+    final llmExtra = <LlmTool>[];
 
     if (_flightAwareEnabled) {
       oaiExtra.addAll(_flightToolsOpenAi);
-      claudeExtra.addAll(_flightToolsClaude);
+      llmExtra.addAll(_flightToolsLlm);
     }
     if (_gmailEnabled) {
       oaiExtra.addAll(_gmailToolsOpenAi);
-      claudeExtra.addAll(_gmailToolsClaude);
+      llmExtra.addAll(_gmailToolsLlm);
     }
     if (_googleCalendarEnabled) {
       oaiExtra.addAll(_googleCalendarToolsOpenAi);
-      claudeExtra.addAll(_googleCalendarToolsClaude);
+      llmExtra.addAll(_googleCalendarToolsLlm);
     }
     if (_googleSearchEnabled) {
       oaiExtra.addAll(_googleSearchToolsOpenAi);
-      claudeExtra.addAll(_googleSearchToolsClaude);
+      llmExtra.addAll(_googleSearchToolsLlm);
     }
 
     _whisper.setExtraTools(oaiExtra);
-    _textAgent?.setExtraTools(claudeExtra);
+    _textAgent?.setExtraTools(llmExtra);
   }
 
   // ---------------------------------------------------------------------------
@@ -2158,7 +2153,7 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
-      debugPrint('[AgentService] Claude response final: '
+      debugPrint('[AgentService] Response final: '
           '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
 
       if (event.text.startsWith('Error:')) {
