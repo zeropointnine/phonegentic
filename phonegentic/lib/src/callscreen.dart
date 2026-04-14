@@ -1333,7 +1333,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       );
     }
 
-    if (_callConfirmed) {
+    if (_callConfirmed && !voiceOnly) {
       stackWidgets.add(
         Positioned(
           top: 12,
