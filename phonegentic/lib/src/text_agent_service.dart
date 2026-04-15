@@ -644,6 +644,7 @@ class TextAgentService {
   }
 
   static LlmCaller _createCaller(TextAgentConfig config, HttpClient http) {
+
     switch (config.provider) {
       case TextAgentProvider.claude:
         return ClaudeCaller(http);
@@ -651,6 +652,7 @@ class TextAgentService {
         throw UnimplementedError('OpenAI realtime handles text in-band');
       case TextAgentProvider.custom:
         return OpenAiCaller(
+
           http,
           baseUrl: Uri.parse(config.customEndpointUrl),
         );

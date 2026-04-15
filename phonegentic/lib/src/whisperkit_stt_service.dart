@@ -61,6 +61,7 @@ class WhisperKitSttService {
     try {
       final result = await _channel.invokeMethod<bool>('initialize', {
         'modelSize': _config.whisperKitModelSize,
+        'useGpu': _config.whisperKitUseGpu,
       });
       _initialized = result == true;
 

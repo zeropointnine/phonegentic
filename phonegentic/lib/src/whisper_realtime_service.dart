@@ -75,6 +75,9 @@ class WhisperRealtimeService {
   final _audioLevelController = StreamController<double>.broadcast();
   final _speakingController = StreamController<bool>.broadcast();
   final _vadController = StreamController<bool>.broadcast();
+  // Raw PCM16 audio from the mic tap — exposed so callers can forward to a
+  // local STT engine without needing their own EventChannel subscription.
+  final _rawAudioController = StreamController<Uint8List>.broadcast();
 
   // Accumulate function call arguments by call_id
   final Map<String, _PendingFunctionCall> _pendingFunctionCalls = {};
@@ -90,6 +93,7 @@ class WhisperRealtimeService {
   Stream<double> get audioLevels => _audioLevelController.stream;
   Stream<bool> get speakingState => _speakingController.stream;
   Stream<bool> get vadEvents => _vadController.stream;
+  Stream<Uint8List> get rawAudio => _rawAudioController.stream;
   bool get isConnected => _connected;
   bool get vadActive => _vadActive;
 
@@ -961,6 +965,7 @@ class WhisperRealtimeService {
 
     _audioSub = _audioTapChannel.receiveBroadcastStream().listen((data) {
       if (data is Uint8List) {
+        _rawAudioController.add(data);
         sendAudio(data);
       }
     });
@@ -1016,6 +1021,7 @@ class WhisperRealtimeService {
     _audioLevelController.close();
     _speakingController.close();
     _vadController.close();
+    _rawAudioController.close();
   }
 }
 

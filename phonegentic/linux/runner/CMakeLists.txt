@@ -4,6 +4,38 @@ project(runner LANGUAGES CXX)
 # Find PulseAudio
 pkg_check_modules(PULSEAUDIO REQUIRED IMPORTED_TARGET libpulse)
 
+# ─── whisper.cpp (on-device STT) ─────────────────────────────────────────────
+include(FetchContent)
+FetchContent_Declare(
+  whisper
+  GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git
+  GIT_TAG        v1.7.5
+)
+set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS      OFF CACHE BOOL "" FORCE)
+
+# Opportunistic GPU — enable backends if system libraries are available.
+# The resulting binary always falls back to CPU if GPU init fails at runtime.
+find_package(Vulkan QUIET)
+if(Vulkan_FOUND)
+  set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+  message(STATUS "whisper.cpp: Vulkan backend enabled")
+else()
+  message(STATUS "whisper.cpp: Vulkan not found — CPU only")
+endif()
+
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_FOUND)
+  set(GGML_CUDA ON CACHE BOOL "" FORCE)
+  message(STATUS "whisper.cpp: CUDA backend enabled")
+else()
+  message(STATUS "whisper.cpp: CUDA not found — skipping")
+endif()
+
+FetchContent_MakeAvailable(whisper)
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Define the application target. To change its name, change BINARY_NAME in the
 # top-level CMakeLists.txt, not the value here, or `flutter run` will no longer
 # work.
@@ -16,6 +48,7 @@ add_executable(${BINARY_NAME}
   "audio_tap_channel.cc"
   "kokoro_tts_channel.cc"
   "kokoro_onnx_engine.cc"
+  "whisper_cpp_stt_channel.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 
@@ -58,5 +91,11 @@ endif()
 # Link dl for dlopen/dlsym (used by kokoro_onnx_engine.cc for dynamic espeak loading)
 target_link_libraries(${BINARY_NAME} PRIVATE dl)
 
+target_link_libraries(${BINARY_NAME} PRIVATE whisper)
+# whisper.h lives at the repo root in v1.x; the target's INTERFACE_INCLUDE_DIRS
+# may not export it, so add both root and include/ as a fallback.
+target_include_directories(${BINARY_NAME} PRIVATE
+    ${whisper_SOURCE_DIR}
+    ${whisper_SOURCE_DIR}/include)
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 target_include_directories(${BINARY_NAME} PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})

@@ -195,19 +195,25 @@ enum SttProvider { openaiRealtime, whisperKit }
 class SttConfig {
   final SttProvider provider;
   final String whisperKitModelSize;
+  // Linux only: whether to use GPU acceleration (Vulkan/CUDA) when available.
+  // On macOS, WhisperKit always uses the Neural Engine; this flag is ignored.
+  final bool whisperKitUseGpu;
 
   const SttConfig({
     this.provider = SttProvider.openaiRealtime,
     this.whisperKitModelSize = 'base',
+    this.whisperKitUseGpu = true,
   });
 
   SttConfig copyWith({
     SttProvider? provider,
     String? whisperKitModelSize,
+    bool? whisperKitUseGpu,
   }) {
     return SttConfig(
       provider: provider ?? this.provider,
       whisperKitModelSize: whisperKitModelSize ?? this.whisperKitModelSize,
+      whisperKitUseGpu: whisperKitUseGpu ?? this.whisperKitUseGpu,
     );
   }
 }
@@ -374,6 +380,8 @@ class AgentConfigService {
           .values[providerIdx.clamp(0, SttProvider.values.length - 1)],
       whisperKitModelSize:
           prefs.getString('${_prefix}stt_whisperkit_model') ?? 'base',
+      whisperKitUseGpu:
+          prefs.getBool('${_prefix}stt_whisperkit_use_gpu') ?? true,
     );
   }
 
@@ -382,6 +390,8 @@ class AgentConfigService {
     await prefs.setInt('${_prefix}stt_provider', config.provider.index);
     await prefs.setString(
         '${_prefix}stt_whisperkit_model', config.whisperKitModelSize);
+    await prefs.setBool(
+        '${_prefix}stt_whisperkit_use_gpu', config.whisperKitUseGpu);
   }
 
   static Future<CallRecordingConfig> loadCallRecordingConfig() async {
