@@ -391,7 +391,7 @@ class AgentService extends ChangeNotifier {
   //     - Defer the settle-to-connected promotion timer when VAD is active
   //
   //   VAD parameters (set in WhisperRealtimeService session config):
-  //     threshold: 0.5       — sensitivity (0-1, higher = less sensitive)
+  //     threshold: 0.8       — sensitivity (0-1, higher = less sensitive)
   //     prefix_padding_ms: 300  — audio kept before speech onset
   //     silence_duration_ms: 1800 — silence before speech is considered ended
   //
@@ -1651,6 +1651,35 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  /// Common Whisper hallucination patterns on noise/silence — these are
+  /// not real speech and must never trigger barge-in or be processed.
+  static final RegExp _whisperHallucinationRe = RegExp(
+    r'^(vous dites\s?\??|ja,?\s*ja\.?|hallo\??|so\.|'
+    r'ok[,.]?\s*ok\.?|'
+    r'sous-titrage\b|sous-titres?\b|'
+    r'merci\.?|untertitelung\b|'
+    r'amara\.org|'
+    r'ご視聴ありがとうございました|'
+    r'\.\.\.$|'
+    r'[\.\,\!\?]+$)$',
+    caseSensitive: false,
+  );
+
+  /// CJK / non-Latin script detection — Whisper hallucinates in random
+  /// languages when it hears noise on an English-language call.
+  static final RegExp _nonLatinRe = RegExp(
+    r'[\u3000-\u9FFF\uAC00-\uD7AF\u0400-\u04FF\u0600-\u06FF\u0E00-\u0E7F]',
+  );
+
+  /// Returns true if the transcript looks like a Whisper hallucination
+  /// rather than genuine speech — common with ambient noise or silence.
+  static bool _isWhisperHallucination(String text) {
+    if (text.length <= 2) return true;
+    if (_whisperHallucinationRe.hasMatch(text)) return true;
+    if (_nonLatinRe.hasMatch(text)) return true;
+    return false;
+  }
+
   /// Returns true if [text] is a fuzzy substring of any recent agent response,
   /// indicating it is likely the agent's own TTS being transcribed back.
   bool _isEchoOfAgentResponse(String text) {
@@ -1744,7 +1773,8 @@ class AgentService extends ChangeNotifier {
   /// Handle VAD speech-start/stop events for fast barge-in detection.
   /// When the remote party starts speaking while the agent is playing audio,
   /// we immediately stop the agent without waiting for a full transcript.
-  /// A short debounce (300ms) avoids false triggers from brief noise.
+  /// A 600ms debounce avoids false triggers from brief noise, and the VAD
+  /// must still be active when the timer fires (speech_stopped cancels it).
   void _onVadEvent(bool speechStarted) {
     if (!speechStarted) {
       _vadInterruptDebounce?.cancel();
@@ -1762,7 +1792,7 @@ class AgentService extends ChangeNotifier {
     if (_callPhase == CallPhase.settling) return;
 
     _vadInterruptDebounce?.cancel();
-    _vadInterruptDebounce = Timer(const Duration(milliseconds: 300), () {
+    _vadInterruptDebounce = Timer(const Duration(milliseconds: 600), () {
       // Re-check conditions after debounce.
       if (!_speaking && !_whisper.isTtsPlaying) return;
       if (_ttsInterrupted) return;
@@ -1879,6 +1909,13 @@ class AgentService extends ChangeNotifier {
   void _onTranscript(TranscriptionEvent event) async {
     if (!event.isFinal || event.text.trim().isEmpty) return;
 
+    // Drop common Whisper hallucination artifacts before any further processing.
+    if (_isWhisperHallucination(event.text.trim())) {
+      debugPrint(
+          '[AgentService] Whisper hallucination dropped: "${event.text.trim()}"');
+      return;
+    }
+
     // Suppress transcripts while call is still setting up — but in split
     // pipeline mode, allow transcripts when idle so the user can talk to the
     // agent without an active call.
@@ -1982,13 +2019,6 @@ class AgentService extends ChangeNotifier {
   void _processTranscript(TranscriptionEvent event) async {
     final text = event.text.trim();
     if (text.isEmpty) return;
-
-    // Filter stray IVR/auto-attendant fragments that arrive after settling.
-    if (IvrDetector.isIvr(text)) {
-      _ivrHeard = true;
-      debugPrint('[AgentService] IVR filtered post-settle: "$text"');
-      return;
-    }
 
     // Real human speech — cancel any pending connected greeting so the
     // agent doesn't talk over whoever is already speaking.

@@ -262,13 +262,14 @@ class IvrDetector {
     }
 
     // --- Length heuristic ---
-    // Long utterances with no human greeting words are likely automated.
+    // Long utterances with no greeting words and no IVR keywords are ambiguous,
+    // NOT IVR. Only the settling phase (via accumulatedConfidence) should use
+    // length as a weak IVR signal; the post-settle isIvr() filter must not
+    // discard normal conversational speech just because it's long.
     if (wordCount >= 15 && humanHits == 0) {
-      return IvrConfidence(
-        type: CallPartyType.ivr,
-        score: 0.6,
-        mailboxFull: mailboxFull,
-        ivrEnding: ivrEnding,
+      return const IvrConfidence(
+        type: CallPartyType.ambiguous,
+        score: 0.5,
       );
     }
 

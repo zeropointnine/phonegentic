@@ -54,7 +54,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     /// Sliding window of per-flush dominant results for smoothing.
     /// Each entry is "host", "remote", or "unknown".
     private var dominantHistory: [String] = []
-    private static let dominantWindowSize = 30  // 30 × 100ms = 3 seconds
+    private static let dominantWindowSize = 50  // 50 × 100ms = 5 seconds
 
     /// When true, audio flows through WebRTC pipeline processors
     /// instead of direct CoreAudio capture + AVAudioEngine playback.
@@ -773,11 +773,14 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                 dominantHistory.removeFirst()
             }
 
-            // Resolve window: count non-unknown votes in the last N flushes
+            // Resolve window: count non-unknown votes in the last N flushes.
+            // Require a clear majority (> not >=) to avoid ambiguous flipping.
             let hostVotes = dominantHistory.filter { $0 == "host" }.count
             let remoteVotes = dominantHistory.filter { $0 == "remote" }.count
-            if remoteVotes > 0 || hostVotes > 0 {
-                dominantSpeaker = remoteVotes >= hostVotes ? "remote" : "host"
+            if remoteVotes > hostVotes {
+                dominantSpeaker = "remote"
+            } else if hostVotes > remoteVotes {
+                dominantSpeaker = "host"
             } else {
                 dominantSpeaker = "unknown"
             }
