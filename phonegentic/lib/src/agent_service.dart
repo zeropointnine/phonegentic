@@ -1808,10 +1808,17 @@ class AgentService extends ChangeNotifier {
     r'[\u3000-\u9FFF\uAC00-\uD7AF\u0400-\u04FF\u0600-\u06FF\u0E00-\u0E7F]',
   );
 
+  /// Bracketed Whisper tags for non-speech segments (but not ♪ lyrics ♪).
+  static final RegExp _whisperBracketedTagRe = RegExp(
+    r'^\[(BLANK_AUDIO|BLANK audio|blank_audio|Music|Silence|Applause|Laughter|NOISE|noise)\]$',
+    caseSensitive: false,
+  );
+
   /// Returns true if the transcript looks like a Whisper hallucination
   /// rather than genuine speech — common with ambient noise or silence.
   static bool _isWhisperHallucination(String text) {
     if (text.length <= 2) return true;
+    if (_whisperBracketedTagRe.hasMatch(text)) return true;
     if (_whisperHallucinationRe.hasMatch(text)) return true;
     if (_nonLatinRe.hasMatch(text)) return true;
     return false;

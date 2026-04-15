@@ -35,7 +35,11 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private var audioBuffer = Data()
     private let bufferLock = NSLock()
     private var transcriptionTimer: Timer?
-    private static let transcriptionIntervalMs = 500
+    private var isProcessing = false
+    private static let transcriptionIntervalMs = 1500
+    private static let inputSampleRate: Double = 24000
+    private static let whisperSampleRate: Double = 16000
+    private static let minSamplesForTranscription = 16000 // 1s at 16kHz
 
     init(messenger: FlutterBinaryMessenger) {
         methodChannel = FlutterMethodChannel(
@@ -155,11 +159,11 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         }
 
         isTranscribing = true
+        isProcessing = false
         bufferLock.lock()
         audioBuffer = Data()
         bufferLock.unlock()
 
-        // Periodically transcribe accumulated audio
         transcriptionTimer = Timer.scheduledTimer(
             withTimeInterval: Double(WhisperKitChannel.transcriptionIntervalMs) / 1000.0,
             repeats: true
@@ -167,7 +171,8 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             self?.processBufferedAudio()
         }
 
-        NSLog("[WhisperKit] Transcription started")
+        NSLog("[WhisperKit] Transcription started (interval=%dms, resample 24kHz→16kHz)",
+              WhisperKitChannel.transcriptionIntervalMs)
         result(nil)
     }
 
@@ -186,7 +191,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
 
     private func processBufferedAudio() {
         #if canImport(WhisperKit)
-        guard let kit = whisperKit, isTranscribing else { return }
+        guard let kit = whisperKit, isTranscribing, !isProcessing else { return }
 
         bufferLock.lock()
         guard audioBuffer.count > 0 else {
@@ -197,12 +202,24 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         audioBuffer = Data()
         bufferLock.unlock()
 
-        // Convert PCM16 to float samples
-        let floatSamples = pcm16ToFloat(audioData)
+        // Convert 24kHz PCM16 → 16kHz Float32 (what WhisperKit expects)
+        let floatSamples = pcm16ToFloat16k(audioData)
 
+        guard floatSamples.count >= WhisperKitChannel.minSamplesForTranscription else {
+            // Not enough audio yet — put it back
+            bufferLock.lock()
+            audioBuffer.insert(contentsOf: audioData, at: 0)
+            bufferLock.unlock()
+            return
+        }
+
+        isProcessing = true
         processingQueue.async { [weak self] in
             guard let self = self else { return }
             Task {
+                defer {
+                    DispatchQueue.main.async { self.isProcessing = false }
+                }
                 do {
                     let results = try await kit.transcribe(audioArray: floatSamples)
                     let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -224,13 +241,25 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         #endif
     }
 
-    private func pcm16ToFloat(_ data: Data) -> [Float] {
-        let sampleCount = data.count / 2
-        var floats = [Float](repeating: 0, count: sampleCount)
+    /// Convert PCM16 at 24kHz to Float32 at 16kHz via linear interpolation.
+    private func pcm16ToFloat16k(_ data: Data) -> [Float] {
+        let srcCount = data.count / 2
+        guard srcCount > 0 else { return [] }
+
+        let ratio = WhisperKitChannel.inputSampleRate / WhisperKitChannel.whisperSampleRate
+        let dstCount = Int(Double(srcCount) / ratio)
+        guard dstCount > 0 else { return [] }
+
+        var floats = [Float](repeating: 0, count: dstCount)
         data.withUnsafeBytes { buffer in
-            let int16Ptr = buffer.bindMemory(to: Int16.self)
-            for i in 0..<sampleCount {
-                floats[i] = Float(int16Ptr[i]) / Float(Int16.max)
+            let src = buffer.bindMemory(to: Int16.self)
+            for i in 0..<dstCount {
+                let srcPos = Double(i) * ratio
+                let idx = Int(srcPos)
+                let frac = Float(srcPos - Double(idx))
+                let s0 = Float(src[min(idx, srcCount - 1)]) / Float(Int16.max)
+                let s1 = Float(src[min(idx + 1, srcCount - 1)]) / Float(Int16.max)
+                floats[i] = s0 + frac * (s1 - s0)
             }
         }
         return floats
