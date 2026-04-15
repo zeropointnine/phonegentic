@@ -85,23 +85,38 @@ class TextAgentConfig {
     this.systemPrompt = '',
   });
 
-  bool get isConfigured => switch (provider) {
-    TextAgentProvider.openai => openaiApiKey.isNotEmpty,
-    TextAgentProvider.claude => claudeApiKey.isNotEmpty,
-    TextAgentProvider.custom => customEndpointUrl.isNotEmpty,
-  };
+  bool get isConfigured {
+    switch (provider) {
+      case TextAgentProvider.openai:
+        return openaiApiKey.isNotEmpty;
+      case TextAgentProvider.claude:
+        return claudeApiKey.isNotEmpty;
+      case TextAgentProvider.custom:
+        return customEndpointUrl.isNotEmpty;
+    }
+  }
 
-  String get activeApiKey => switch (provider) {
-    TextAgentProvider.openai => openaiApiKey,
-    TextAgentProvider.claude => claudeApiKey,
-    TextAgentProvider.custom => customApiKey,
-  };
+  String get activeApiKey {
+    switch (provider) {
+      case TextAgentProvider.openai:
+        return openaiApiKey;
+      case TextAgentProvider.claude:
+        return claudeApiKey;
+      case TextAgentProvider.custom:
+        return customApiKey;
+    }
+  }
 
-  String get activeModel => switch (provider) {
-    TextAgentProvider.openai => openaiModel,
-    TextAgentProvider.claude => claudeModel,
-    TextAgentProvider.custom => customModel,
-  };
+  String get activeModel {
+    switch (provider) {
+      case TextAgentProvider.openai:
+        return openaiModel;
+      case TextAgentProvider.claude:
+        return claudeModel;
+      case TextAgentProvider.custom:
+        return customModel;
+    }
+  }
 
   TextAgentConfig copyWith({
     bool? enabled,

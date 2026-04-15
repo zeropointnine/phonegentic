@@ -40,6 +40,17 @@ final class SpeakerIdentifier {
     /// Confidence of the most recent host identification (0..1).
     private(set) var hostConfidence: Double = 0
 
+    /// Once a channel sees the same speaker twice at high confidence the
+    /// identity is locked for the rest of the call. `reset()` clears locks.
+    private static let lockThreshold: Double = 0.75
+    private var remoteLocked = false
+    private var hostLocked = false
+    /// Tracks consecutive same-speaker hits needed before locking.
+    private var remoteConsecutiveHits = 0
+    private var hostConsecutiveHits = 0
+    private var lastRemoteCandidate = ""
+    private var lastHostCandidate = ""
+
     /// Agent TTS voiceprint for self-suppression.
     private var agentEmbedding: [Float]?
     private var agentExtractionInProgress = false
@@ -202,13 +213,62 @@ final class SpeakerIdentifier {
                     ))
 
                     if isRemote {
+                        if self.remoteLocked {
+                            NSLog("[SpeakerID] Remote locked as %@ — ignoring %@ (conf=%.2f)",
+                                  self.identifiedRemoteSpeaker, speaker.name, confidence)
+                            return
+                        }
+                        if confidence < 0.6 {
+                            NSLog("[SpeakerID] Remote low-conf ignored: %@ (conf=%.2f)", speaker.name, confidence)
+                            self.lastRemoteCandidate = ""
+                            self.remoteConsecutiveHits = 0
+                            return
+                        }
+                        // Track consecutive same-speaker hits before locking.
+                        if speaker.name == self.lastRemoteCandidate {
+                            self.remoteConsecutiveHits += 1
+                        } else {
+                            self.lastRemoteCandidate = speaker.name
+                            self.remoteConsecutiveHits = 1
+                        }
                         self.identifiedRemoteSpeaker = speaker.name
                         self.remoteConfidence = confidence
-                        NSLog("[SpeakerID] Remote identified: %@ (conf=%.2f)", speaker.name, confidence)
+                        if confidence >= SpeakerIdentifier.lockThreshold && self.remoteConsecutiveHits >= 2 {
+                            self.remoteLocked = true
+                            NSLog("[SpeakerID] Remote LOCKED: %@ (conf=%.2f, hits=%d)",
+                                  speaker.name, confidence, self.remoteConsecutiveHits)
+                        } else {
+                            NSLog("[SpeakerID] Remote identified: %@ (conf=%.2f, hits=%d)",
+                                  speaker.name, confidence, self.remoteConsecutiveHits)
+                        }
                     } else {
+                        if self.hostLocked {
+                            NSLog("[SpeakerID] Host locked as %@ — ignoring %@ (conf=%.2f)",
+                                  self.identifiedHostSpeaker, speaker.name, confidence)
+                            return
+                        }
+                        if confidence < 0.6 {
+                            NSLog("[SpeakerID] Host low-conf ignored: %@ (conf=%.2f)", speaker.name, confidence)
+                            self.lastHostCandidate = ""
+                            self.hostConsecutiveHits = 0
+                            return
+                        }
+                        if speaker.name == self.lastHostCandidate {
+                            self.hostConsecutiveHits += 1
+                        } else {
+                            self.lastHostCandidate = speaker.name
+                            self.hostConsecutiveHits = 1
+                        }
                         self.identifiedHostSpeaker = speaker.name
                         self.hostConfidence = confidence
-                        NSLog("[SpeakerID] Host identified: %@ (conf=%.2f)", speaker.name, confidence)
+                        if confidence >= SpeakerIdentifier.lockThreshold && self.hostConsecutiveHits >= 2 {
+                            self.hostLocked = true
+                            NSLog("[SpeakerID] Host LOCKED: %@ (conf=%.2f, hits=%d)",
+                                  speaker.name, confidence, self.hostConsecutiveHits)
+                        } else {
+                            NSLog("[SpeakerID] Host identified: %@ (conf=%.2f, hits=%d)",
+                                  speaker.name, confidence, self.hostConsecutiveHits)
+                        }
                     }
                 }
             } catch {
@@ -310,6 +370,12 @@ final class SpeakerIdentifier {
         identifiedHostSpeaker = ""
         remoteConfidence = 0
         hostConfidence = 0
+        remoteLocked = false
+        hostLocked = false
+        remoteConsecutiveHits = 0
+        hostConsecutiveHits = 0
+        lastRemoteCandidate = ""
+        lastHostCandidate = ""
     }
 
     // MARK: - Audio Conversion
