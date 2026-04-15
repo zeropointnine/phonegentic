@@ -450,14 +450,11 @@ class TextAgentService {
         cancelled = true;
         break;
       }
-      switch (event) {
-        case LlmTextDeltaEvent(:final text):
-          fullText += text;
-          _responseController.add(ResponseTextEvent(text: text, isFinal: false));
-        case LlmToolCallEvent():
-          toolCallEvents.add(event);
-        case LlmDoneEvent():
-          break;
+      if (event is LlmTextDeltaEvent) {
+        fullText += event.text;
+        _responseController.add(ResponseTextEvent(text: event.text, isFinal: false));
+      } else if (event is LlmToolCallEvent) {
+        toolCallEvents.add(event);
       }
     }
 
@@ -588,11 +585,12 @@ class TextAgentService {
     for (var i = 0; i < merged.length; i++) {
       final m = merged[i];
       final role = m.role.name;
-      final types = m.content.map((b) => switch (b) {
-            LlmTextBlock(:final text) => 'text(${text.length} chars)',
-            LlmToolUseBlock(:final id, :final name) => 'tool_use($name/$id)',
-            LlmToolResultBlock(:final toolUseId) => 'tool_result($toolUseId)',
-          }).join(', ');
+      final types = m.content.map((b) {
+        if (b is LlmTextBlock) return 'text(${b.text.length} chars)';
+        if (b is LlmToolUseBlock) return 'tool_use(${b.name}/${b.id})';
+        if (b is LlmToolResultBlock) return 'tool_result(${b.toolUseId})';
+        return 'unknown';
+      }).join(', ');
       debugPrint('  [$i] $role: [$types]');
     }
     debugPrint('[TextAgent] === END DUMP ===');
@@ -646,14 +644,16 @@ class TextAgentService {
   }
 
   static LlmCaller _createCaller(TextAgentConfig config, HttpClient http) {
-    return switch (config.provider) {
-      TextAgentProvider.claude => ClaudeCaller(http),
-      TextAgentProvider.openai =>
-        throw UnimplementedError('OpenAI realtime handles text in-band'),
-      TextAgentProvider.custom => OpenAiCaller(
+    switch (config.provider) {
+      case TextAgentProvider.claude:
+        return ClaudeCaller(http);
+      case TextAgentProvider.openai:
+        throw UnimplementedError('OpenAI realtime handles text in-band');
+      case TextAgentProvider.custom:
+        return OpenAiCaller(
           http,
           baseUrl: Uri.parse(config.customEndpointUrl),
-        ),
-    };
+        );
+    }
   }
 }
