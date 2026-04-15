@@ -38,6 +38,7 @@ import 'on_device_config.dart';
 import 'llm/llm_interfaces.dart';
 import 'text_agent_service.dart';
 import 'whisper_realtime_service.dart';
+import 'whisperkit_stt_service.dart';
 
 class AgentService extends ChangeNotifier {
   final WhisperRealtimeService _whisper = WhisperRealtimeService();
@@ -46,6 +47,7 @@ class AgentService extends ChangeNotifier {
   bool _muted = false;
   bool _speaking = false;
   bool _whisperMode = false;
+  bool _isLocalSttMode = false;
   String _statusText = 'Initializing...';
   AgentMutePolicy _globalMutePolicy = AgentMutePolicy.autoToggle;
   bool _userMuteOverride = false;
@@ -208,6 +210,11 @@ class AgentService extends ChangeNotifier {
   StreamSubscription<TranscriptionEvent>? _transcriptSub;
   StreamSubscription<ResponseTextEvent>? _responseTextSub;
   StreamSubscription<FunctionCallEvent>? _functionCallSub;
+
+  // Local STT (WhisperKit / whisper.cpp) — active when SttProvider.whisperKit.
+  SttConfig? _sttConfig;
+  WhisperKitSttService? _whisperKitStt;
+  StreamSubscription<Uint8List>? _localAudioSub;
   StreamSubscription<ResponseTextEvent>? _textAgentSub;
   StreamSubscription<ToolCallRequest>? _textAgentToolSub;
 
@@ -623,6 +630,7 @@ class AgentService extends ChangeNotifier {
       _syncBootContextFromJobFunction();
       _globalMutePolicy = await AgentConfigService.loadMutePolicy();
 
+      _sttConfig = await AgentConfigService.loadSttConfig();
       final config = await AgentConfigService.loadVoiceConfig();
       _echoGuardMs = config.echoGuardMs;
       _textAgentConfig = await AgentConfigService.loadTextConfig();
@@ -640,6 +648,15 @@ class AgentService extends ChangeNotifier {
           'configured=${_textAgentConfig?.isConfigured}');
       debugPrint('[KokoroTTS-DIAG] VoiceAgent config: '
           'enabled=${config.enabled} configured=${config.isConfigured}');
+
+      // ── Local STT branch (whisper.cpp / WhisperKit) ──────────────────────
+      if (_sttConfig?.provider == SttProvider.whisperKit &&
+          OnDeviceConfig.isSupported) {
+        await _initLocalSttPath();
+        return;
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       if (!config.enabled || !config.isConfigured) {
         _statusText = 'Not configured';
         _messages.clear();
@@ -832,6 +849,126 @@ class AgentService extends ChangeNotifier {
         return;
     }
   }
+
+  // ── Local STT initialisation ──────────────────────────────────────────────
+  //
+  // Called when SttProvider.whisperKit is selected and the platform is
+  // supported. Does NOT open an OpenAI WebSocket. Audio flows:
+  //
+  //   PulseAudio mic → _whisper.rawAudio → WhisperKitSttService.feedAudio()
+  //   → whisper.cpp inference → _onTranscript() → text LLM → TTS
+  //
+  Future<void> _initLocalSttPath() async {
+    _isLocalSttMode = true;
+    _statusText = 'Initializing...';
+    _messages.clear();
+    _resetVoiceUiSyncState();
+    _streamingMessageId = null;
+    _messages.add(ChatMessage.system('Loading STT model...'));
+    notifyListeners();
+
+    try {
+      _whisperKitStt = WhisperKitSttService(config: _sttConfig!);
+      await _whisperKitStt!.initialize();
+
+      if (!_whisperKitStt!.isInitialized) {
+        _statusText = 'STT model not found';
+        _messages.clear();
+        _messages.add(ChatMessage.system(
+            'Whisper model not found. Run scripts/download_models.sh whisper '
+            'to download it, then restart the app.'));
+        notifyListeners();
+        return;
+      }
+
+      _active = true;
+      _statusText = 'Listening';
+      _messages.clear();
+      await _loadPreviousConversation();
+      final jfTitle = _jobFunctionService?.selected?.title;
+      final label = jfTitle != null ? 'Ready as "$jfTitle".' : 'Ready.';
+      _messages.add(ChatMessage.agent(
+          '$label On-device STT active. Speak and I\'ll assist via text.'));
+      notifyListeners();
+
+      // Capture mic only — speaker output must NOT be captured here because
+      // the rawAudio stream feeds directly into whisper.cpp.  Capturing output
+      // would cause TTS playback to be transcribed as user speech and looped
+      // back to the LLM.  (The OpenAI Realtime path captures output because
+      // the server does echo cancellation; whisper.cpp does not.)
+      await _whisper.startAudioTap(captureInput: true, captureOutput: false);
+
+      // Wire raw mic audio → whisper.cpp.
+      await _whisperKitStt!.startTranscription();
+      _localAudioSub = _whisper.rawAudio.listen((chunk) {
+        // Gate audio during TTS playback — whisper.cpp has no AEC, so any
+        // speaker bleed would be transcribed as user speech.  Dropping mic
+        // input while TTS is active prevents acoustic echo from reaching
+        // inference.  The VAD timer sees silence and drains without running
+        // whisper_full().
+        if (!_speaking && !_whisper.isTtsPlaying) {
+          _whisperKitStt?.feedAudio(chunk);
+        }
+      });
+
+      // Audio level waveform — works via sendAudio() even without OpenAI conn.
+      _levelSub = _whisper.audioLevels.listen((level) {
+        _levels.addLast(level);
+        while (_levels.length > waveformBars) {
+          _levels.removeFirst();
+        }
+        notifyListeners();
+      });
+
+      // Convert WhisperKitTranscription → TranscriptionEvent for existing handler.
+      _transcriptSub = _whisperKitStt!.transcriptions
+          .map((t) => TranscriptionEvent(
+                text: t.text,
+                isFinal: t.isFinal,
+                itemId: '',
+              ))
+          .listen(_onTranscript);
+
+      // Text LLM + TTS pipeline.
+      // _initTextAgent() skips OpenAI text providers (designed for the split-
+      // pipeline where OpenAI Realtime handles everything). In local STT mode
+      // we need a text agent regardless of provider, so we fall back to direct
+      // init when _initTextAgent() leaves _textAgent null.
+      _syncBootContextFromJobFunction();
+      _initTextAgent();
+      if (_textAgent == null) {
+        final tc = _textAgentConfig;
+        if (tc != null && tc.enabled && tc.isConfigured) {
+          _textAgent = TextAgentService(
+            config: tc,
+            systemInstructions: _buildTextAgentInstructions(),
+          );
+          _textAgentSub = _textAgent!.responses.listen(_appendStreamingResponse);
+          _textAgentToolSub = _textAgent!.toolCalls.listen(_onTextAgentToolCall);
+          // _initTextAgent normally calls _initTts; mirror that here.
+          _initTts();
+        } else {
+          // No text agent configured — TTS alone (responses appear in chat only).
+          _initTts();
+        }
+      }
+      // _initTextAgent already called _initTts when it set _textAgent, so
+      // only call updateVoiceId here (not _initTts again).
+      _applyIntegrationTools();
+      _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
+
+      debugPrint('[AgentService] Local STT active: '
+          'model=${_sttConfig!.whisperKitModelSize} '
+          'gpu=${_sttConfig!.whisperKitUseGpu}');
+    } catch (e) {
+      _statusText = 'Error';
+      _active = false;
+      _messages.add(ChatMessage.system('Local STT error: $e'));
+      debugPrint('[AgentService] Local STT init failed: $e');
+      notifyListeners();
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   void _initElevenLabsTts(TtsConfig tc) {
     _tts = ElevenLabsTtsService(config: tc);
@@ -1880,10 +2017,10 @@ class AgentService extends ChangeNotifier {
     if (!event.isFinal || event.text.trim().isEmpty) return;
 
     // Suppress transcripts while call is still setting up — but in split
-    // pipeline mode, allow transcripts when idle so the user can talk to the
-    // agent without an active call.
+    // pipeline mode or local STT mode, allow transcripts when idle so the
+    // user can talk to the agent without an active call.
     if (_callPhase.isPreConnect) {
-      if (!(_splitPipeline && _callPhase == CallPhase.idle)) return;
+      if (!((_splitPipeline || _isLocalSttMode) && _callPhase == CallPhase.idle)) return;
     }
 
     // During settling, classify each transcript to decide whether this is a
@@ -2219,9 +2356,12 @@ class AgentService extends ChangeNotifier {
 
     /// Only defer when this pipeline drives speech via Kokoro/ElevenLabs
     /// (`_ttsAudioSub`). Unified OpenAI audio does not use that stream.
+    /// In local STT mode the hold-until-PCM mechanism is wrong: it's a chat
+    /// assistant, not a phone call, so text must appear immediately regardless
+    /// of whether TTS audio has started playing.
     final ttsActive = !_ttsMuted && !_muted;
     final deferAgentTextForTts =
-        _splitPipeline && _hasTts && ttsActive && !suppressTts;
+        _splitPipeline && !_isLocalSttMode && _hasTts && ttsActive && !suppressTts;
 
     // Pipe text delta to TTS (ElevenLabs or Kokoro), stripping bracketed
     // stage directions. Skip when muted to avoid burning TTS credits/compute.
@@ -4380,6 +4520,12 @@ class AgentService extends ChangeNotifier {
     _ttsSpeakingSub?.cancel();
     _activeTtsDispose();
     _ttsConfig = null;
+    _isLocalSttMode = false;
+    _localAudioSub?.cancel();
+    _localAudioSub = null;
+    await _whisperKitStt?.stopTranscription();
+    await _whisperKitStt?.dispose();
+    _whisperKitStt = null;
     _levelSub?.cancel();
     _speakingSub?.cancel();
     _vadSub?.cancel();
@@ -4420,6 +4566,11 @@ class AgentService extends ChangeNotifier {
     _ttsAudioSub?.cancel();
     _ttsSpeakingSub?.cancel();
     _activeTtsDispose();
+    _localAudioSub?.cancel();
+    _localAudioSub = null;
+    _whisperKitStt?.stopTranscription();
+    _whisperKitStt?.dispose();
+    _whisperKitStt = null;
     _levelSub?.cancel();
     _speakingSub?.cancel();
     _vadSub?.cancel();

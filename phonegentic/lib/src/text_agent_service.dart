@@ -648,8 +648,10 @@ class TextAgentService {
   static LlmCaller _createCaller(TextAgentConfig config, HttpClient http) {
     return switch (config.provider) {
       TextAgentProvider.claude => ClaudeCaller(http),
-      TextAgentProvider.openai =>
-        throw UnimplementedError('OpenAI realtime handles text in-band'),
+      TextAgentProvider.openai => OpenAiCaller(
+          http,
+          baseUrl: Uri.parse('https://api.openai.com/v1/chat/completions'),
+        ),
       TextAgentProvider.custom => OpenAiCaller(
           http,
           baseUrl: Uri.parse(config.customEndpointUrl),

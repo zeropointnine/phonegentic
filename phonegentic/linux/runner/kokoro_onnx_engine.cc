@@ -263,7 +263,12 @@ bool KokoroOnnxEngine::initialize(const std::string& model_path,
 
   try {
     impl_->ort_env = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "KokoroOnnx");
-    impl_->session_opts.SetIntraOpNumThreads(1);
+    // Allow ORT to use multiple threads for intra-op parallelism (e.g. matrix
+    // multiplications inside the Kokoro attention/vocoder layers).  The default
+    // of 1 serialises all work onto a single CPU core, adding 500-900 ms to
+    // every synthesis call on a mid-range machine.  Setting to 0 lets ORT pick
+    // the optimal thread count automatically (typically hardware_concurrency).
+    impl_->session_opts.SetIntraOpNumThreads(0);
     impl_->session_opts.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_ALL);
 
@@ -370,7 +375,7 @@ std::vector<int16_t> KokoroOnnxEngine::synthesize(
             text.c_str());
     return {};
   }
-  fprintf(stderr, "[KokoroOnnx] IPA: %s\n", ipa.c_str());
+  // fprintf(stderr, "[KokoroOnnx] IPA: %s\n", ipa.c_str());
 
   // 3. Tokenize: IPA string → token IDs
   std::vector<int64_t> tokens = impl_->tokenize_phonemes(ipa);
@@ -471,10 +476,13 @@ std::vector<int16_t> KokoroOnnxEngine::synthesize(
     inputs.push_back(std::move(input_style));
     inputs.push_back(std::move(input_speed));
 
+    auto infer_start = std::chrono::steady_clock::now();
     auto outputs = impl_->session->Run(
         Ort::RunOptions{nullptr},
         input_names.data(), inputs.data(), inputs.size(),
         output_names.data(), output_names.size());
+    double infer_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - infer_start).count();
 
     // Extract audio from first output
     if (outputs.empty()) {
@@ -487,7 +495,8 @@ std::vector<int16_t> KokoroOnnxEngine::synthesize(
     size_t element_count = type_info.GetElementCount();
     float* audio_data = audio_tensor.GetTensorMutableData<float>();
 
-    fprintf(stderr, "[KokoroOnnx] Audio output: %zu samples\n", element_count);
+    fprintf(stderr, "[KokoroOnnx] Audio output: %zu samples, inference duration %.0fms\n",
+            element_count, infer_ms);
 
     audio_float.assign(audio_data, audio_data + element_count);
 
@@ -729,8 +738,8 @@ std::string KokoroOnnxEngine::Impl::phonemize(const std::string& text) {
 
     std::string remapped = remap_espeak_ipa(raw_ipa);
     if (raw_ipa != remapped) {
-      fprintf(stderr, "[KokoroOnnx] IPA remap: '%s' → '%s'\n",
-              raw_ipa.c_str(), remapped.c_str());
+      // fprintf(stderr, "[KokoroOnnx] IPA remap: '%s' → '%s'\n",
+      //        raw_ipa.c_str(), remapped.c_str());
     }
     accumulated += remapped;
   }

@@ -231,11 +231,13 @@ class KokoroTtsService {
           '(${text.length} chars, ${_sentenceQueue.length} queued): '
           '"${text.length > 60 ? text.substring(0, 60) : text}"');
 
+      final sw = Stopwatch()..start();
       try {
         await _channel.invokeMethod('synthesize', {
           'text': text,
           'voice': _config.kokoroVoiceStyle,
         });
+        debugPrint('[KokoroTTS] Synthesis done in ${sw.elapsedMilliseconds} ms');
       } on PlatformException catch (e) {
         debugPrint('[KokoroTTS] Synthesis failed: ${e.message}');
       }
