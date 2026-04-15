@@ -14,7 +14,7 @@ enum AgentMutePolicy {
   stayUnmuted,
 }
 
-enum TextAgentProvider { openai, claude }
+enum TextAgentProvider { openai, claude, custom }
 
 enum TranscriptionTarget { both, localOnly, remoteOnly }
 
@@ -67,6 +67,9 @@ class TextAgentConfig {
   final String claudeApiKey;
   final String openaiModel;
   final String claudeModel;
+  final String customApiKey;
+  final String customEndpointUrl;
+  final String customModel;
   final String systemPrompt;
 
   const TextAgentConfig({
@@ -76,19 +79,29 @@ class TextAgentConfig {
     this.claudeApiKey = '',
     this.openaiModel = 'gpt-4o',
     this.claudeModel = 'claude-sonnet-4-20250514',
+    this.customApiKey = '',
+    this.customEndpointUrl = '',
+    this.customModel = '',
     this.systemPrompt = '',
   });
 
-  bool get isConfigured {
-    if (provider == TextAgentProvider.openai) return openaiApiKey.isNotEmpty;
-    return claudeApiKey.isNotEmpty;
-  }
+  bool get isConfigured => switch (provider) {
+    TextAgentProvider.openai => openaiApiKey.isNotEmpty,
+    TextAgentProvider.claude => claudeApiKey.isNotEmpty,
+    TextAgentProvider.custom => customEndpointUrl.isNotEmpty,
+  };
 
-  String get activeApiKey =>
-      provider == TextAgentProvider.openai ? openaiApiKey : claudeApiKey;
+  String get activeApiKey => switch (provider) {
+    TextAgentProvider.openai => openaiApiKey,
+    TextAgentProvider.claude => claudeApiKey,
+    TextAgentProvider.custom => customApiKey,
+  };
 
-  String get activeModel =>
-      provider == TextAgentProvider.openai ? openaiModel : claudeModel;
+  String get activeModel => switch (provider) {
+    TextAgentProvider.openai => openaiModel,
+    TextAgentProvider.claude => claudeModel,
+    TextAgentProvider.custom => customModel,
+  };
 
   TextAgentConfig copyWith({
     bool? enabled,
@@ -97,6 +110,9 @@ class TextAgentConfig {
     String? claudeApiKey,
     String? openaiModel,
     String? claudeModel,
+    String? customApiKey,
+    String? customEndpointUrl,
+    String? customModel,
     String? systemPrompt,
   }) {
     return TextAgentConfig(
@@ -106,6 +122,9 @@ class TextAgentConfig {
       claudeApiKey: claudeApiKey ?? this.claudeApiKey,
       openaiModel: openaiModel ?? this.openaiModel,
       claudeModel: claudeModel ?? this.claudeModel,
+      customApiKey: customApiKey ?? this.customApiKey,
+      customEndpointUrl: customEndpointUrl ?? this.customEndpointUrl,
+      customModel: customModel ?? this.customModel,
       systemPrompt: systemPrompt ?? this.systemPrompt,
     );
   }
@@ -264,16 +283,21 @@ class AgentConfigService {
 
   static Future<TextAgentConfig> loadTextConfig() async {
     final prefs = await SharedPreferences.getInstance();
+    final providerIdx = prefs.getInt('${_prefix}text_provider') ?? 0;
     return TextAgentConfig(
       enabled: prefs.getBool('${_prefix}text_enabled') ?? false,
       provider: TextAgentProvider.values[
-          prefs.getInt('${_prefix}text_provider') ?? 0],
+          providerIdx.clamp(0, TextAgentProvider.values.length - 1)],
       openaiApiKey: prefs.getString('${_prefix}text_openai_key') ?? '',
       claudeApiKey: prefs.getString('${_prefix}text_claude_key') ?? '',
       openaiModel:
           prefs.getString('${_prefix}text_openai_model') ?? 'gpt-4o',
       claudeModel: _migrateClaudeModel(
           prefs.getString('${_prefix}text_claude_model')),
+      customApiKey: prefs.getString('${_prefix}text_custom_key') ?? '',
+      customEndpointUrl:
+          prefs.getString('${_prefix}text_custom_endpoint') ?? '',
+      customModel: prefs.getString('${_prefix}text_custom_model') ?? '',
       systemPrompt: prefs.getString('${_prefix}text_system_prompt') ?? '',
     );
   }
@@ -286,6 +310,10 @@ class AgentConfigService {
     await prefs.setString('${_prefix}text_claude_key', config.claudeApiKey);
     await prefs.setString('${_prefix}text_openai_model', config.openaiModel);
     await prefs.setString('${_prefix}text_claude_model', config.claudeModel);
+    await prefs.setString('${_prefix}text_custom_key', config.customApiKey);
+    await prefs.setString(
+        '${_prefix}text_custom_endpoint', config.customEndpointUrl);
+    await prefs.setString('${_prefix}text_custom_model', config.customModel);
     await prefs.setString(
         '${_prefix}text_system_prompt', config.systemPrompt);
   }

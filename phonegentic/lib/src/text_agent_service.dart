@@ -1,10 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import 'agent_config_service.dart';
+import 'llm/claude_caller.dart';
+import 'llm/llm_interfaces.dart';
+import 'llm/openai_caller.dart';
 import 'whisper_realtime_service.dart';
 
 class ToolCallRequest {
@@ -23,8 +25,9 @@ class ToolCallRequest {
 class TextAgentService {
   TextAgentConfig _config;
   String _systemInstructions;
+  late LlmCaller _caller;
 
-  final List<Map<String, dynamic>> _history = [];
+  final List<LlmMessage> _history = [];
   final List<String> _pendingContext = [];
   Timer? _debounceTimer;
 
@@ -51,9 +54,18 @@ class TextAgentService {
   })  : _config = config,
         _systemInstructions = systemInstructions {
     _httpClient = HttpClient();
+    _caller = _createCaller(config, _httpClient!);
   }
 
-  void updateConfig(TextAgentConfig config) => _config = config;
+  void updateConfig(TextAgentConfig config) {
+    final callerNeedsUpdate = config.provider != _config.provider ||
+        (config.provider == TextAgentProvider.custom &&
+            config.customEndpointUrl != _config.customEndpointUrl);
+    _config = config;
+    if (callerNeedsUpdate) {
+      _caller = _createCaller(config, _httpClient!);
+    }
+  }
 
   void updateInstructions(String instructions) =>
       _systemInstructions = instructions;
@@ -79,7 +91,7 @@ class TextAgentService {
   }
 
   /// Cancel the in-flight LLM response (if any). The streaming loop in
-  /// _callClaude checks this flag after each SSE chunk and breaks early,
+  /// _callLlm checks this flag after each event and breaks early,
   /// emitting a final event with the partial text accumulated so far.
   void cancelCurrentResponse() {
     if (!_responding) return;
@@ -94,10 +106,10 @@ class TextAgentService {
   void sendUserMessage(String text) {
     _debounceTimer?.cancel();
     _flushPendingToHistory();
-    _history.add({
-      'role': 'user',
-      'content': '[Host Message]: $text',
-    });
+    _history.add(LlmMessage(
+      role: LlmRole.user,
+      content: [LlmTextBlock('[Host Message]: $text')],
+    ));
     _respond();
   }
 
@@ -107,26 +119,22 @@ class TextAgentService {
   void addToolResult(String toolUseId, String result) {
     _debounceTimer?.cancel();
     _pendingToolUseIds.remove(toolUseId);
-    final blocks = <Map<String, dynamic>>[];
+    final blocks = <LlmContentBlock>[];
     if (_pendingContext.isNotEmpty) {
-      blocks.add({'type': 'text', 'text': _pendingContext.join('\n')});
+      blocks.add(LlmTextBlock(_pendingContext.join('\n')));
       _pendingContext.clear();
     }
-    blocks.add({
-      'type': 'tool_result',
-      'tool_use_id': toolUseId,
-      'content': result,
-    });
-    _history.add({'role': 'user', 'content': blocks});
+    blocks.add(LlmToolResultBlock(toolUseId: toolUseId, content: result));
+    _history.add(LlmMessage(role: LlmRole.user, content: blocks));
     _respond();
   }
 
   void _flushPendingToHistory() {
     if (_pendingContext.isEmpty) return;
-    _history.add({
-      'role': 'user',
-      'content': _pendingContext.join('\n'),
-    });
+    _history.add(LlmMessage(
+      role: LlmRole.user,
+      content: [LlmTextBlock(_pendingContext.join('\n'))],
+    ));
     _pendingContext.clear();
   }
 
@@ -161,9 +169,7 @@ class TextAgentService {
     _pendingRespond = false;
 
     try {
-      if (_config.provider == TextAgentProvider.claude) {
-        await _callClaudeWithRetry();
-      }
+      await _callWithRetry();
     } catch (e) {
       debugPrint('[TextAgentService] Error: $e');
       if (_history.isNotEmpty) {
@@ -182,25 +188,28 @@ class TextAgentService {
     }
   }
 
-  Future<void> _callClaudeWithRetry() async {
+  Future<void> _callWithRetry() async {
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
-        await _callClaude().timeout(
+        await _callLlm().timeout(
           const Duration(seconds: _responseTimeoutSecs),
           onTimeout: () {
             throw TimeoutException(
-                'Claude API timed out after ${_responseTimeoutSecs}s — '
+                'LLM timed out after ${_responseTimeoutSecs}s — '
                 'check network or API key');
           },
         );
         return;
+      } on LlmBadRequestException catch (e) {
+        if (e.hasToolUseError) {
+          _dumpMergedHistory(_mergedHistory());
+          _repairHistory();
+        }
+        rethrow;
+      } on LlmAuthException {
+        rethrow;
       } catch (e) {
-        final isTransient = e is HttpException ||
-            e is TimeoutException ||
-            e.toString().contains('Connection closed') ||
-            e.toString().contains('Connection reset') ||
-            e.toString().contains('SocketException') ||
-            e.toString().contains('timed out');
+        final isTransient = e is LlmTransientException || e is TimeoutException;
         if (!isTransient || attempt >= _maxRetries) rethrow;
         final delayMs = 500 * (attempt + 1);
         debugPrint('[TextAgentService] Transient error (attempt ${attempt + 1}/$_maxRetries), retrying in ${delayMs}ms: $e');
@@ -209,20 +218,20 @@ class TextAgentService {
     }
   }
 
-  List<Map<String, dynamic>> _extraTools = [];
+  List<LlmTool> _extraTools = [];
 
   /// Register additional tools from 3rd-party integrations.
-  void setExtraTools(List<Map<String, dynamic>> tools) {
+  void setExtraTools(List<LlmTool> tools) {
     _extraTools = tools;
   }
 
-  List<Map<String, dynamic>> get _allTools => [..._baseTools, ..._extraTools];
+  List<LlmTool> get _allTools => [..._baseTools, ..._extraTools];
 
-  static const _baseTools = [
-    {
-      'name': 'make_call',
-      'description': 'Initiate an outbound phone call to a number.',
-      'input_schema': {
+  static final _baseTools = <LlmTool>[
+    LlmTool(
+      name: 'make_call',
+      description: 'Initiate an outbound phone call to a number.',
+      inputSchema: {
         'type': 'object',
         'properties': {
           'number': {
@@ -233,32 +242,30 @@ class TextAgentService {
         },
         'required': ['number'],
       },
-    },
-    {
-      'name': 'check_locale',
-      'description':
-          'Get the host\'s phone-number locale: country code, expected digit '
+    ),
+    LlmTool(
+      name: 'check_locale',
+      description: 'Get the host\'s phone-number locale: country code, expected digit '
           'length, format example, and sanitization rules. Call this when you '
           'need to validate or interpret a spoken phone number.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {},
       },
-    },
-    {
-      'name': 'end_call',
-      'description': 'Hang up the current active call.',
-      'input_schema': {
+    ),
+    LlmTool(
+      name: 'end_call',
+      description: 'Hang up the current active call.',
+      inputSchema: {
         'type': 'object',
         'properties': {},
       },
-    },
-    {
-      'name': 'search_contacts',
-      'description':
-          'Search the local contacts database by name, phone, or tags. '
+    ),
+    LlmTool(
+      name: 'search_contacts',
+      description: 'Search the local contacts database by name, phone, or tags. '
           'Use not_called_since_days to find contacts with no outbound calls in N days.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'query': {
@@ -274,14 +281,13 @@ class TextAgentService {
           },
         },
       },
-    },
-    {
-      'name': 'create_tear_sheet',
-      'description':
-          'Create a tear sheet (sequential outbound call queue) from contacts. '
+    ),
+    LlmTool(
+      name: 'create_tear_sheet',
+      description: 'Create a tear sheet (sequential outbound call queue) from contacts. '
           'Search contacts first, then pass each chosen row as an entry with '
           'phone_number and optional name.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'name': {
@@ -309,13 +315,12 @@ class TextAgentService {
         },
         'required': ['entries'],
       },
-    },
-    {
-      'name': 'send_sms',
-      'description':
-          'Send an SMS or MMS to a phone number. Use when the job or host '
+    ),
+    LlmTool(
+      name: 'send_sms',
+      description: 'Send an SMS or MMS to a phone number. Use when the job or host '
           'asks you to text someone, send a message, or follow up via SMS.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'to': {
@@ -334,13 +339,12 @@ class TextAgentService {
         },
         'required': ['to', 'text'],
       },
-    },
-    {
-      'name': 'reply_sms',
-      'description':
-          'Reply in the currently selected SMS conversation. Use when the host '
+    ),
+    LlmTool(
+      name: 'reply_sms',
+      description: 'Reply in the currently selected SMS conversation. Use when the host '
           'asks to respond or reply to the open text thread.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'text': {
@@ -350,13 +354,12 @@ class TextAgentService {
         },
         'required': ['text'],
       },
-    },
-    {
-      'name': 'search_messages',
-      'description':
-          'Search SMS history by message text or number. Use when the job or '
+    ),
+    LlmTool(
+      name: 'search_messages',
+      description: 'Search SMS history by message text or number. Use when the job or '
           'host asks about past texts or needs to find a message.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'query': {
@@ -370,15 +373,14 @@ class TextAgentService {
           },
         },
       },
-    },
-    {
-      'name': 'start_voice_sample',
-      'description':
-          'Start capturing a voice sample from the specified call party for '
+    ),
+    LlmTool(
+      name: 'start_voice_sample',
+      description: 'Start capturing a voice sample from the specified call party for '
           'voice cloning. Use this to record audio that will be sent to '
           'ElevenLabs to create a cloned voice. Let them speak for at '
           'least 10-15 seconds before stopping.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'party': {
@@ -391,14 +393,13 @@ class TextAgentService {
         },
         'required': ['party'],
       },
-    },
-    {
-      'name': 'stop_and_clone_voice',
-      'description':
-          'Stop the active voice sample and upload it to ElevenLabs to '
+    ),
+    LlmTool(
+      name: 'stop_and_clone_voice',
+      description: 'Stop the active voice sample and upload it to ElevenLabs to '
           'create a cloned voice. Returns the new voice_id on success. '
           'Must call start_voice_sample first.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'voice_name': {
@@ -408,14 +409,13 @@ class TextAgentService {
           },
         },
       },
-    },
-    {
-      'name': 'set_agent_voice',
-      'description':
-          'Change the agent\'s speaking voice mid-call. Use a voice_id '
+    ),
+    LlmTool(
+      name: 'set_agent_voice',
+      description: 'Change the agent\'s speaking voice mid-call. Use a voice_id '
           'returned by stop_and_clone_voice or any ElevenLabs voice ID. '
           'All subsequent agent speech will use this voice.',
-      'input_schema': {
+      inputSchema: {
         'type': 'object',
         'properties': {
           'voice_id': {
@@ -425,161 +425,86 @@ class TextAgentService {
         },
         'required': ['voice_id'],
       },
-    },
+    ),
   ];
 
-  Future<void> _callClaude() async {
+  Future<void> _callLlm() async {
     if (_history.isEmpty) return;
 
     final merged = _mergedHistory();
+    final req = LlmRequest(
+      apiKey: _config.activeApiKey,
+      model: _config.activeModel,
+      systemInstructions: _systemInstructions,
+      messages: merged,
+      tools: _allTools,
+    );
 
-    final uri = Uri.parse('https://api.anthropic.com/v1/messages');
-    final request = await _httpClient!.postUrl(uri);
-
-    request.headers.set('x-api-key', _config.activeApiKey);
-    request.headers.set('anthropic-version', '2023-06-01');
-    request.headers.set('content-type', 'application/json; charset=utf-8');
-
-    final body = jsonEncode({
-      'model': _config.activeModel,
-      'max_tokens': 1024,
-      'system': _systemInstructions,
-      'messages': merged,
-      'tools': _allTools,
-      'stream': true,
-    });
-    request.add(utf8.encode(body));
-
-    final response = await request.close();
-    if (response.statusCode != 200) {
-      final respBody = await response.transform(utf8.decoder).join();
-      if (response.statusCode == 400 &&
-          respBody.contains('tool_use')) {
-        _dumpMergedHistory(merged);
-        _repairHistory();
-      }
-      throw Exception('Claude API ${response.statusCode}: $respBody');
-    }
-
-    final fullText = StringBuffer();
-    String sseBuf = '';
-
-    final toolBlocks = <Map<String, dynamic>>[];
-    String? activeToolId;
-    String? activeToolName;
-    final StringBuffer activeToolInput = StringBuffer();
-
+    String fullText = '';
+    final toolCallEvents = <LlmToolCallEvent>[];
     bool cancelled = false;
-    await for (final chunk in response.transform(utf8.decoder)) {
+
+    final stopwatch = Stopwatch()..start();
+    await for (final event in _caller.call(req)) {
       if (_cancelRequested) {
         cancelled = true;
         break;
       }
-      sseBuf += chunk;
-      final lines = sseBuf.split('\n');
-      sseBuf = lines.removeLast();
-
-      for (final line in lines) {
-        if (!line.startsWith('data: ')) continue;
-        final data = line.substring(6).trim();
-        if (data.isEmpty || data == '[DONE]') continue;
-
-        try {
-          final json = jsonDecode(data) as Map<String, dynamic>;
-          final type = json['type'] as String? ?? '';
-
-          if (type == 'content_block_start') {
-            final cb = json['content_block'] as Map<String, dynamic>?;
-            if (cb?['type'] == 'tool_use') {
-              activeToolId = cb!['id'] as String?;
-              activeToolName = cb['name'] as String?;
-              activeToolInput.clear();
-            }
-          } else if (type == 'content_block_delta') {
-            final delta = json['delta'] as Map<String, dynamic>?;
-            if (delta?['type'] == 'text_delta') {
-              final t = delta!['text'] as String? ?? '';
-              if (t.isNotEmpty) {
-                fullText.write(t);
-                _responseController
-                    .add(ResponseTextEvent(text: t, isFinal: false));
-              }
-            } else if (delta?['type'] == 'input_json_delta') {
-              activeToolInput
-                  .write(delta!['partial_json'] as String? ?? '');
-            }
-          } else if (type == 'content_block_stop') {
-            if (activeToolId != null && activeToolName != null) {
-              Map<String, dynamic> parsedInput = {};
-              try {
-                final raw = activeToolInput.toString();
-                if (raw.isNotEmpty) {
-                  parsedInput =
-                      jsonDecode(raw) as Map<String, dynamic>;
-                }
-              } catch (_) {}
-              toolBlocks.add({
-                'type': 'tool_use',
-                'id': activeToolId,
-                'name': activeToolName,
-                'input': parsedInput,
-              });
-              activeToolId = null;
-              activeToolName = null;
-              activeToolInput.clear();
-            }
-          }
-        } catch (_) {}
-      }
-      if (_cancelRequested) {
-        cancelled = true;
-        break;
+      switch (event) {
+        case LlmTextDeltaEvent(:final text):
+          fullText += text;
+          _responseController.add(ResponseTextEvent(text: text, isFinal: false));
+        case LlmToolCallEvent():
+          toolCallEvents.add(event);
+        case LlmDoneEvent():
+          break;
       }
     }
+
+    stopwatch.stop();
+    debugPrint('[TextAgent] LLM response time: ${stopwatch.elapsedMilliseconds}ms (model: ${req.model})');
 
     _cancelRequested = false;
-    final textResult = fullText.toString();
 
     if (cancelled) {
-      debugPrint('[TextAgentService] Response cancelled — '
-          '${textResult.length} chars emitted');
-      if (textResult.isNotEmpty) {
-        _history.add({
-          'role': 'assistant',
-          'content': [
-            {'type': 'text', 'text': textResult}
-          ],
-        });
-        _responseController
-            .add(ResponseTextEvent(text: textResult, isFinal: true));
+      debugPrint('[TextAgentService] Response cancelled — ${fullText.length} chars emitted');
+      if (fullText.isNotEmpty) {
+        _history.add(LlmMessage(
+          role: LlmRole.assistant,
+          content: [LlmTextBlock(fullText)],
+        ));
+        _responseController.add(ResponseTextEvent(text: fullText, isFinal: true));
       }
       return;
     }
 
-    final contentBlocks = <Map<String, dynamic>>[];
-    if (textResult.isNotEmpty) {
-      contentBlocks.add({'type': 'text', 'text': textResult});
+    final assistantContent = <LlmContentBlock>[];
+    if (fullText.isNotEmpty) {
+      assistantContent.add(LlmTextBlock(fullText));
     }
-    contentBlocks.addAll(toolBlocks);
-
-    if (contentBlocks.isNotEmpty) {
-      _history.add({'role': 'assistant', 'content': contentBlocks});
-    }
-
-    if (textResult.isNotEmpty) {
-      _responseController
-          .add(ResponseTextEvent(text: textResult, isFinal: true));
+    for (final tc in toolCallEvents) {
+      assistantContent.add(LlmToolUseBlock(
+        id: tc.id,
+        name: tc.name,
+        input: tc.arguments,
+      ));
     }
 
-    for (final tool in toolBlocks) {
-      final id = tool['id'] as String;
-      _pendingToolUseIds.add(id);
-      debugPrint('[TextAgent] Tool call: ${tool['name']} '
-          'id=$id input=${tool['input']}');
+    if (assistantContent.isNotEmpty) {
+      _history.add(LlmMessage(role: LlmRole.assistant, content: assistantContent));
+    }
+
+    if (fullText.isNotEmpty) {
+      _responseController.add(ResponseTextEvent(text: fullText, isFinal: true));
+    }
+
+    for (final tc in toolCallEvents) {
+      _pendingToolUseIds.add(tc.id);
+      debugPrint('[TextAgent] Tool call: ${tc.name} id=${tc.id} input=${tc.arguments}');
       _toolCallController.add(ToolCallRequest(
-        id: id,
-        name: tool['name'] as String,
-        arguments: tool['input'] as Map<String, dynamic>,
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments,
       ));
     }
 
@@ -588,14 +513,11 @@ class TextAgentService {
     }
     while (_history.isNotEmpty) {
       final first = _history.first;
-      if (first['role'] == 'assistant') {
+      if (first.role == LlmRole.assistant) {
         _history.removeAt(0);
         continue;
       }
-      final content = first['content'];
-      if (content is List &&
-          (content).any(
-              (b) => b is Map && b['type'] == 'tool_result')) {
+      if (first.hasToolResult) {
         _history.removeAt(0);
         continue;
       }
@@ -603,27 +525,20 @@ class TextAgentService {
     }
   }
 
-  /// Claude requires strictly alternating user / assistant roles.
-  /// Content can be a plain String or a List of content blocks.
-  List<Map<String, dynamic>> _mergedHistory() {
+  /// LLMs require strictly alternating user/assistant roles.
+  /// Merges consecutive same-role messages by combining their content lists.
+  List<LlmMessage> _mergedHistory() {
     if (_history.isEmpty) return [];
-    final out = <Map<String, dynamic>>[];
+    final out = <LlmMessage>[];
     for (final m in _history) {
-      final role = m['role'] as String;
-      final content = m['content'];
-
-      if (out.isNotEmpty && out.last['role'] == role) {
-        final prev = out.last['content'];
-        if (prev is String && content is String) {
-          out.last = {'role': role, 'content': '$prev\n\n$content'};
-        } else {
-          out.last = {
-            'role': role,
-            'content': [..._toBlocks(prev), ..._toBlocks(content)],
-          };
-        }
+      if (out.isNotEmpty && out.last.role == m.role) {
+        final prev = out.last;
+        out.last = LlmMessage(
+          role: prev.role,
+          content: [...prev.content, ...m.content],
+        );
       } else {
-        out.add(Map<String, dynamic>.of(m));
+        out.add(m);
       }
     }
     _stripDanglingToolUse(out);
@@ -631,128 +546,82 @@ class TextAgentService {
   }
 
   /// Remove tool_use blocks from assistant messages when the next message
-  /// doesn't contain the matching tool_result.  This prevents a permanently
-  /// stuck history if a tool_result was never delivered or a transcript
-  /// was flushed between the tool_use and its result.
-  static void _stripDanglingToolUse(List<Map<String, dynamic>> messages) {
+  /// doesn't contain the matching tool_result. Prevents a permanently stuck
+  /// history if a tool_result was never delivered.
+  static void _stripDanglingToolUse(List<LlmMessage> messages) {
     for (var i = 0; i < messages.length; i++) {
       final m = messages[i];
-      if (m['role'] != 'assistant') continue;
-      final content = m['content'];
-      if (content is! List) continue;
+      if (m.role != LlmRole.assistant) continue;
 
-      final toolUseIds = <String>{};
-      for (final block in content) {
-        if (block is Map && block['type'] == 'tool_use') {
-          toolUseIds.add(block['id'] as String);
-        }
-      }
+      final toolUseIds = {
+        for (final b in m.content)
+          if (b is LlmToolUseBlock) b.id,
+      };
       if (toolUseIds.isEmpty) continue;
 
-      // Collect tool_result IDs from the next message (if it's a user message).
       final resultIds = <String>{};
-      if (i + 1 < messages.length && messages[i + 1]['role'] == 'user') {
-        final next = messages[i + 1]['content'];
-        if (next is List) {
-          for (final block in next) {
-            if (block is Map && block['type'] == 'tool_result') {
-              resultIds.add(block['tool_use_id'] as String);
-            }
-          }
+      if (i + 1 < messages.length && messages[i + 1].role == LlmRole.user) {
+        for (final b in messages[i + 1].content) {
+          if (b is LlmToolResultBlock) resultIds.add(b.toolUseId);
         }
       }
 
       final dangling = toolUseIds.difference(resultIds);
       if (dangling.isEmpty) continue;
 
-      final cleaned = content
-          .where((b) =>
-              b is! Map ||
-              b['type'] != 'tool_use' ||
-              !dangling.contains(b['id']))
+      final cleaned = m.content
+          .where((b) => b is! LlmToolUseBlock || !dangling.contains(b.id))
           .toList();
 
       if (cleaned.isEmpty) {
         messages.removeAt(i);
         i--;
       } else {
-        messages[i] = {'role': 'assistant', 'content': cleaned};
+        messages[i] = LlmMessage(role: m.role, content: cleaned);
       }
     }
   }
 
-  static List<Map<String, dynamic>> _toBlocks(dynamic content) {
-    if (content is String) return [{'type': 'text', 'text': content}];
-    if (content is List) return List<Map<String, dynamic>>.from(content);
-    return [];
-  }
-
   /// Dump merged history structure for debugging 400 errors.
-  static void _dumpMergedHistory(List<Map<String, dynamic>> merged) {
+  static void _dumpMergedHistory(List<LlmMessage> merged) {
     debugPrint('[TextAgent] === MERGED HISTORY DUMP (${merged.length} msgs) ===');
     for (var i = 0; i < merged.length; i++) {
       final m = merged[i];
-      final role = m['role'];
-      final content = m['content'];
-      if (content is String) {
-        debugPrint('  [$i] $role: String(${content.length} chars)');
-      } else if (content is List) {
-        final types = (content)
-            .map((b) {
-              if (b is Map) {
-                final t = b['type'] ?? '?';
-                if (t == 'tool_use') return 'tool_use(${b['id']})';
-                if (t == 'tool_result') return 'tool_result(${b['tool_use_id']})';
-                return '$t';
-              }
-              return '${b.runtimeType}';
-            })
-            .join(', ');
-        debugPrint('  [$i] $role: [$types]');
-      } else {
-        debugPrint('  [$i] $role: ${content.runtimeType}');
-      }
+      final role = m.role.name;
+      final types = m.content.map((b) => switch (b) {
+            LlmTextBlock(:final text) => 'text(${text.length} chars)',
+            LlmToolUseBlock(:final id, :final name) => 'tool_use($name/$id)',
+            LlmToolResultBlock(:final toolUseId) => 'tool_result($toolUseId)',
+          }).join(', ');
+      debugPrint('  [$i] $role: [$types]');
     }
     debugPrint('[TextAgent] === END DUMP ===');
   }
 
   /// Repair _history directly by stripping tool_use blocks that have no
-  /// matching tool_result anywhere after them.  Called on 400 errors to
+  /// matching tool_result anywhere after them. Called on 400 errors to
   /// break the stuck-error loop.
   void _repairHistory() {
     final allResultIds = <String>{};
     for (final m in _history) {
-      final content = m['content'];
-      if (content is! List) continue;
-      for (final b in content) {
-        if (b is Map && b['type'] == 'tool_result') {
-          allResultIds.add(b['tool_use_id'] as String);
-        }
+      for (final b in m.content) {
+        if (b is LlmToolResultBlock) allResultIds.add(b.toolUseId);
       }
     }
 
     for (var i = _history.length - 1; i >= 0; i--) {
       final m = _history[i];
-      if (m['role'] != 'assistant') continue;
-      final content = m['content'];
-      if (content is! List) continue;
+      if (m.role != LlmRole.assistant || !m.hasToolUse) continue;
 
-      final hasToolUse =
-          (content).any((b) => b is Map && b['type'] == 'tool_use');
-      if (!hasToolUse) continue;
-
-      final cleaned = (content)
-          .where((b) {
-            if (b is! Map || b['type'] != 'tool_use') return true;
-            return allResultIds.contains(b['id'] as String);
-          })
+      final cleaned = m.content
+          .where((b) => b is! LlmToolUseBlock || allResultIds.contains(b.id))
           .toList();
 
       if (cleaned.isEmpty) {
         _history.removeAt(i);
         debugPrint('[TextAgent] _repairHistory: removed empty assistant msg at $i');
-      } else if (cleaned.length != content.length) {
-        _history[i] = {'role': 'assistant', 'content': cleaned};
+      } else if (cleaned.length != m.content.length) {
+        _history[i] = LlmMessage(role: m.role, content: cleaned);
         debugPrint('[TextAgent] _repairHistory: stripped dangling tool_use at $i');
       }
     }
@@ -774,5 +643,17 @@ class TextAgentService {
     _responseController.close();
     _toolCallController.close();
     _httpClient?.close();
+  }
+
+  static LlmCaller _createCaller(TextAgentConfig config, HttpClient http) {
+    return switch (config.provider) {
+      TextAgentProvider.claude => ClaudeCaller(http),
+      TextAgentProvider.openai =>
+        throw UnimplementedError('OpenAI realtime handles text in-band'),
+      TextAgentProvider.custom => OpenAiCaller(
+          http,
+          baseUrl: Uri.parse(config.customEndpointUrl),
+        ),
+    };
   }
 }

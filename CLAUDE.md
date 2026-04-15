@@ -1,0 +1,1 @@
+Prefix any "flutter" or "dart" command with "fvm".
