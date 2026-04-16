@@ -25,8 +25,9 @@ class ConferenceCallLeg {
   /// Resolved after [ConferenceProvider.lookupActiveCalls].
   String? callControlId;
 
-  /// The B-leg (PSTN side) call_control_id, captured via webhook when call
-  /// parking is enabled on the credential connection.
+  /// The B-leg (PSTN side) call_control_id, captured via webhook from the
+  /// Call Control App.  Distinct from the A-leg ccid and must be explicitly
+  /// joined to the conference.
   String? bLegCallControlId;
 
   ConferenceCallLeg({
@@ -68,16 +69,9 @@ class ConferenceService extends ChangeNotifier {
     notifyListeners();
 
     if (_provider is TelnyxConferenceProvider) {
-      // Enable call parking so B-leg ccids are surfaced via webhook.
-      (_provider! as TelnyxConferenceProvider)
-          .enableCallParking()
-          .then((ok) {
-        if (ok) {
-          debugPrint('[ConferenceService] Call parking enabled at startup');
-        }
-      });
-
       // Auto-connect to the webhook relay WebSocket for B-leg discovery.
+      // The Call Control App sends call.initiated events for B-legs with
+      // distinct call_control_ids that must be joined to the conference.
       final wsUrl = _wsUrlFromWebhook(config.telnyxWebhookUrl);
       if (wsUrl != null) {
         connectWebSocket(wsUrl);
@@ -373,26 +367,10 @@ class ConferenceService extends ChangeNotifier {
 
       await _joinBLegs(activeCalls);
 
-      // Wait for the conference bridge to finish its internal media
-      // redirection before we force-renegotiate.
+      // Call Control App conferences handle media redirection server-side
+      // (Telnyx sends re-INVITEs to redirect RTP to the conference bridge).
+      // Allow time for the bridge to settle before verification.
       await Future<void>.delayed(const Duration(milliseconds: 2000));
-
-      // Force a re-INVITE on each SIP leg so Telnyx returns the conference
-      // bridge's SDP (new IP/port) instead of the original FreeSWITCH
-      // server. Without this, our RTP keeps flowing to the pre-conference
-      // endpoint which may no longer route to the PSTN B-legs.
-      for (final leg in _legs) {
-        final call = sipHelper?.findCall(leg.sipCallId);
-        if (call == null) continue;
-        debugPrint(
-          '[ConferenceService] Renegotiating media for ${leg.sipCallId} '
-          '(${leg.remoteNumber})',
-        );
-        call.renegotiate(options: null);
-        // Stagger so we don't fire two re-INVITEs in parallel on the
-        // same SIP transport — some proxies reject overlapping transactions.
-        await Future<void>.delayed(const Duration(milliseconds: 1500));
-      }
 
       await _verifyParticipants();
     } catch (e) {
@@ -502,15 +480,12 @@ class ConferenceService extends ChangeNotifier {
 
   /// Join B-leg (PSTN side) call_control_ids to the conference.
   ///
-  /// Credential connections only surface A-legs via the active_calls endpoint.
-  /// B-legs must be captured from webhook events (requires call_parking_enabled
-  /// on the credential connection) and explicitly joined.
+  /// With a Call Control App, B-legs have distinct call_control_ids from
+  /// A-legs and must be explicitly joined.  B-leg ccids are captured from
+  /// `call.initiated` webhook events relayed via WebSocket.
   Future<void> _joinBLegs(List<ActiveCallInfo> activeCalls) async {
     if (_provider == null || _conferenceId == null) return;
 
-    // Collect A-leg ccids already in the conference so we can skip duplicates.
-    // For credential connections the webhook "B-leg" ccid is often the same as
-    // the A-leg ccid (Telnyx uses a single call_control_id for the whole call).
     final alreadyJoined = <String>{
       for (final leg in _legs)
         if (leg.callControlId != null) leg.callControlId!,
@@ -524,15 +499,14 @@ class ConferenceService extends ChangeNotifier {
       if (joinedBLegs.contains(bCcid)) continue;
       if (alreadyJoined.contains(bCcid)) {
         debugPrint(
-          '[ConferenceService] B-leg $bCcid is same as A-leg (credential '
-          'connection) — already in conference, skipping',
+          '[ConferenceService] B-leg $bCcid already joined, skipping',
         );
         joinedBLegs.add(bCcid);
         continue;
       }
       debugPrint(
-        '[ConferenceService] Using webhook-cached B-leg $bCcid '
-        'for leg ${leg.sipCallId}',
+        '[ConferenceService] Joining B-leg $bCcid '
+        'for leg ${leg.sipCallId} (${leg.remoteNumber})',
       );
       await _tryJoinBLeg(bCcid, null, leg.remoteNumber);
       joinedBLegs.add(bCcid);
@@ -540,10 +514,9 @@ class ConferenceService extends ChangeNotifier {
 
     if (joinedBLegs.isEmpty) {
       debugPrint(
-        '[ConferenceService] ⚠ No B-legs discovered or joined. '
-        'Remote parties may lose audio if the conference bridge does not '
-        'automatically handle B-leg media routing. Enable call_parking '
-        'on the credential connection for explicit B-leg management.',
+        '[ConferenceService] No B-legs discovered via webhook. '
+        'Verify the Call Control App webhook URL is configured and the '
+        'relay server is forwarding call.initiated events.',
       );
     }
   }

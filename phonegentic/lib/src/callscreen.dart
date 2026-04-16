@@ -116,9 +116,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   SIPUAHelper? get helper => widget._helper;
   bool get voiceOnly =>
-      call!.voiceOnly &&
+      call!.voiceOnly ||
       (_remoteStream == null || _remoteStream!.getVideoTracks().isEmpty);
-  String? get remoteIdentity => call!.remote_identity;
+  String? get remoteIdentity {
+    final uri = call!.remote_identity;
+    if (uri != null && uri.isNotEmpty) return uri;
+    final display = call!.remote_display_name;
+    if (display != null && display.isNotEmpty) return display;
+    return null;
+  }
   Direction? get direction => call!.direction;
   Call? get call => widget._call;
 
@@ -615,6 +621,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   void _handleAccept() async {
+    if (call!.state != CallStateEnum.CALL_INITIATION &&
+        call!.state != CallStateEnum.PROGRESS) {
+      debugPrint('[CallScreen] _handleAccept skipped — state=${call!.state}');
+      return;
+    }
     bool remoteHasVideo = call!.remote_has_video;
     final mediaConstraints = <String, dynamic>{
       'audio': {

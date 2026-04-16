@@ -8,16 +8,13 @@ import 'conference_provider.dart';
 /// Telnyx implementation of [ConferenceProvider].
 ///
 /// Uses the Telnyx Call Control REST API (v2) to look up active calls
-/// and create / manage conference bridges.  No webhooks required — all
-/// operations are synchronous request/response from the client.
+/// and create / manage conference bridges.  Requires a **Call Control App**
+/// connection — credential connections do not support the Conference API
+/// (no media redirection, no REST call control actions).
 ///
-/// The active-calls endpoint requires either a Call Control App ID or a
-/// credential connection with `webhook_event_url` set.  If the supplied
-/// [connectionId] is a plain SIP credential connection, the provider
-/// auto-resolves the correct ID at first use:
-///   1. Lists existing Call Control Applications on the account.
-///   2. Falls back to patching the credential connection to enable
-///      webhook event delivery (using [webhookUrl]).
+/// The [connectionId] must be the Call Control App's connection ID.
+/// Webhooks from the Call Control App are relayed via WebSocket to the
+/// Flutter client for B-leg discovery (distinct A/B-leg CCIDs).
 class TelnyxConferenceProvider implements ConferenceProvider {
   TelnyxConferenceProvider({
     required String apiKey,
@@ -29,12 +26,6 @@ class TelnyxConferenceProvider implements ConferenceProvider {
   final String _apiKey;
   final String _connectionId;
   final String webhookUrl;
-
-  /// Resolved at first use — may differ from [_connectionId] when the
-  /// original value is a credential-connection ID.
-  String? _resolvedId;
-  bool _resolutionAttempted = false;
-  bool _parkingEnabled = false;
 
   static const _base = 'https://api.telnyx.com/v2';
 
@@ -66,107 +57,12 @@ class TelnyxConferenceProvider implements ConferenceProvider {
   }
 
   // -----------------------------------------------------------------------
-  // Connection-ID auto-resolution
-  // -----------------------------------------------------------------------
-
-  /// Returns the connection ID that the active-calls endpoint accepts.
-  ///
-  /// On the first call, tries the configured [_connectionId].  If the API
-  /// returns 422 ("Invalid value for connection_id") we attempt:
-  ///   1. Discover an existing Call Control Application on the account.
-  ///   2. Patch the credential connection to add [webhookUrl], which
-  ///      unlocks the active-calls endpoint for credential connections.
-  Future<String> _effectiveConnectionId() async {
-    if (_resolvedId != null) return _resolvedId!;
-    if (_resolutionAttempted) return _connectionId;
-    _resolutionAttempted = true;
-
-    // Optimistic: try the configured ID first.
-    final testResp = await http.get(
-      Uri.parse('$_base/connections/$_connectionId/active_calls')
-          .replace(queryParameters: {'page[size]': '1'}),
-      headers: _headers,
-    );
-    if (testResp.statusCode >= 200 && testResp.statusCode < 300) {
-      _resolvedId = _connectionId;
-      debugPrint('[TelnyxConf] Connection ID $_connectionId accepted');
-      return _resolvedId!;
-    }
-
-    debugPrint(
-      '[TelnyxConf] Connection ID $_connectionId rejected '
-      '(${testResp.statusCode}) — auto-resolving…',
-    );
-
-    // Strategy 1: look for an existing Call Control Application.
-    try {
-      final resp = await http.get(
-        Uri.parse('$_base/call_control_applications')
-            .replace(queryParameters: {'page[size]': '25'}),
-        headers: _headers,
-      );
-      if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        final body = jsonDecode(resp.body) as Map<String, dynamic>;
-        final apps = body['data'] as List<dynamic>? ?? [];
-        if (apps.isNotEmpty) {
-          final app = apps.first as Map<String, dynamic>;
-          final appId = app['id'] as String?;
-          if (appId != null && appId.isNotEmpty) {
-            _resolvedId = appId;
-            debugPrint(
-              '[TelnyxConf] Resolved Call Control App: '
-              '$_resolvedId (${app['application_name']})',
-            );
-            return _resolvedId!;
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('[TelnyxConf] Call Control App lookup failed: $e');
-    }
-
-    // Strategy 2: enable the credential connection for call-control
-    // by setting webhook_event_url (the active-calls endpoint accepts
-    // credential connections once they have a webhook URL).
-    if (webhookUrl.isNotEmpty) {
-      try {
-        final resp = await http.patch(
-          Uri.parse('$_base/credential_connections/$_connectionId'),
-          headers: _headers,
-          body: jsonEncode({
-            'webhook_event_url': webhookUrl,
-            'webhook_api_version': '2',
-          }),
-        );
-        if (resp.statusCode >= 200 && resp.statusCode < 300) {
-          _resolvedId = _connectionId;
-          debugPrint(
-            '[TelnyxConf] Enabled webhook on credential connection '
-            '$_connectionId → active-calls now available',
-          );
-          return _resolvedId!;
-        }
-        debugPrint(
-          '[TelnyxConf] Credential PATCH failed '
-          '${resp.statusCode}: ${resp.body}',
-        );
-      } catch (e) {
-        debugPrint('[TelnyxConf] Credential PATCH failed: $e');
-      }
-    }
-
-    debugPrint('[TelnyxConf] Auto-resolution exhausted — using $_connectionId');
-    return _connectionId;
-  }
-
-  // -----------------------------------------------------------------------
   // ConferenceProvider implementation
   // -----------------------------------------------------------------------
 
   @override
   Future<List<ActiveCallInfo>> lookupActiveCalls() async {
-    final connId = await _effectiveConnectionId();
-    final url = '$_base/connections/$connId/active_calls';
+    final url = '$_base/connections/$_connectionId/active_calls';
     final results = <ActiveCallInfo>[];
     String? pageAfter;
 
@@ -216,7 +112,7 @@ class TelnyxConferenceProvider implements ConferenceProvider {
 
     debugPrint('[TelnyxConf] lookupActiveCalls found ${results.length} unique legs');
 
-    // Credential connections omit from/to. Try enriching via detail endpoint.
+    // Call Control Apps normally include from/to, but enrich if missing.
     final needsEnrichment = results.any(
       (r) => (r.from == null || r.from!.isEmpty) &&
              (r.to == null || r.to!.isEmpty),
@@ -364,48 +260,6 @@ class TelnyxConferenceProvider implements ConferenceProvider {
       body: jsonEncode({'conference_id': conferenceId}),
     );
     _checkResponse(resp, 'removeParticipant');
-  }
-
-  // -----------------------------------------------------------------------
-  // Call parking — enables discovery of B-legs via webhook
-  // -----------------------------------------------------------------------
-
-  /// Enable call parking on the credential connection so that outbound B-legs
-  /// are parked on answer, firing a webhook with their call_control_id.  This
-  /// is a one-time PATCH; the flag is remembered for the session.
-  Future<bool> enableCallParking() async {
-    if (_parkingEnabled) return true;
-    if (webhookUrl.isEmpty) {
-      debugPrint('[TelnyxConf] Cannot enable parking — no webhook URL');
-      return false;
-    }
-    try {
-      final resp = await http.patch(
-        Uri.parse('$_base/credential_connections/$_connectionId'),
-        headers: _headers,
-        body: jsonEncode({
-          'outbound': {
-            'call_parking': {'call_parking_enabled': true},
-          },
-          'webhook_event_url': webhookUrl,
-          'webhook_api_version': '2',
-        }),
-      );
-      if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        _parkingEnabled = true;
-        debugPrint(
-          '[TelnyxConf] Call parking enabled on $_connectionId',
-        );
-        return true;
-      }
-      debugPrint(
-        '[TelnyxConf] Call parking PATCH failed '
-        '${resp.statusCode}: ${resp.body}',
-      );
-    } catch (e) {
-      debugPrint('[TelnyxConf] enableCallParking error: $e');
-    }
-    return false;
   }
 
   /// Invoked by the webhook listener for each Telnyx call control event.

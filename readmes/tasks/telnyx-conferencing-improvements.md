@@ -5,11 +5,19 @@
 
 ## Goal
 
-Enable three-way calling (conference merge) for Telnyx Credential Connections. This required building the conference service layer, a webhook relay for B-leg discovery, SIP header extraction for reliable call correlation, and extensive SDP/hold-state handling.
+Enable three-way calling (conference merge) for Telnyx connections. This required building the conference service layer, a webhook relay for B-leg discovery, SIP header extraction for reliable call correlation, and migration from Credential Connections to a Call Control App.
 
 ## Status
 
-The client-side implementation is complete and mechanically correct. However, Telnyx's Conference API does not redirect media for Credential Connection A-legs — the conference bridge acknowledges participants (`;isfocus`) but the SDP media address remains pointed at the original FreeSWITCH server, resulting in silence for remote parties. A detailed support ticket has been filed: `readmes/bugs/telnyx-conference-credential-connection-ticket.md`.
+**Phase 2 complete** — migrated from Credential Connection to Call Control App.
+
+Phase 1 built the full conference service layer but hit a fundamental blocker: Telnyx's Conference API does not support Credential Connections (no media redirection, no REST call control actions, identical A/B-leg CCIDs). Telnyx support confirmed this and recommended migrating to a Call Control App.
+
+Phase 2 refactored the provider and service to use a Call Control App connection, which provides:
+- Full Conference API with proper media redirection to the conference bridge
+- REST call control actions (hold, unhold, transfer, etc.)
+- Distinct A-leg and B-leg call_control_ids for proper conference joining
+- Native webhook events without needing call parking workarounds
 
 ---
 
@@ -21,7 +29,7 @@ The client-side implementation is complete and mechanically correct. However, Te
 |------|---------|
 | `phonegentic/lib/src/conference/conference_provider.dart` | Abstract interface + data models (`ActiveCallInfo`, `ConferenceBridge`, `ConferenceParticipant`) for conference providers |
 | `phonegentic/lib/src/conference/conference_service.dart` | Core conference orchestration — leg tracking, hold/unhold, merge logic, WebSocket B-leg relay client |
-| `phonegentic/lib/src/conference/telnyx_conference_provider.dart` | Telnyx-specific implementation — REST API calls for conference CRUD, call parking, active call lookup |
+| `phonegentic/lib/src/conference/telnyx_conference_provider.dart` | Telnyx-specific implementation — REST API calls for conference CRUD, active call lookup (Call Control App) |
 | `static/DEPLOY.md` | Deployment guide for the Rust relay server (SCP, Nginx, systemd) |
 | `readmes/bugs/telnyx-conference-credential-connection-ticket.md` | Detailed Telnyx support ticket with SDP traces |
 
@@ -83,31 +91,55 @@ The `_mergeTelnyx()` method follows this sequence:
 2. **Wait 2s** — for the SIP re-INVITE round-trip to complete
 3. **Resolve legs** — three-pass matching (SIP header ccid → phone number → elimination) against the active_calls API
 4. **Create conference** with the first leg's `call_control_id`
-5. **Join remaining legs** with 1.5s stagger
-6. **Join B-legs** — webhook-captured B-leg ccids (for credential connections these are the same as A-leg ccids, so they're skipped as duplicates)
-7. **Renegotiate media** — force re-INVITE on each SIP leg to prompt Telnyx to return updated SDP with conference bridge media address
+5. **Join remaining A-legs** with 1.5s stagger
+6. **Join B-legs** — webhook-captured B-leg ccids (with Call Control App these are distinct from A-leg ccids and must be explicitly joined)
+7. **Wait 2s** — Call Control App conferences handle media redirection server-side (Telnyx sends re-INVITEs to redirect RTP to the conference bridge)
 8. **Verify participants** via `GET /conferences/{id}/participants`
 
 ### 3. WebSocket B-Leg Relay (`static_server/src/main.rs`)
 
 The Rust server receives Telnyx webhook POSTs at `/web_hooks/telnyx`, extracts `call.initiated` events with `direction=outgoing` (B-legs), and broadcasts the `call_control_id` to all connected WebSocket clients at `/ws/call_control`. The Flutter app's `ConferenceService` maintains a persistent WebSocket connection with auto-reconnect.
 
-### 4. Call Parking
+### 4. Call Control App Setup
 
-On startup, `TelnyxConferenceProvider.enableCallParking()` calls `PATCH /v2/credential_connections/{id}` to set `call_parking_enabled: true` and configure the `webhook_event_url`. This makes Telnyx surface B-leg events via webhooks, which is required for credential connections since the active_calls API only returns A-legs.
+The credential connection must be linked to a Call Control App in the Telnyx Mission Control Portal. The Call Control App's webhook URL points to the Rust relay server, which broadcasts events to the Flutter client via WebSocket. Call parking is no longer needed — Call Control Apps natively surface B-leg events with distinct `call_control_id`s.
 
 ---
 
-## Known Issues / Blockers
+## Resolved Issues (Phase 2)
 
-1. **Conference API does not redirect media for credential connections** — The core blocker. Telnyx adds `;isfocus` to the SIP Contact but the SDP `c=`/`m=` lines remain pointed at the original FreeSWITCH. Remote parties hear silence. See the detailed ticket in `readmes/bugs/`.
+1. **~~Conference API does not redirect media for credential connections~~** — Resolved by migrating to Call Control App. The conference bridge now properly redirects media via server-side re-INVITEs.
 
-2. **Call Control REST actions return 404 for credential connection CCIDs** — `PUT /calls/{ccid}/actions/unhold` and similar endpoints are not available for credential connection call_control_ids.
+2. **~~Call Control REST actions return 404 for credential connection CCIDs~~** — Resolved. Call Control App CCIDs support all REST API actions (hold, unhold, transfer, etc.).
 
-3. **Active calls API returns stale records** — `GET /connections/{id}/active_calls` includes calls from sessions terminated 30+ minutes ago. The three-pass leg matching works around this by preferring SIP-header ccids and skipping stale entries by creation time.
+3. **~~B-leg CCIDs identical to A-leg CCIDs~~** — Resolved. Call Control Apps provide distinct A-leg and B-leg `call_control_id`s.
+
+## Remaining Concerns
+
+1. **Active calls API may return stale records** — Telnyx flagged this as a possible data sync bug. The three-pass leg matching works around it by preferring SIP-header ccids and skipping stale entries by creation time. Monitor after migration.
+
+2. **SIP header availability** — Verify that `X-Telnyx-Call-Control-ID` headers are still present in SIP 180/200 responses when the credential connection is linked to a Call Control App. If not, leg resolution falls back to phone number matching.
 
 ## Next Steps
 
-- **Await Telnyx support response** on whether conferencing is supported for credential connections
-- **Evaluate Call Control App migration** — Call Control Apps provide distinct A/B-leg ccids, full REST API control, and proper conference bridge media redirection
-- **Consider client-side audio mixing** as a fallback — the `conf=YES` audio pipeline already exists; it would require injecting each remote party's audio into the other call's outgoing stream
+- **Test end-to-end** with the Call Control App linked to the credential connection
+- **Verify B-leg webhook delivery** — confirm `call.initiated` events with `direction=outgoing` arrive at the relay server with distinct B-leg CCIDs
+- **Monitor active_calls staleness** — report to Telnyx if stale records persist with Call Control App connections
+
+---
+
+## Appendix: Telnyx Support Response (2026-04-15)
+
+Telnyx confirmed the Conference API is **not supported for Credential Connections** — it requires a Call Control App connection. Key points:
+
+- Conference API media redirection only works with Call Control App connections
+- `call_control_id` from `X-Telnyx-Call-Control-ID` SIP headers on credential connections is for identification/tracking only, not full API control
+- Call Control Apps provide: full Conference API, all REST call control actions, separate A/B-leg CCIDs
+- Stale active_calls records may be a Telnyx data sync bug — report with connection ID and timestamps
+
+**Solution applied**: Link existing credential connection to a new Call Control App in Mission Control Portal. SIP registration/calling unchanged; conference operations now use Call Control App's connection ID.
+
+**Reference docs**:
+- [Voice API Commands](https://developers.telnyx.com/docs/voice/programmable-voice/)
+- [SIP Connections Overview](https://developers.telnyx.com/docs/voice/connections)
+- [List Active Calls API](https://developers.telnyx.com/api/call-control/list-connection-active-calls)
