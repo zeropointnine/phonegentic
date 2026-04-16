@@ -9,15 +9,13 @@ Enable three-way calling (conference merge) for Telnyx connections. This require
 
 ## Status
 
-**Phase 2 complete** — migrated from Credential Connection to Call Control App.
+**Phase 3 planned** — local audio mixing (app-side conference bridge).
 
 Phase 1 built the full conference service layer but hit a fundamental blocker: Telnyx's Conference API does not support Credential Connections (no media redirection, no REST call control actions, identical A/B-leg CCIDs). Telnyx support confirmed this and recommended migrating to a Call Control App.
 
-Phase 2 refactored the provider and service to use a Call Control App connection, which provides:
-- Full Conference API with proper media redirection to the conference bridge
-- REST call control actions (hold, unhold, transfer, etc.)
-- Distinct A-leg and B-leg call_control_ids for proper conference joining
-- Native webhook events without needing call parking workarounds
+Phase 2 refactored the provider and service to use a Call Control App connection. However, testing revealed that linking a credential connection to a Call Control App in the Telnyx portal would **reassign the connection away from SIP Trunking to the Voice API**, breaking SIP registration and normal calling. There is no way to keep the credential connection as a SIP Trunk while also routing its calls through a Call Control App. The Telnyx Conference API is effectively unusable with our SIP credential connection architecture.
+
+Phase 3 will abandon the Telnyx Conference API entirely and implement **local audio mixing** in the app. The Flutter app becomes the conference bridge: audio from Call A's WebRTC render stream is injected into Call B's capture stream, and vice versa. No server-side conference bridge is needed.
 
 ---
 
@@ -120,11 +118,73 @@ The credential connection must be linked to a Call Control App in the Telnyx Mis
 
 2. **SIP header availability** — Verify that `X-Telnyx-Call-Control-ID` headers are still present in SIP 180/200 responses when the credential connection is linked to a Call Control App. If not, leg resolution falls back to phone number matching.
 
-## Next Steps
+## Phase 3: Local Audio Mixing (Planned)
 
-- **Test end-to-end** with the Call Control App linked to the credential connection
-- **Verify B-leg webhook delivery** — confirm `call.initiated` events with `direction=outgoing` arrive at the relay server with distinct B-leg CCIDs
-- **Monitor active_calls staleness** — report to Telnyx if stale records persist with Call Control App connections
+### Problem
+
+The Telnyx Conference API requires a Call Control App connection, but linking our SIP credential connection to a Call Control App reassigns it away from SIP Trunking — breaking registration and normal calling. There is no portal option to keep both. The Conference API's `createConference` and `joinConference` calls succeed on credential connection CCIDs, but Telnyx never redirects media to the conference bridge (RTP stays on the original path, `remoteRMS=0.0` after merge).
+
+### Approach: App-side conference bridge
+
+Instead of relying on Telnyx to mix audio server-side, the app mixes audio locally across its two concurrent WebRTC sessions. The native `AudioTap` layer (macOS Swift) already supports conference mode (`APM conference mode ON`) and manages separate capture/render audio processing chains per call.
+
+```
+┌──────────────────────────────────────────────────┐
+│                  Flutter App                      │
+│                                                   │
+│  ┌──────────┐    render audio    ┌──────────┐    │
+│  │ Call A    │──────────────────►│ Mixer     │    │
+│  │ (WebRTC) │                   │           │    │
+│  │          │◄──────────────────│ inject B  │    │
+│  └──────────┘    capture inject  │ + mic     │    │
+│                                  │           │    │
+│  ┌──────────┐    render audio    │           │    │
+│  │ Call B    │──────────────────►│           │    │
+│  │ (WebRTC) │                   │ inject A  │    │
+│  │          │◄──────────────────│ + mic     │    │
+│  └──────────┘    capture inject  └──────────┘    │
+│                                                   │
+│  Each party hears: the other party + mic          │
+│  (mic is shared across both capture streams)      │
+└──────────────────────────────────────────────────┘
+         │                    │
+         ▼                    ▼
+    ┌─────────┐          ┌─────────┐
+    │ Telnyx   │          │ Telnyx   │
+    │ (SIP A)  │          │ (SIP B)  │
+    └─────────┘          └─────────┘
+         │                    │
+         ▼                    ▼
+    Remote Party A       Remote Party B
+```
+
+### Key design questions to resolve
+
+1. **Multi-PeerConnection audio routing**: Currently WebRTC uses a single PeerConnection per call. With two concurrent calls, macOS will have two sets of capture/render audio processors. Need to confirm the AudioTap layer can distinguish and cross-route between them.
+
+2. **Capture injection**: The `CapturePostProc` already injects TTS audio into the outbound stream. For conferencing, it needs to also inject the *other call's render audio* into each call's capture stream. This means Call A's `RenderPreProc` output must be readable by Call B's `CapturePostProc`, and vice versa.
+
+3. **Echo / feedback prevention**: When Call A's remote audio is injected into Call B's capture, and Call B's remote audio is injected into Call A's capture, there's a risk of audio feedback loops. AEC is currently disabled in conference mode — may need a simple "don't re-inject what you just received" guard, or a short mixing buffer with origin tagging.
+
+4. **Mic sharing**: The mic signal needs to go into both calls' capture streams. Currently the mic IOProc feeds one ring buffer. Both `CapturePostProc` instances would need to read from the same mic source without contention.
+
+5. **Merge trigger**: The existing `_mergeTelnyx()` flow in `ConferenceService` would be replaced (or a new `_mergeLocal()` path added) that simply activates cross-injection in the AudioTap layer and unholds both SIP legs. No Telnyx REST API calls needed.
+
+6. **TTS routing in conference**: When the AI agent speaks (ElevenLabs TTS), the audio currently goes into the capture stream. In conference mode, TTS output should be injected into both calls' capture streams so all parties hear the agent.
+
+### Existing infrastructure to leverage
+
+- **`AudioTap` (Swift, macOS)**: Already has `enterCallMode`/`exitCallMode`, conference mode flag, `setConferenceMode`, separate `CapturePostProc`/`RenderPreProc` per PeerConnection, ring buffers for mic and TTS injection.
+- **`ConferenceService` (Dart)**: Leg tracking, hold/unhold, merge orchestration — the Dart-side coordination is already built. Just needs a `_mergeLocal()` path.
+- **`CallScreen`**: Conference UI (add call, merge button, per-leg hold) is already implemented.
+
+### What can be removed (Phase 3 cleanup)
+
+- Telnyx Conference REST API calls (`createConference`, `joinConference`, `listParticipants`, hold/unhold participant)
+- B-leg webhook discovery (WebSocket relay, `extractBLegFromWebhook`)
+- `TelnyxConferenceProvider` class (or gut it to just `lookupActiveCalls` if still useful)
+- Rust server webhook broadcast (`/ws/call_control` endpoint)
+- Call Control App in Telnyx portal (can be deleted)
 
 ---
 
