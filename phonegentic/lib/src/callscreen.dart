@@ -40,6 +40,32 @@ class CallScreenWidget extends StatefulWidget {
 
   CallScreenWidget(this._helper, this._call, {super.key, this.onDismiss});
 
+  /// Accept an incoming call programmatically (e.g. agent auto-answer).
+  /// Can be called without a mounted CallScreenWidget.
+  static Future<void> acceptCall(Call call, SIPUAHelper helper) async {
+    try {
+      if (call.state != CallStateEnum.CALL_INITIATION &&
+          call.state != CallStateEnum.PROGRESS) {
+        debugPrint('[CallScreen] acceptCall skipped — state=${call.state}');
+        return;
+      }
+      final mediaConstraints = <String, dynamic>{
+        'audio': {
+          'echoCancellation': true,
+          'noiseSuppression': true,
+          'autoGainControl': true,
+          'channelCount': 2,
+        },
+        'video': false,
+      };
+      final mediaStream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      call.answer(helper.buildCallOptions(true), mediaStream: mediaStream);
+    } catch (e) {
+      debugPrint('[CallScreen] Auto-answer failed: $e');
+    }
+  }
+
   @override
   State<CallScreenWidget> createState() => _MyCallScreenWidget();
 }
@@ -175,6 +201,19 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
   }
 
+  @override
+  void didUpdateWidget(covariant CallScreenWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget._call?.id != widget._call?.id) {
+      debugPrint(
+          '[CallScreen] Call object swapped (fork replacement): '
+          '${oldWidget._call?.id} → ${widget._call?.id}');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncCallState();
+      });
+    }
+  }
+
   Future<void> _loadTtsConfig() async {
     final config = await AgentConfigService.loadTtsConfig();
     if (mounted) setState(() => _ttsConfig = config);
@@ -250,15 +289,20 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       setState(() {});
       return;
     }
-    if (callState.state != CallStateEnum.STREAM) {
-      _state = callState.state;
-    }
     switch (callState.state) {
       case CallStateEnum.STREAM:
         _handleStreams(callState);
         break;
       case CallStateEnum.ENDED:
       case CallStateEnum.FAILED:
+        // During fork coalescing, individual forks fail but the logical
+        // call is still alive — don't update _state or tear down.
+        if (_agent.forkCoalescing) {
+          debugPrint(
+              '[CallScreen] Suppressed teardown during fork coalescing');
+          break;
+        }
+        _state = callState.state;
         _stopRecording();
         final tearSheet = Provider.of<TearSheetService>(context, listen: false);
         if (tearSheet.isActive) {
@@ -269,12 +313,14 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         _backToDialPad();
         break;
       case CallStateEnum.CONFIRMED:
+        _state = callState.state;
         setState(() => _callConfirmed = true);
         _enterCallMode();
         _maybeAutoRecord();
         _startAddCallGrace();
         break;
       default:
+        _state = callState.state;
         setState(() {});
     }
   }
@@ -831,15 +877,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        children: [
-          _buildCallTopBar(),
-          Expanded(child: _buildContent()),
-          _buildActionButtons(),
-          const SizedBox(height: 32),
-        ],
-      ),
+    return Column(
+      children: [
+        Expanded(child: _buildContent()),
+        _buildActionButtons(),
+        const SizedBox(height: 32),
+      ],
     );
   }
 

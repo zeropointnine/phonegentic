@@ -13,6 +13,7 @@ import '../agent_service.dart';
 import '../calendar_sync_service.dart';
 import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
+import '../inbound_call_flow_service.dart';
 import '../job_function_service.dart';
 import '../models/agent_context.dart';
 import '../models/job_function.dart';
@@ -312,8 +313,10 @@ class _AgentHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final jfService = context.watch<JobFunctionService>();
+    final icfService = context.watch<InboundCallFlowService>();
 
     final selectedName = jfService.selected?.title ?? 'Phonegentic AI';
+    final activeFlow = icfService.activeFlowName;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -345,6 +348,22 @@ class _AgentHeader extends StatelessWidget {
                   children: [
                     _StatusDot(color: _statusColor, active: agent.active),
                     const SizedBox(width: 5),
+                    if (activeFlow != null) ...[
+                      Icon(Icons.call_received_rounded,
+                          size: 10, color: AppColors.accent),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          activeFlow,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.accent,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
                     Text(
                       _statusLabel,
                       style: TextStyle(
@@ -990,6 +1009,33 @@ class _JobFunctionDropdown extends StatelessWidget {
                       const SizedBox(width: 8),
                       Text(
                         'New Job Function',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const PopupMenuDivider(height: 1),
+              PopupMenuItem<int>(
+                value: -2,
+                enabled: false,
+                height: 36,
+                child: HoverButton(
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    context.read<InboundCallFlowService>().openEditor();
+                  },
+                  child: Row(
+                    children: [
+                      Icon(Icons.call_received_rounded,
+                          size: 14, color: AppColors.accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Inbound Call Flow',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,

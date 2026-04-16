@@ -42,37 +42,99 @@ class IvrDetector {
   // ---------------------------------------------------------------------------
 
   static const List<String> _ivrPhrases = <String>[
-    'leave a message',
-    'leave your message',
-    'record your message',
-    'after the tone',
-    'after the beep',
-    'at the tone',
-    'at the beep',
+    // Voicemail greetings (short fragments first for early STT chunk matching)
+    'your call',
+    'thank you',
+    'thanks for calling',
+    'thank you for calling',
+    'thank you for your patience',
+    'thank you for waiting',
+    'welcome to',
+    "you've reached",
+    'you have reached',
+    "i'm sorry",
+    'sorry i missed',
+    'sorry we missed',
+    'no one is available',
     'not available',
     'currently unavailable',
     'is not available',
     'cannot come to the phone',
     "can't come to the phone",
+    'unable to take your call',
+
+    // Voicemail instructions
+    'leave a message',
+    'leave your message',
+    'record your message',
     'please leave',
+    'after the tone',
+    'after the beep',
+    'at the tone',
+    'at the beep',
+
+    // IVR menu navigation
+    'press 0',
     'press 1',
     'press 2',
     'press 3',
+    'press 4',
+    'press 5',
     'press pound',
     'press star',
+    'press zero',
     'for english',
+    'for spanish',
+    'for more options',
+    'for billing',
+    'for sales',
+    'for support',
+    'for technical',
+    'for account',
+    'speak to an operator',
+    'speak to a representative',
+    'speak to an agent',
     'para espanol',
     'para español',
+    'please listen carefully',
+    'listen to the following',
+    'our menu has changed',
+    'our options have changed',
+    'dial by name',
+    'main menu',
+    'enter your account',
+    'enter your pin',
+
+    // Hold / queue
+    'please hold',
+    'please stay on the line',
+    'please try again',
     'your call is important',
     'your call has been forwarded',
-    'please hold',
-    'please try again',
+    'your estimated wait',
+    'all of our representatives',
+    'all representatives',
+    'all of our agents',
+    'all agents are',
+    'next available',
+
+    // Telco / system announcements
     'the person you are calling',
-    'the number you have dialed',
+    'the person you are trying to reach',
     'the person you have called',
+    'the party you are trying to reach',
+    'the number you have dialed',
+    'the number you have reached',
+    'the number you are trying to reach',
+    'trying to reach',
     'the mailbox',
     'voicemail',
     'voice mail',
+    'voice messaging',
+    'messaging system',
+    'automated voice',
+    'forwarded to an automated',
+    'been forwarded to',
     'the subscriber',
     'greeting',
     'extension',
@@ -80,9 +142,8 @@ class IvrDetector {
     'auto attendant',
     'directory',
     'if you know your party',
-    "you've reached",
-    'you have reached',
-    'thank you for calling',
+
+    // Service / error announcements
     'has not set up',
     'is not set up',
     'cannot be completed',
@@ -90,14 +151,25 @@ class IvrDetector {
     'has been disconnected',
     'been changed',
     'new number is',
+    'all circuits are busy',
+    'hang up and try',
+    'hang up and dial',
+
+    // Business hours
     'office hours',
     'business hours',
     'we are closed',
     'we are currently closed',
-    'dial by name',
-    'main menu',
-    'hang up and try',
-    'hang up and dial',
+    'we are open',
+    'hours of operation',
+
+    // Recording / compliance
+    'calls may be recorded',
+    'calls may be monitored',
+    'this call may be',
+    'this call is being',
+    'for quality assurance',
+    'for training purposes',
   ];
 
   static const List<String> _mailboxFullPhrases = <String>[
@@ -347,7 +419,7 @@ class IvrDetector {
 
   static bool _matchesAny(String lower, List<String> phrases) {
     for (final String phrase in phrases) {
-      if (lower.contains(phrase)) return true;
+      if (_containsPhrase(lower, phrase)) return true;
     }
     return false;
   }
@@ -355,9 +427,27 @@ class IvrDetector {
   static int _countHits(String lower, List<String> phrases) {
     int count = 0;
     for (final String phrase in phrases) {
-      if (lower.contains(phrase)) count++;
+      if (_containsPhrase(lower, phrase)) count++;
     }
     return count;
+  }
+
+  /// Word-boundary-aware phrase match. Prevents short keywords like "yo"
+  /// from matching inside longer words like "your".
+  static bool _containsPhrase(String text, String phrase) {
+    final idx = text.indexOf(phrase);
+    if (idx < 0) return false;
+    final end = idx + phrase.length;
+    final leftOk = idx == 0 || !_isLetterOrDigit(text[idx - 1]);
+    final rightOk = end >= text.length || !_isLetterOrDigit(text[end]);
+    return leftOk && rightOk;
+  }
+
+  static bool _isLetterOrDigit(String ch) {
+    final c = ch.codeUnitAt(0);
+    return (c >= 0x30 && c <= 0x39) || // 0-9
+        (c >= 0x41 && c <= 0x5A) || // A-Z
+        (c >= 0x61 && c <= 0x7A); // a-z
   }
 
   static int _wordCount(String text) {
