@@ -426,11 +426,6 @@ class AgentConfigService {
     return ConferenceConfig(
       provider: ConferenceProviderType
           .values[idx.clamp(0, ConferenceProviderType.values.length - 1)],
-      telnyxApiKey: prefs.getString('${_prefix}conf_telnyx_key') ?? '',
-      telnyxConnectionId:
-          prefs.getString('${_prefix}conf_telnyx_conn_id') ?? '',
-      telnyxWebhookUrl:
-          prefs.getString('${_prefix}conf_telnyx_webhook_url') ?? '',
       basicSupportsUpdate:
           prefs.getBool('${_prefix}conf_basic_supports_update') ?? false,
       basicRenegotiateMedia:
@@ -441,11 +436,6 @@ class AgentConfigService {
   static Future<void> saveConferenceConfig(ConferenceConfig config) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('${_prefix}conf_provider', config.provider.index);
-    await prefs.setString('${_prefix}conf_telnyx_key', config.telnyxApiKey);
-    await prefs.setString(
-        '${_prefix}conf_telnyx_conn_id', config.telnyxConnectionId);
-    await prefs.setString(
-        '${_prefix}conf_telnyx_webhook_url', config.telnyxWebhookUrl);
     await prefs.setBool(
         '${_prefix}conf_basic_supports_update', config.basicSupportsUpdate);
     await prefs.setBool('${_prefix}conf_basic_renegotiate_media',

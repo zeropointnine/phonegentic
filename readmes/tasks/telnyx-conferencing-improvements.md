@@ -9,13 +9,13 @@ Enable three-way calling (conference merge) for Telnyx connections. This require
 
 ## Status
 
-**Closed** — server-side conferencing abandoned; on-device mixing implemented separately.
+**Closed** — server-side conferencing abandoned and code removed. On-device mixing implemented separately in `readmes/features/on-device-conference-mixing.md`.
 
 Phase 1 built the full conference service layer but hit a fundamental blocker: Telnyx's Conference API does not support Credential Connections (no media redirection, no REST call control actions, identical A/B-leg CCIDs). Telnyx support confirmed this and recommended migrating to a Call Control App.
 
 Phase 2 refactored the provider and service to use a Call Control App connection. However, testing revealed that linking a credential connection to a Call Control App in the Telnyx portal would **reassign the connection away from SIP Trunking to the Voice API**, breaking SIP registration and normal calling. There is no way to keep the credential connection as a SIP Trunk while also routing its calls through a Call Control App. The Telnyx Conference API is effectively unusable with our SIP credential connection architecture.
 
-Phase 3 (on-device audio mixing) is tracked in `readmes/features/on-device-conference-mixing.md`.
+All Telnyx conference code (`TelnyxConferenceProvider`, `ConferenceProvider` abstract interface, REST merge path, WebSocket B-leg relay, webhook wiring, settings UI fields) has been removed. Only Basic (SIP REFER) and On Device conference modes remain.
 
 ---
 

@@ -96,13 +96,12 @@ The `ExternalAudioProcessingDelegate` callbacks are **global** — one invocatio
 
 ### Configuration
 
-A new `ConferenceProviderType.onDevice` option is added to the conference settings dropdown. When selected, the merge button triggers `_mergeLocal()` instead of SIP REFER or Telnyx REST calls.
-
 ```
 Settings → Conference Calling → Provider dropdown:
-  Off | Basic | Telnyx | On Device
-                                ^^^ new
+  Off | Basic | On Device
 ```
+
+Telnyx server-side conference was removed — it never worked with SIP credential connections.
 
 ### Existing infrastructure leveraged
 
@@ -114,8 +113,11 @@ Settings → Conference Calling → Provider dropdown:
 
 | File | Changes |
 |------|---------|
-| `phonegentic/lib/src/conference/conference_config.dart` | Added `onDevice` to `ConferenceProviderType` enum |
-| `phonegentic/lib/src/conference/conference_service.dart` | Added `_mergeLocal()` path, `onConferenceModeChanged` callback, conf-aware `reset()` |
-| `phonegentic/lib/src/agent_config_service.dart` | Persistence works via enum index (no code change needed) |
-| `phonegentic/lib/src/register.dart` | Added "On Device" dropdown option with subtitle text |
-| `phonegentic/macos/Runner/WebRTCAudioProcessor.swift` | Added double-slot cross-inject: `confSlot0/1`, `confRenderStore()`, `confCaptureMix()`, `confResetSlots()`. Wired into RenderPreProc and CapturePostProc when `conferenceMode=true`. |
+| `phonegentic/lib/src/conference/conference_config.dart` | `ConferenceProviderType` enum: `none`, `basic`, `onDevice`. Telnyx fields removed. |
+| `phonegentic/lib/src/conference/conference_service.dart` | `_mergeLocal()` and `_mergeBasic()` paths. Telnyx REST merge, WebSocket relay, B-leg discovery all removed. |
+| `phonegentic/lib/src/conference/telnyx_conference_provider.dart` | **Deleted** |
+| `phonegentic/lib/src/conference/conference_provider.dart` | **Deleted** (abstract interface only used by Telnyx) |
+| `phonegentic/lib/src/agent_config_service.dart` | Telnyx conference persistence fields removed |
+| `phonegentic/lib/src/register.dart` | Telnyx dropdown item and API key/connection ID/webhook fields removed |
+| `phonegentic/lib/src/dialpad.dart` | Telnyx B-leg webhook wiring removed |
+| `phonegentic/macos/Runner/WebRTCAudioProcessor.swift` | Double-slot cross-inject: `confSlot0/1`, `confRenderStore()`, `confCaptureMix()`, `confResetSlots()`. TTS mixed unconditionally via `mixTTSInto()`. |

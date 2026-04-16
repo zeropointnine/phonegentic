@@ -33,9 +33,6 @@ class _MyRegisterWidget extends State<RegisterWidget>
   final TextEditingController _authorizationUserController =
       TextEditingController();
   final Map<String, String> _wsExtraHeaders = {};
-  final _confTelnyxKeyCtrl = TextEditingController();
-  final _confTelnyxConnIdCtrl = TextEditingController();
-  final _confTelnyxWebhookCtrl = TextEditingController();
 
   ConferenceConfig _conf = const ConferenceConfig();
 
@@ -65,9 +62,6 @@ class _MyRegisterWidget extends State<RegisterWidget>
     _sipUriController.dispose();
     _displayNameController.dispose();
     _authorizationUserController.dispose();
-    _confTelnyxKeyCtrl.dispose();
-    _confTelnyxConnIdCtrl.dispose();
-    _confTelnyxWebhookCtrl.dispose();
     super.dispose();
   }
 
@@ -113,9 +107,6 @@ class _MyRegisterWidget extends State<RegisterWidget>
     if (!mounted) return;
     setState(() {
       _conf = conf;
-      _confTelnyxKeyCtrl.text = conf.telnyxApiKey;
-      _confTelnyxConnIdCtrl.text = conf.telnyxConnectionId;
-      _confTelnyxWebhookCtrl.text = conf.telnyxWebhookUrl;
     });
   }
 
@@ -370,10 +361,9 @@ class _MyRegisterWidget extends State<RegisterWidget>
   }
 
   Widget _buildConferenceCard() {
-    final isTelnyx = _conf.provider == ConferenceProviderType.telnyx;
     final isBasic = _conf.provider == ConferenceProviderType.basic;
     final isOnDevice = _conf.provider == ConferenceProviderType.onDevice;
-    final isActive = isTelnyx || isBasic || isOnDevice;
+    final isActive = isBasic || isOnDevice;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -436,7 +426,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                                 ? 'Mix audio locally across two SIP calls'
                                 : isBasic
                                     ? 'Merge calls via SIP REFER'
-                                    : 'Merge calls into a server-side conference bridge',
+                                    : 'Conference calling disabled',
                             style: TextStyle(
                                 fontSize: 11, color: AppColors.textTertiary),
                           ),
@@ -457,10 +447,6 @@ class _MyRegisterWidget extends State<RegisterWidget>
                         DropdownMenuItem(
                           value: ConferenceProviderType.basic,
                           child: Text('Basic'),
-                        ),
-                        DropdownMenuItem(
-                          value: ConferenceProviderType.telnyx,
-                          child: Text('Telnyx'),
                         ),
                         DropdownMenuItem(
                           value: ConferenceProviderType.onDevice,
@@ -490,86 +476,6 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   value: _conf.basicRenegotiateMedia,
                   onChanged: (v) => _updateConference(
                       _conf.copyWith(basicRenegotiateMedia: v)),
-                ),
-              ],
-              if (isTelnyx) ...[
-                Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-                  child: TextField(
-                    controller: _confTelnyxKeyCtrl,
-                    obscureText: true,
-                    style:
-                        TextStyle(fontSize: 13, color: AppColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'Telnyx API Key (v2)',
-                      labelStyle: TextStyle(color: AppColors.textTertiary),
-                      isDense: true,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide:
-                            BorderSide(color: AppColors.border, width: 0.5),
-                      ),
-                    ),
-                    onChanged: (v) =>
-                        _updateConference(_conf.copyWith(telnyxApiKey: v)),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-                  child: TextField(
-                    controller: _confTelnyxConnIdCtrl,
-                    style:
-                        TextStyle(fontSize: 13, color: AppColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'Telnyx Connection ID',
-                      labelStyle: TextStyle(color: AppColors.textTertiary),
-                      isDense: true,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide:
-                            BorderSide(color: AppColors.border, width: 0.5),
-                      ),
-                      helperText: 'Call Control App connection ID',
-                      helperStyle: TextStyle(
-                          fontSize: 10, color: AppColors.textTertiary),
-                    ),
-                    onChanged: (v) => _updateConference(
-                        _conf.copyWith(telnyxConnectionId: v)),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
-                  child: TextField(
-                    controller: _confTelnyxWebhookCtrl,
-                    style:
-                        TextStyle(fontSize: 13, color: AppColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'Webhook Relay URL',
-                      labelStyle: TextStyle(color: AppColors.textTertiary),
-                      hintText: 'https://phonegentic.ai/web_hooks/telnyx',
-                      hintStyle: TextStyle(
-                          fontSize: 12, color: AppColors.textTertiary),
-                      isDense: true,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide:
-                            BorderSide(color: AppColors.border, width: 0.5),
-                      ),
-                      helperText:
-                          'WebSocket relay for B-leg discovery during conferencing',
-                      helperStyle: TextStyle(
-                          fontSize: 10, color: AppColors.textTertiary),
-                    ),
-                    onChanged: (v) =>
-                        _updateConference(_conf.copyWith(telnyxWebhookUrl: v)),
-                  ),
                 ),
               ],
             ],
