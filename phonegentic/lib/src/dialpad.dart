@@ -17,7 +17,6 @@ import 'package:sip_ua/sip_ua.dart';
 import 'calendar_sync_service.dart';
 import 'callscreen.dart';
 import 'conference/conference_service.dart';
-import 'conference/telnyx_conference_provider.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'inbound_call_flow_service.dart';
@@ -211,25 +210,6 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _bindEventListeners() {
     helper!.addSipUaHelperListener(this);
-    // Wire Telnyx call control webhook events to the conference service so
-    // B-leg call_control_ids are captured for conference merging.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _wireCallControlWebhook();
-    });
-  }
-
-  void _wireCallControlWebhook() {
-    if (!mounted) return;
-    final messaging =
-        Provider.of<MessagingService>(context, listen: false);
-    final conf = _confService;
-    messaging.callControlHandler = (json) {
-      final bLegCcid =
-          TelnyxConferenceProvider.extractBLegFromWebhook(json);
-      if (bLegCcid != null) {
-        conf.onBLegDetected(bLegCcid);
-      }
-    };
   }
 
   Future<Widget?> _handleCall(BuildContext context) async {

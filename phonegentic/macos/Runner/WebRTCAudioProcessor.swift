@@ -132,10 +132,30 @@ final class WebRTCAudioProcessor: NSObject {
     /// agent's whisper feed (via CoreAudio IOProc) stays active.
     var micMuted = false
 
-    /// When true, TTS injection and mic fallback injection are disabled in the
-    /// capture/render processors to prevent ring buffer depletion across
-    /// multiple peer connections (each would consume a portion, causing choppy audio).
+    /// When true, the render/capture processors cross-route audio between
+    /// PeerConnections via the double-slot mechanism and TTS is mixed through
+    /// a snapshot buffer (so both PCs share a single ring read per tick).
     var conferenceMode = false
+
+    // MARK: - Conference Cross-Inject (double-slot)
+    //
+    // Two fixed-size frame buffers. RenderPreProc alternates writing to slot 0/1;
+    // CapturePostProc alternates reading from the OPPOSITE slot. This ensures
+    // each PeerConnection's capture gets the OTHER PC's render audio.
+    //
+    //   Render PC_A → slot0   |   Capture PC_A reads slot1 (B's audio)
+    //   Render PC_B → slot1   |   Capture PC_B reads slot0 (A's audio)
+
+    private var confSlot0: UnsafeMutablePointer<Float> = .allocate(capacity: 960)
+    private var confSlot1: UnsafeMutablePointer<Float> = .allocate(capacity: 960)
+    private var confSlotCapacity: Int = 960  // 10ms at 96kHz max
+    private(set) var confSlot0Frames: Int = 0
+    private(set) var confSlot1Frames: Int = 0
+    private var confSlotRate: Int = 48000
+    private var confRenderToggle = false     // false = write slot0, true = write slot1
+    private var confCaptureToggle = false    // false = read slot1, true = read slot0
+    private let confCrossGain: Float = 0.7
+
 
     /// Linear gain applied to the remote party's audio in the render path.
     /// Values > 1.0 boost volume; 1.0 = passthrough. Applied after whisper
@@ -166,6 +186,7 @@ final class WebRTCAudioProcessor: NSObject {
         guard !isRegistered else { return }
 
         micInjectionRing.reset()
+        confResetSlots()
 
         captureProcessor = CapturePostProcessor(owner: self)
         renderProcessor = RenderPreProcessor(owner: self)
@@ -197,6 +218,7 @@ final class WebRTCAudioProcessor: NSObject {
         ttsRecordingRing.reset()
         whisperRingBuffer.reset()
         micInjectionRing.reset()
+        confResetSlots()
         NSLog("[WebRTCAudioProcessor] Unregistered processors")
     }
 
@@ -271,6 +293,83 @@ final class WebRTCAudioProcessor: NSObject {
         }
         return pcm16.withUnsafeBufferPointer { Data(buffer: $0) }
     }
+
+    // MARK: - Conference Cross-Inject Methods
+
+    func confResetSlots() {
+        confSlot0Frames = 0
+        confSlot1Frames = 0
+        confRenderToggle = false
+        confCaptureToggle = false
+    }
+
+    /// Called by RenderPreProc to store the current render frame for cross-injection.
+    /// Alternates between slot 0 and slot 1 on each invocation.
+    func confRenderStore(_ buf: UnsafeMutablePointer<Float>, frames: Int, rate: Int) {
+        confSlotRate = rate
+
+        if frames > confSlotCapacity {
+            confSlot0.deallocate()
+            confSlot1.deallocate()
+            confSlotCapacity = frames
+            confSlot0 = .allocate(capacity: frames)
+            confSlot1 = .allocate(capacity: frames)
+            confSlot0Frames = 0
+            confSlot1Frames = 0
+            NSLog("[WebRTCAudioProcessor] confSlots resized to %d", frames)
+        }
+
+        if !confRenderToggle {
+            memcpy(confSlot0, buf, frames * MemoryLayout<Float>.size)
+            confSlot0Frames = frames
+        } else {
+            memcpy(confSlot1, buf, frames * MemoryLayout<Float>.size)
+            confSlot1Frames = frames
+        }
+        confRenderToggle = !confRenderToggle
+    }
+
+    /// Called by CapturePostProc to mix the OTHER PeerConnection's render audio
+    /// into the outgoing capture buffer. Reads the opposite slot from what the
+    /// render toggle would suggest, achieving the cross-routing.
+    func confCaptureMix(into buf: UnsafeMutablePointer<Float>, frames: Int, rate: Int) {
+        let slot: UnsafeMutablePointer<Float>
+        let slotFrames: Int
+
+        if !confCaptureToggle {
+            slot = confSlot1
+            slotFrames = confSlot1Frames
+        } else {
+            slot = confSlot0
+            slotFrames = confSlot0Frames
+        }
+        confCaptureToggle = !confCaptureToggle
+
+        guard slotFrames > 0 else { return }
+
+        let srcRate = confSlotRate
+        let dstRate = rate
+        let gain = confCrossGain
+
+        if srcRate == dstRate {
+            let count = min(frames, slotFrames)
+            for i in 0..<count {
+                buf[i] = max(-32768.0, min(32767.0, buf[i] + slot[i] * gain))
+            }
+        } else {
+            let ratio = Double(srcRate) / Double(dstRate)
+            for i in 0..<frames {
+                let srcIdx = Double(i) * ratio
+                let idx0 = Int(srcIdx)
+                let frac = Float(srcIdx - Double(idx0))
+                let s0 = idx0 < slotFrames ? slot[idx0] : Float(0)
+                let s1 = (idx0 + 1) < slotFrames ? slot[idx0 + 1] : s0
+                let sample = s0 + (s1 - s0) * frac
+                buf[i] = max(-32768.0, min(32767.0, buf[i] + sample * gain))
+            }
+        }
+    }
+
 }
 
 // MARK: - Capture Post-Processor (outgoing audio: mic → network)
@@ -345,6 +444,10 @@ final class CapturePostProcessor: NSObject, ExternalAudioProcessingDelegate {
             }
         }
 
+        if inConference {
+            owner.confCaptureMix(into: buf, frames: frames, rate: rate)
+        }
+
         diagCounter += 1
         if diagCounter <= 10 || diagCounter % 500 == 0 {
             var postRms: Float = 0
@@ -358,9 +461,7 @@ final class CapturePostProcessor: NSObject, ExternalAudioProcessingDelegate {
                   inConference ? "YES" : "NO")
         }
 
-        if !inConference {
-            mixTTSInto(buf: buf, frames: frames, ring: owner.ttsCaptureRing, rate: rate)
-        }
+        mixTTSInto(buf: buf, frames: frames, ring: owner.ttsCaptureRing, rate: rate)
     }
 
     func audioProcessingRelease() {
@@ -542,9 +643,15 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
             var rms: Float = 0
             for i in 0..<frames { rms += buf[i] * buf[i] }
             rms = sqrtf(rms / Float(frames))
-            NSLog("[RenderPreProc] #%llu frames=%d rate=%d remoteRMS=%.1f ttsAvail=%d conf=%@",
+            NSLog("[RenderPreProc] #%llu frames=%d rate=%d remoteRMS=%.1f ttsAvail=%d conf=%@ slot0=%d slot1=%d",
                   diagCounter, frames, rate, rms, ttsAvail,
-                  inConference ? "YES" : "NO")
+                  inConference ? "YES" : "NO",
+                  owner.confSlot0Frames, owner.confSlot1Frames)
+        }
+
+        // Store raw render audio for conference cross-injection BEFORE gain
+        if inConference {
+            owner.confRenderStore(buf, frames: frames, rate: rate)
         }
 
         if !inConference {
@@ -562,9 +669,7 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
             }
         }
 
-        if !inConference {
-            mixTTSInto(buf: buf, frames: frames, ring: owner.ttsRenderRing, rate: rate)
-        }
+        mixTTSInto(buf: buf, frames: frames, ring: owner.ttsRenderRing, rate: rate)
     }
 
     // MARK: - Goertzel Tone Detection
