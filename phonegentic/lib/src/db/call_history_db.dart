@@ -454,6 +454,31 @@ class CallHistoryDb {
     );
   }
 
+  /// Find the most recent completed call with [remotePhone] (suffix match on
+  /// the last 10 digits) and return its transcript rows, or empty if none.
+  static Future<List<Map<String, dynamic>>> getLastTranscriptForRemote(
+      String remotePhone) async {
+    final db = await database;
+    final normalized = normalizePhone(remotePhone);
+    if (normalized.isEmpty) return [];
+
+    final calls = await db.query(
+      'call_records',
+      where: "status != 'active'",
+      orderBy: 'started_at DESC',
+      limit: 20,
+    );
+
+    for (final call in calls) {
+      final stored = normalizePhone(call['remote_identity'] as String? ?? '');
+      if (stored.isNotEmpty && stored == normalized) {
+        final id = call['id'] as int;
+        return getTranscripts(id);
+      }
+    }
+    return [];
+  }
+
   // ---------------------------------------------------------------------------
   // Search
   // ---------------------------------------------------------------------------

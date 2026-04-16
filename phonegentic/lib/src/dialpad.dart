@@ -21,6 +21,7 @@ import 'conference/telnyx_conference_provider.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'inbound_call_flow_service.dart';
+import 'models/agent_context.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
 import 'phone_formatter.dart';
@@ -73,6 +74,18 @@ class _MyDialPadWidget extends State<DialPadWidget>
   Timer? _conferenceTimeout;
   String? _conferenceTimeoutCallId;
 
+  // Inbound fork coalescing: Telnyx (and some other providers) deliver a
+  // single inbound call as multiple INVITE forks with different Call-IDs.
+  // We track the active ring session by caller identity so subsequent forks
+  // are adopted seamlessly instead of resetting the UI.
+  String? _inboundRingCaller;
+  DateTime? _inboundRingStart;
+  Timer? _forkGraceTimer;
+  static const _forkGraceMs = 4000;
+  // Stable key for the CallScreenWidget so fork replacements don't tear down
+  // and recreate the widget (which resets the call timer and flickers the UI).
+  String? _logicalCallKey;
+
   @override
   void initState() {
     super.initState();
@@ -96,6 +109,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   @override
   void dispose() {
+    _forkGraceTimer?.cancel();
     HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _focusNode.dispose();
     _textController?.dispose();
@@ -336,18 +350,28 @@ class _MyDialPadWidget extends State<DialPadWidget>
                 child: Row(
                   children: [
                     Expanded(
-                      child: _activeCall != null
-                          ? CallScreenWidget(
-                              helper,
-                              _activeCall,
-                              key: ValueKey(_activeCall!.id),
-                              onDismiss: _dismissCallScreen,
-                            )
-                          : Focus(
-                              autofocus: true,
-                              focusNode: _focusNode,
-                              child: _buildPhoneSection(context),
+                      child: SafeArea(
+                        child: Column(
+                          children: [
+                            _buildTopBar(context),
+                            Expanded(
+                              child: _activeCall != null
+                                  ? CallScreenWidget(
+                                      helper,
+                                      _activeCall,
+                                      key: ValueKey(
+                                          _logicalCallKey ?? _activeCall!.id),
+                                      onDismiss: _dismissCallScreen,
+                                    )
+                                  : Focus(
+                                      autofocus: true,
+                                      focusNode: _focusNode,
+                                      child: _buildDialpadSection(),
+                                    ),
                             ),
+                          ],
+                        ),
+                      ),
                     ),
                     if (showPanel)
                       SizedBox(
@@ -516,20 +540,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
     );
   }
 
-  Widget _buildPhoneSection(BuildContext context) {
-    return SafeArea(
-      child: Column(
-        children: [
-          _buildTopBar(context),
-          Expanded(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 380),
-                child: _buildPhoneContent(),
-              ),
-            ),
-          ),
-        ],
+  Widget _buildDialpadSection() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: _buildPhoneContent(),
       ),
     );
   }
@@ -694,56 +709,64 @@ class _MyDialPadWidget extends State<DialPadWidget>
     final ringtone = context.watch<RingtoneService>();
     final icf = context.watch<InboundCallFlowService>();
     final enabled = ringtone.ringEnabled;
-    return HoverButton(
-      onTap: () => ringtone.toggleRing(),
-      onLongPress: () => _showRingSettingsPopover(context),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: enabled
-                  ? AppColors.accent.withValues(alpha: 0.12)
-                  : AppColors.card,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
+    final hasFlow = icf.hasEnabledFlow;
+    return Tooltip(
+      message: hasFlow
+          ? 'Inbound call flow active${enabled ? '' : ' (ring muted)'}'
+          : (enabled ? 'Ring on (long-press for settings)' : 'Ring off'),
+      child: HoverButton(
+        onTap: () => ringtone.toggleRing(),
+        onLongPress: () => _showRingSettingsPopover(context),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
                 color: enabled
-                    ? AppColors.accent.withValues(alpha: 0.4)
-                    : AppColors.border.withValues(alpha: 0.5),
-                width: 0.5,
-              ),
-            ),
-            child: Icon(
-              enabled
-                  ? Icons.notifications_active_rounded
-                  : Icons.notifications_off_rounded,
-              size: 16,
-              color: enabled ? AppColors.accent : AppColors.textTertiary,
-            ),
-          ),
-          if (icf.hasEnabledFlow)
-            Positioned(
-              top: -2,
-              right: -2,
-              child: Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: AppColors.green,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.bg, width: 1.5),
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: enabled
+                      ? AppColors.accent.withValues(alpha: 0.4)
+                      : AppColors.border.withValues(alpha: 0.5),
+                  width: 0.5,
                 ),
               ),
+              child: Icon(
+                enabled
+                    ? Icons.notifications_active_rounded
+                    : Icons.notifications_off_rounded,
+                size: 16,
+                color: enabled ? AppColors.accent : AppColors.textTertiary,
+              ),
             ),
-        ],
+            if (hasFlow)
+              Positioned(
+                top: -2,
+                right: -2,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: AppColors.green,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.bg, width: 1.5),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
   void _showRingSettingsPopover(BuildContext context) {
     final ringtone = context.read<RingtoneService>();
+    final icf = context.read<InboundCallFlowService>();
+    final jf = context.read<JobFunctionService>();
     final RenderBox button = context.findRenderObject() as RenderBox;
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
@@ -752,12 +775,13 @@ class _MyDialPadWidget extends State<DialPadWidget>
       ancestor: overlay,
     );
 
-    showMenu<void>(
+    showMenu<String>(
       context: context,
+      constraints: const BoxConstraints(minWidth: 340, maxWidth: 380),
       position: RelativeRect.fromLTRB(
-        offset.dx - 140,
+        offset.dx - 190,
         offset.dy + 4,
-        offset.dx + 140,
+        offset.dx + 190,
         0,
       ),
       color: AppColors.surface,
@@ -768,7 +792,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
       ),
       elevation: 8,
       items: [
-        PopupMenuItem<void>(
+        PopupMenuItem<String>(
           enabled: false,
           height: 28,
           child: Text(
@@ -781,7 +805,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
             ),
           ),
         ),
-        ...ringtone.availableRingtones.map((r) => PopupMenuItem<void>(
+        ...ringtone.availableRingtones.map((r) => PopupMenuItem<String>(
               height: 36,
               onTap: () => ringtone.setRingtone(r.assetPath),
               child: Row(
@@ -816,7 +840,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                 ],
               ),
             )),
-        PopupMenuItem<void>(
+        PopupMenuItem<String>(
           height: 36,
           onTap: () => ringtone.pickCustomRingtone(),
           child: Row(
@@ -836,7 +860,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
           ),
         ),
         const PopupMenuDivider(height: 1),
-        PopupMenuItem<void>(
+        PopupMenuItem<String>(
           enabled: false,
           height: 44,
           child: StatefulBuilder(
@@ -868,8 +892,159 @@ class _MyDialPadWidget extends State<DialPadWidget>
             },
           ),
         ),
+        if (icf.items.isNotEmpty) ...[
+          const PopupMenuDivider(height: 1),
+          PopupMenuItem<String>(
+            enabled: false,
+            height: 28,
+            child: Text(
+              'INBOUND CALL FLOWS',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+          ...icf.items.map((flow) {
+            final ruleSummary = flow.rules.isEmpty
+                ? 'No rules'
+                : flow.rules.map((r) {
+                    final fn = jf.items
+                        .where((j) => j.id == r.jobFunctionId)
+                        .firstOrNull;
+                    final name = fn?.title ?? '?';
+                    final pattern =
+                        r.phonePatterns.join(', ');
+                    return '$name ($pattern)';
+                  }).join(' → ');
+            return PopupMenuItem<String>(
+              value: 'icf_edit_${flow.id}',
+              height: 44,
+              child: Row(
+                children: [
+                  Icon(
+                    flow.enabled
+                        ? Icons.check_circle_rounded
+                        : Icons.circle_outlined,
+                    size: 14,
+                    color:
+                        flow.enabled ? AppColors.green : AppColors.textTertiary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          flow.name,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          ruleSummary,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textTertiary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.edit_rounded,
+                      size: 14, color: AppColors.textTertiary),
+                  const SizedBox(width: 6),
+                  HoverButton(
+                    onTap: () {
+                      Navigator.of(context).pop('icf_delete_${flow.id}');
+                    },
+                    child: Icon(Icons.delete_outline_rounded,
+                        size: 14, color: AppColors.textTertiary),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+        const PopupMenuDivider(height: 1),
+        PopupMenuItem<String>(
+          value: 'icf_new',
+          height: 36,
+          child: Row(
+            children: [
+              Icon(Icons.call_received_rounded,
+                  size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text(
+                icf.items.isEmpty
+                    ? 'New inbound call flow...'
+                    : 'Add call flow...',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.accent,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
+    ).then((value) {
+      if (value == null) return;
+      if (value == 'icf_new') {
+        icf.openEditor();
+      } else if (value.startsWith('icf_delete_')) {
+        final id = int.tryParse(value.replaceFirst('icf_delete_', ''));
+        if (id != null) _confirmDeleteFlow(context, icf, id);
+      } else if (value.startsWith('icf_edit_')) {
+        final id = int.tryParse(value.replaceFirst('icf_edit_', ''));
+        if (id != null) {
+          final flow = icf.items.where((f) => f.id == id).firstOrNull;
+          if (flow != null) icf.openEditor(flow);
+        }
+      }
+    });
+  }
+
+  Future<void> _confirmDeleteFlow(
+      BuildContext context, InboundCallFlowService icf, int id) async {
+    final flow = icf.items.where((f) => f.id == id).firstOrNull;
+    if (flow == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text('Delete "${flow.name}"?',
+            style: TextStyle(fontSize: 15, color: AppColors.textPrimary)),
+        content: Text(
+            'This inbound call flow and its rules will be permanently removed.',
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child:
+                Text('Cancel', style: TextStyle(color: AppColors.textTertiary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Delete', style: TextStyle(color: AppColors.red)),
+          ),
+        ],
+      ),
     );
+    if (confirmed == true) {
+      await icf.delete(id);
+    }
+    if (mounted) _showRingSettingsPopover(context);
   }
 
   Widget _buildMessagesButton(BuildContext context) {
@@ -1364,7 +1539,22 @@ class _MyDialPadWidget extends State<DialPadWidget>
     switch (callState.state) {
       case CallStateEnum.CALL_INITIATION:
         final isIncoming = call.direction == Direction.incoming;
-        final isConferenceLeg = _calls.isNotEmpty;
+        final caller = call.remote_identity ?? '';
+
+        // Fork coalescing: if this is an inbound INVITE from the same caller
+        // we're already ringing for (or recently were), adopt it as the same
+        // logical call — don't reset UI, don't treat as conference leg.
+        final isForkReplacement = isIncoming &&
+            _inboundRingCaller != null &&
+            _inboundRingCaller == _normalizeCaller(caller) &&
+            _inboundRingStart != null;
+
+        if (isForkReplacement) {
+          _forkGraceTimer?.cancel();
+          _forkGraceTimer = null;
+        }
+
+        final isConferenceLeg = _calls.isNotEmpty && !isForkReplacement;
         setState(() {
           _calls[call.id] = call;
           _focusedCall = call;
@@ -1374,12 +1564,22 @@ class _MyDialPadWidget extends State<DialPadWidget>
           _tapChannel.invokeMethod('setConferenceMode', {'active': true});
           _startConferenceTimeout(call.id!);
         }
-        if (isIncoming) {
+        if (isIncoming && !isForkReplacement) {
+          _inboundRingCaller = _normalizeCaller(caller);
+          _inboundRingStart = DateTime.now();
+          _logicalCallKey = 'inbound_${DateTime.now().millisecondsSinceEpoch}';
+          context.read<AgentService>().forkCoalescing = true;
           _handleInboundRing(call);
+        } else if (isForkReplacement) {
+          debugPrint('[Dialpad] Fork coalesced for $_inboundRingCaller');
         }
         break;
       case CallStateEnum.CONFIRMED:
         _stopRinging();
+        _forkGraceTimer?.cancel();
+        _inboundRingCaller = null;
+        _forkGraceTimer = null;
+        context.read<AgentService>().forkCoalescing = false;
         conf.updateLegState(call.id!, LegState.active);
         _cancelConferenceTimeout(call.id!);
         break;
@@ -1391,8 +1591,31 @@ class _MyDialPadWidget extends State<DialPadWidget>
         break;
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
-        _stopRinging();
         _cancelConferenceTimeout(call.id!);
+
+        // ── Fork coalescing: during an active inbound ring session,
+        // DON'T tear down state or rebuild the UI for individual fork
+        // deaths. Just silently remove the leg and wait for the
+        // replacement fork (or the grace timer to expire).
+        if (_inboundRingCaller != null) {
+          conf.removeLeg(call.id!);
+          _calls.remove(call.id);
+          // Don't touch _focusedCall — keep pointing at the (now-dead)
+          // call so the widget tree stays stable. The next fork's
+          // CALL_INITIATION will update it.
+          if (_calls.isEmpty) {
+            _forkGraceTimer?.cancel();
+            _forkGraceTimer = Timer(
+              const Duration(milliseconds: _forkGraceMs),
+              () => _endInboundRingSession(),
+            );
+          }
+          debugPrint(
+              '[Dialpad] Fork died during ring session '
+              '(remaining=${_calls.length}, grace=${_calls.isEmpty})');
+          break;
+        }
+
         final wasConferenceLeg = _calls.length > 1;
         conf.removeLeg(call.id!);
         setState(() {
@@ -1401,10 +1624,18 @@ class _MyDialPadWidget extends State<DialPadWidget>
             _focusedCall = _calls.values.first;
           }
           if (_calls.isEmpty) {
+            _focusedCall = null;
+            _logicalCallKey = null;
             _audioMuted = false;
             _speakerOn = false;
           }
         });
+
+        if (_calls.isEmpty) {
+          context.read<InboundCallFlowService>().clearActiveFlow();
+        }
+        _stopRinging();
+
         if (_calls.length <= 1) {
           _tapChannel.invokeMethod('setConferenceMode', {'active': false});
         }
@@ -1500,15 +1731,16 @@ class _MyDialPadWidget extends State<DialPadWidget>
     ringtone.startRinging();
 
     final caller = call.remote_identity ?? '';
+    debugPrint('[Dialpad] Inbound ring from "$caller" '
+        '(flows=${icf.items.length}, '
+        'enabled=${icf.items.where((f) => f.enabled).length})');
+
     final matchedId = icf.resolveJobFunctionId(caller);
+    debugPrint('[Dialpad] ICF resolved jobFunctionId=$matchedId for "$caller"');
+
     if (matchedId != null) {
-      jf.select(matchedId).then((_) {
-        agent.updateBootContext(
-          jf.buildBootContext(),
-          jobFunctionName: jf.selected?.title,
-          whisperByDefault: jf.selected?.whisperByDefault,
-        );
-      });
+      // Await the job function switch so it completes before auto-answer.
+      _applyInboundJobFunction(matchedId, jf, agent);
     }
 
     if (ringtone.agentAutoAnswer && _calls.length <= 1) {
@@ -1522,10 +1754,54 @@ class _MyDialPadWidget extends State<DialPadWidget>
     }
   }
 
+  Future<void> _applyInboundJobFunction(
+      int jobFunctionId, JobFunctionService jf, AgentService agent) async {
+    await jf.select(jobFunctionId);
+    final selected = jf.selected;
+    debugPrint('[Dialpad] Job function selected: '
+        '${selected?.title ?? "null"} (id=${selected?.id})');
+    agent.updateBootContext(
+      jf.buildBootContext(),
+      jobFunctionName: selected?.title,
+      whisperByDefault: selected?.whisperByDefault,
+    );
+  }
+
   void _stopRinging() {
     try {
       context.read<RingtoneService>().stopRinging();
     } catch (_) {}
+  }
+
+  static String _normalizeCaller(String raw) {
+    final digits = raw.replaceAll(RegExp(r'[^\d]'), '');
+    return digits.length >= 10 ? digits.substring(digits.length - 10) : digits;
+  }
+
+  void _endInboundRingSession() {
+    _forkGraceTimer?.cancel();
+    _inboundRingCaller = null;
+    _inboundRingStart = null;
+    _forkGraceTimer = null;
+    _logicalCallKey = null;
+    try {
+      final agent = context.read<AgentService>();
+      agent.forkCoalescing = false;
+      if (_calls.isEmpty && agent.hasActiveCall) {
+        agent.notifyCallPhase(CallPhase.failed);
+      }
+      context.read<InboundCallFlowService>().clearActiveFlow();
+    } catch (_) {}
+    if (_calls.isEmpty) {
+      _stopRinging();
+      // NOW trigger the UI rebuild to clear the dead call screen.
+      setState(() {
+        _focusedCall = null;
+        _audioMuted = false;
+        _speakerOn = false;
+      });
+      _confService.reset();
+    }
   }
 
   void reRegisterWithCurrentUser() async {

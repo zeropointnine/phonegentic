@@ -117,6 +117,7 @@ class AgentService extends ChangeNotifier {
   String? _localIdentity;
   bool _isOutbound = true;
   String? _lastDialedNumber;
+  String? _priorCallTranscript;
 
   CallPhase get callPhase => _callPhase;
   int get partyCount => _partyCount;
@@ -2082,25 +2083,29 @@ class AgentService extends ChangeNotifier {
       debugPrint(
           '[AgentService] Settle transcript: "$text" → $c');
 
-      if (c.mailboxFull) {
-        debugPrint(
-            '[AgentService] Mailbox full detected — notifying host');
-        _ivrHeard = true;
-        _ivrHitsInSettle++;
-        _handleMailboxFull(text);
-        return;
-      }
-
-      if (c.type == CallPartyType.ivr) {
-        _ivrHitsInSettle++;
-        _ivrHeard = true;
-        _extendSettleTimer();
-        if (c.ivrEnding) {
+      // IVR / voicemail detection only applies to outbound calls.
+      // Inbound callers are real humans — skip the classification entirely.
+      if (_isOutbound) {
+        if (c.mailboxFull) {
           debugPrint(
-              '[AgentService] IVR ending phrase detected — entering beep watch');
-          _enterBeepWatchMode();
+              '[AgentService] Mailbox full detected — notifying host');
+          _ivrHeard = true;
+          _ivrHitsInSettle++;
+          _handleMailboxFull(text);
+          return;
         }
-        return;
+
+        if (c.type == CallPartyType.ivr) {
+          _ivrHitsInSettle++;
+          _ivrHeard = true;
+          _extendSettleTimer();
+          if (c.ivrEnding) {
+            debugPrint(
+                '[AgentService] IVR ending phrase detected — entering beep watch');
+            _enterBeepWatchMode();
+          }
+          return;
+        }
       }
 
       if (c.type == CallPartyType.human && c.score >= 0.7) {
@@ -3807,6 +3812,11 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  /// When true, the agent ignores `failed`/`ended` phase transitions so that
+  /// SIP fork replacements (e.g. Telnyx multi-proxy delivery) don't tear down
+  /// agent state between forks. Set by the dialpad during fork coalescing.
+  bool forkCoalescing = false;
+
   /// Push a call state change into the agent's context without triggering
   /// a verbal response. The agent sees the phase transition as a system
   /// message and adjusts behaviour (e.g. stays silent while ringing).
@@ -3818,6 +3828,15 @@ class AgentService extends ChangeNotifier {
     String? localIdentity,
     bool? outbound,
   }) {
+    // During fork coalescing, suppress failed/ended so the agent doesn't
+    // tear down state between SIP forks of the same logical call.
+    if (forkCoalescing &&
+        (phase == CallPhase.ended || phase == CallPhase.failed)) {
+      debugPrint(
+          '[AgentService] Suppressed ${phase.name} during fork coalescing');
+      return;
+    }
+
     final phaseChanged = phase != _callPhase || partyCount != _partyCount;
 
     _callPhase = phase;
@@ -3849,6 +3868,13 @@ class AgentService extends ChangeNotifier {
           setRemotePartyName(name);
         }
       }
+
+      // Pre-fetch the last transcript with this remote party so it's ready
+      // by the time the connected greeting fires.
+      final priorRid = remoteIdentity ?? _remoteIdentity;
+      if (priorRid != null && priorRid.isNotEmpty) {
+        _fetchPriorCallTranscript(priorRid);
+      }
     }
 
     if (phase == CallPhase.ended || phase == CallPhase.failed) {
@@ -3863,6 +3889,8 @@ class AgentService extends ChangeNotifier {
       _remoteDisplayName = null;
       _localIdentity = null;
       _connectedAt = null;
+      _priorCallTranscript = null;
+      _priorTranscriptWhispered = false;
       _beepDetected = false;
       _voicemailPromptSent = false;
       _ivrHeard = false;
@@ -4062,7 +4090,8 @@ class AgentService extends ChangeNotifier {
 
     // If we heard IVR content and speech just stopped, enter beep-watch
     // instead of promoting immediately — the voicemail beep may be imminent.
-    if (_ivrHeard && !_inBeepWatchMode) {
+    // (Outbound only — inbound calls never do IVR/voicemail detection.)
+    if (_isOutbound && _ivrHeard && !_inBeepWatchMode) {
       debugPrint(
           '[AgentService] Settle timer fired with IVR heard — entering beep watch');
       _enterBeepWatchMode();
@@ -4157,20 +4186,89 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    const prompt = '[SYSTEM] The call is connected and the line is quiet. '
-        'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
-        'Otherwise, begin the conversation per your job function instructions.';
+    _whisperPriorTranscriptOnce();
+
+    final prompt = _isOutbound
+        ? '[SYSTEM] The call is connected and the line is quiet. '
+            'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+            'Otherwise, begin the conversation per your job function instructions.'
+        : '[SYSTEM] An incoming call has connected. The caller is now on the line. '
+            'This is an INBOUND call — someone called you. Do NOT say "calling" or act as if you placed this call. '
+            'Greet the caller warmly and help them per your job function instructions.';
     if (_splitPipeline && _textAgent != null) {
       _textAgent!.sendUserMessage(prompt);
     } else if (_active) {
       _whisper.sendSystemDirective(prompt);
     }
-    debugPrint('[AgentService] Connected greeting triggered (line quiet)');
+    debugPrint('[AgentService] Connected greeting triggered (line quiet, ${_isOutbound ? "outbound" : "inbound"})');
   }
 
   void _cancelConnectedGreeting() {
     _connectedGreetTimer?.cancel();
     _connectedGreetTimer = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Prior-call transcript: fetch last conversation with the same remote party
+  // ---------------------------------------------------------------------------
+
+  bool _priorTranscriptWhispered = false;
+
+  /// Send the prior-call transcript to the LLM exactly once per call.
+  void _whisperPriorTranscriptOnce() {
+    if (_priorTranscriptWhispered || _priorCallTranscript == null) return;
+    _priorTranscriptWhispered = true;
+
+    final historyPrompt =
+        '[SYSTEM] Here is the transcript from your last call with this person. '
+        'Use it for context — reference prior topics naturally if relevant, '
+        'but do NOT recite or summarize it unprompted.\n\n'
+        '$_priorCallTranscript';
+    if (_splitPipeline && _textAgent != null) {
+      _textAgent!.sendUserMessage(historyPrompt);
+    } else if (_active) {
+      _whisper.sendSystemDirective(historyPrompt);
+    }
+    debugPrint(
+        '[AgentService] Prior transcript whispered (${_priorCallTranscript!.length} chars)');
+  }
+
+  Future<void> _fetchPriorCallTranscript(String remoteIdentity) async {
+    try {
+      final rows =
+          await CallHistoryDb.getLastTranscriptForRemote(remoteIdentity);
+      if (rows.isEmpty) {
+        _priorCallTranscript = null;
+        return;
+      }
+
+      final buf = StringBuffer();
+      for (final row in rows) {
+        final role = row['role'] as String? ?? 'unknown';
+        final speaker = row['speaker_name'] as String? ?? '';
+        final text = row['text'] as String? ?? '';
+        if (text.isEmpty) continue;
+        final label = speaker.isNotEmpty ? speaker : role;
+        buf.writeln('$label: $text');
+      }
+
+      var transcript = buf.toString().trim();
+      if (transcript.isEmpty) {
+        _priorCallTranscript = null;
+        return;
+      }
+
+      const maxLen = 2000;
+      if (transcript.length > maxLen) {
+        transcript = '…${transcript.substring(transcript.length - maxLen)}';
+      }
+      _priorCallTranscript = transcript;
+      debugPrint(
+          '[AgentService] Prior transcript loaded (${transcript.length} chars)');
+    } catch (e) {
+      debugPrint('[AgentService] Failed to fetch prior transcript: $e');
+      _priorCallTranscript = null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -4279,6 +4377,11 @@ class AgentService extends ChangeNotifier {
   /// Settle-phase audio is always from the remote party.
   void _drainSettleTranscripts() {
     if (_settleTranscripts.isEmpty) return;
+
+    // Inject prior-call transcript before the settle transcripts so the agent
+    // has historical context even when the greeting path is bypassed.
+    _whisperPriorTranscriptOnce();
+
     final batch = List<TranscriptionEvent>.from(_settleTranscripts);
     _settleTranscripts.clear();
 
@@ -4430,8 +4533,8 @@ class AgentService extends ChangeNotifier {
             : 0);
 
     // Long continuous speech (>5s) with many words and no IVR keyword hits
-    // yet — run accumulated confidence check.
-    if (totalSpeechMs > 5000 && _settleWordCount >= 15 && !_ivrHeard) {
+    // yet — run accumulated confidence check. (Outbound only.)
+    if (_isOutbound && totalSpeechMs > 5000 && _settleWordCount >= 15 && !_ivrHeard) {
       final IvrConfidence acc =
           IvrDetector.accumulatedConfidence(_settleAccumulatedTexts);
       if (acc.type == CallPartyType.ivr) {
@@ -4525,6 +4628,11 @@ class AgentService extends ChangeNotifier {
         }
         break;
       case 'onBeepDetected':
+        if (!_isOutbound) {
+          debugPrint(
+              '[AgentService] Native beep IGNORED (inbound call)');
+          break;
+        }
         if (!_inBeepWindow || _voicemailPromptSent) {
           debugPrint(
               '[AgentService] Native beep IGNORED (window=$_inBeepWindow sent=$_voicemailPromptSent)');

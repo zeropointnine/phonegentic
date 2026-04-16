@@ -45,6 +45,8 @@ class TextAgentService {
   final _toolCallController = StreamController<ToolCallRequest>.broadcast();
   Stream<ToolCallRequest> get toolCalls => _toolCallController.stream;
 
+  bool _disposed = false;
+
   static const _debounceMs = 1500;
   static const _maxHistory = 60;
 
@@ -462,13 +464,15 @@ class TextAgentService {
 
     final stopwatch = Stopwatch()..start();
     await for (final event in _caller.call(req)) {
-      if (_cancelRequested) {
+      if (_cancelRequested || _disposed) {
         cancelled = true;
         break;
       }
       if (event is LlmTextDeltaEvent) {
         fullText += event.text;
-        _responseController.add(ResponseTextEvent(text: event.text, isFinal: false));
+        if (!_disposed) {
+          _responseController.add(ResponseTextEvent(text: event.text, isFinal: false));
+        }
       } else if (event is LlmToolCallEvent) {
         toolCallEvents.add(event);
       }
@@ -477,6 +481,7 @@ class TextAgentService {
     stopwatch.stop();
     debugPrint('[TextAgent] LLM response time: ${stopwatch.elapsedMilliseconds}ms (model: ${req.model})');
 
+    if (_disposed) return;
     _cancelRequested = false;
 
     if (cancelled) {
@@ -486,7 +491,9 @@ class TextAgentService {
           role: LlmRole.assistant,
           content: [LlmTextBlock(fullText)],
         ));
-        _responseController.add(ResponseTextEvent(text: fullText, isFinal: true));
+        if (!_disposed) {
+          _responseController.add(ResponseTextEvent(text: fullText, isFinal: true));
+        }
       }
       return;
     }
@@ -507,18 +514,20 @@ class TextAgentService {
       _history.add(LlmMessage(role: LlmRole.assistant, content: assistantContent));
     }
 
-    if (fullText.isNotEmpty) {
+    if (fullText.isNotEmpty && !_disposed) {
       _responseController.add(ResponseTextEvent(text: fullText, isFinal: true));
     }
 
     for (final tc in toolCallEvents) {
       _pendingToolUseIds.add(tc.id);
       debugPrint('[TextAgent] Tool call: ${tc.name} id=${tc.id} input=${tc.arguments}');
-      _toolCallController.add(ToolCallRequest(
-        id: tc.id,
-        name: tc.name,
-        arguments: tc.arguments,
-      ));
+      if (!_disposed) {
+        _toolCallController.add(ToolCallRequest(
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+        ));
+      }
     }
 
     while (_history.length > _maxHistory) {
@@ -679,6 +688,7 @@ class TextAgentService {
   }
 
   void dispose() {
+    _disposed = true;
     _debounceTimer?.cancel();
     _responseController.close();
     _toolCallController.close();

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -40,6 +41,9 @@ class RingtoneService extends ChangeNotifier {
 
   AudioPlayer? _player;
   bool _ringing = false;
+  StreamSubscription<ProcessingState>? _playbackSub;
+  Timer? _loopTimer;
+  static const _loopGap = Duration(seconds: 7);
 
   /// Custom ringtone file paths stored in app documents.
   final List<RingtoneInfo> _customRingtones = [];
@@ -101,14 +105,24 @@ class RingtoneService extends ChangeNotifier {
 
     try {
       _player ??= AudioPlayer();
-      final isCustom = !bundledRingtones.any((r) => r.assetPath == _selectedRingtone);
-      if (isCustom) {
-        await _player!.setFilePath(_selectedRingtone);
-      } else {
-        await _player!.setAsset(_selectedRingtone);
-      }
-      await _player!.setLoopMode(LoopMode.one);
+      await _loadSelected(_player!);
+      await _player!.setLoopMode(LoopMode.off);
       await _player!.setVolume(1.0);
+
+      _playbackSub?.cancel();
+      _playbackSub = _player!.processingStateStream.listen((state) {
+        if (state == ProcessingState.completed && _ringing) {
+          _loopTimer?.cancel();
+          _loopTimer = Timer(_loopGap, () async {
+            if (!_ringing) return;
+            try {
+              await _player!.seek(Duration.zero);
+              _player!.play();
+            } catch (_) {}
+          });
+        }
+      });
+
       _player!.play();
     } catch (e) {
       debugPrint('[RingtoneService] Failed to start ringing: $e');
@@ -117,9 +131,23 @@ class RingtoneService extends ChangeNotifier {
     }
   }
 
+  Future<void> _loadSelected(AudioPlayer player) async {
+    final isCustom =
+        !bundledRingtones.any((r) => r.assetPath == _selectedRingtone);
+    if (isCustom) {
+      await player.setFilePath(_selectedRingtone);
+    } else {
+      await player.setAsset(_selectedRingtone);
+    }
+  }
+
   Future<void> stopRinging() async {
     if (!_ringing) return;
     _ringing = false;
+    _loopTimer?.cancel();
+    _loopTimer = null;
+    _playbackSub?.cancel();
+    _playbackSub = null;
     notifyListeners();
     try {
       await _player?.stop();
@@ -193,6 +221,8 @@ class RingtoneService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _loopTimer?.cancel();
+    _playbackSub?.cancel();
     _player?.dispose();
     super.dispose();
   }

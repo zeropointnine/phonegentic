@@ -7,10 +7,14 @@ class InboundCallFlowService extends ChangeNotifier {
   List<InboundCallFlow> _items = [];
   bool _editorOpen = false;
   InboundCallFlow? _editing;
+  String? _activeFlowName;
 
   List<InboundCallFlow> get items => List.unmodifiable(_items);
   bool get isEditorOpen => _editorOpen;
   InboundCallFlow? get editing => _editing;
+
+  /// Name of the flow that matched the current inbound call, or null.
+  String? get activeFlowName => _activeFlowName;
 
   /// True when at least one flow is enabled.
   bool get hasEnabledFlow => _items.any((f) => f.enabled);
@@ -49,10 +53,27 @@ class InboundCallFlowService extends ChangeNotifier {
     for (final flow in _items) {
       if (!flow.enabled) continue;
       for (final rule in flow.rules) {
-        if (rule.matches(callerNumber)) return rule.jobFunctionId;
+        if (rule.matches(callerNumber)) {
+          debugPrint('[ICF] Matched flow="${flow.name}" '
+              'rule(jfId=${rule.jobFunctionId}, '
+              'patterns=${rule.phonePatterns}) for "$callerNumber"');
+          _activeFlowName = flow.name;
+          notifyListeners();
+          return rule.jobFunctionId;
+        }
       }
     }
+    debugPrint('[ICF] No matching rule for "$callerNumber" '
+        '(${_items.length} flows, '
+        '${_items.where((f) => f.enabled).length} enabled)');
     return null;
+  }
+
+  void clearActiveFlow() {
+    if (_activeFlowName != null) {
+      _activeFlowName = null;
+      notifyListeners();
+    }
   }
 
   void openEditor([InboundCallFlow? existing]) {

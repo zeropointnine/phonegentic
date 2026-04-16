@@ -92,20 +92,37 @@ extension CallPhaseX on CallPhase {
 
     final dir = outbound ? 'Outbound' : 'Inbound';
 
+    final inbound = !outbound;
+
     switch (this) {
       case CallPhase.idle:
         return '[CALL_STATE: Idle] No active call.';
       case CallPhase.initiating:
+        if (inbound) {
+          return '[CALL_STATE: Initiating] Incoming call received.$callInfo $parties. Do NOT speak yet — wait for the call to be answered.';
+        }
         return '[CALL_STATE: Initiating] $dir call starting.$callInfo $parties. Do NOT speak yet.';
       case CallPhase.ringing:
+        if (inbound) {
+          return '[CALL_STATE: Ringing] Incoming call is ringing.$callInfo $parties. Do NOT speak yet.';
+        }
         return '[CALL_STATE: Ringing] $dir call — remote phone is ringing.$callInfo $parties. Do NOT speak yet.';
       case CallPhase.connecting:
         return '[CALL_STATE: Connecting] Call media negotiating.$callInfo $parties. Do NOT speak yet.';
       case CallPhase.answered:
+        if (inbound) {
+          return '[CALL_STATE: Answered] Incoming call answered.$callInfo $parties. Preparing to connect. Do NOT speak yet — wait for [CALL_STATE: Connected].';
+        }
         return '[CALL_STATE: Answered] Call answered but may be an automated system (IVR/voicemail/auto-attendant).$callInfo $parties. Do NOT speak yet — wait for [CALL_STATE: Connected].';
       case CallPhase.settling:
+        if (inbound) {
+          return '[CALL_STATE: Settling] Incoming call audio connected.$callInfo $parties. Wait for [CALL_STATE: Connected] before speaking.';
+        }
         return '[CALL_STATE: Settling] Audio connected but an automated attendant or IVR may be playing.$callInfo $parties. Do NOT speak. Ignore any automated prompts. Wait for [CALL_STATE: Connected].';
       case CallPhase.connected:
+        if (inbound) {
+          return '[CALL_STATE: Connected] Incoming call is live — the caller is on the line.$callInfo $parties. You may speak. Greet them and assist per your job function.';
+        }
         return '[CALL_STATE: Connected] A real person is now on the line.$callInfo $parties. You may speak freely.';
       case CallPhase.onHold:
         return '[CALL_STATE: On Hold] Call is on hold.$callInfo $parties. Do NOT speak until resumed.';
@@ -218,7 +235,7 @@ class AgentBootContext {
     buf.writeln(
         '    - When the host gives you instructions, execute them — do NOT repeat them back. Just do it when the time comes.');
     buf.writeln(
-        '11. NEVER repeat phone numbers aloud. If you need to confirm a call action, say the person\'s name only (e.g. "Calling Zach" not "Calling Zach at 213-555-1234").');
+        '11. NEVER repeat phone numbers aloud. For outbound calls you initiate, say the person\'s name only (e.g. "Calling Zach" not "Calling Zach at 213-555-1234"). For inbound calls (someone calling you), NEVER say "calling" — greet them instead.');
     buf.writeln(
         '12. The word "Phonegentic" is pronounced "Phone-JENT-ick" (rhymes with "genetic" with "Phone" in front). Never say "fon-AH-jen-tick" or similar.');
     buf.writeln(
@@ -293,6 +310,20 @@ class AgentBootContext {
         '- When the call ends, stop ALL interaction IMMEDIATELY. Produce absolutely no text or audio after [CALL_STATE: Ended]. No summary, no farewell, no offer to help. NOTHING.');
     buf.writeln(
         '- If you hear phrases like "press 1", "leave a message", "your call is important", "please hold", "for Spanish press 2", "dial by name", or similar automated prompts at ANY point, ignore them completely — they are from a phone system, not a person.');
+    buf.writeln();
+    buf.writeln('### Inbound Call Awareness');
+    buf.writeln(
+        '- When [CALL_STATE] shows an Inbound call, someone is calling YOU. You did NOT place this call.');
+    buf.writeln(
+        '- NEVER say "calling", "dialing", or act as if you initiated the call. The caller reached out to you.');
+    buf.writeln(
+        '- Your job function instructions may be written for outbound calls (e.g. "Call Lee and tell him about..."). '
+        'When the call is INBOUND, intelligently ADAPT those instructions: instead of initiating the topic unprompted, '
+        'greet the caller, find out why they are calling, and weave your job function goals into the conversation naturally.');
+    buf.writeln(
+        '- For inbound calls: greet warmly, identify yourself, ask how you can help, then apply your job function context as appropriate to the caller\'s needs.');
+    buf.writeln(
+        '- If you recognise the caller (from contact info in CALL_STATE), you may greet them by name — but still let them state their purpose before diving into your agenda.');
     buf.writeln();
     buf.writeln('### Voicemail Handling');
     buf.writeln(

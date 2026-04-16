@@ -47,6 +47,6 @@ Five interconnected pieces, all fitting into the existing Provider + SQLite arch
 - `phonegentic/lib/main.dart` — added `RingtoneService` and `InboundCallFlowService` providers
 - `phonegentic/lib/src/db/call_history_db.dart` — version 13 migration, `inbound_call_flows` table + CRUD
 - `phonegentic/lib/src/dialpad.dart` — ring toggle in top bar, ring settings popover, inbound call flow editor overlay, ringtone start/stop in `callStateChanged`, auto-answer logic
-- `phonegentic/lib/src/widgets/agent_panel.dart` — "+ Inbound Call Flow" entry in job function dropdown
+- `phonegentic/lib/src/widgets/agent_panel.dart` — "+ Inbound Call Flow" entry in job function dropdown; active flow indicator in header
 - `phonegentic/lib/src/callscreen.dart` — static `acceptCall()` method for programmatic answer
 - `readmes/features/inbound-enhancements.md` — this file
