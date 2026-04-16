@@ -104,19 +104,18 @@ The credential connection must be linked to a Call Control App in the Telnyx Mis
 
 ---
 
-## Resolved Issues (Phase 2)
+## Issues History
 
-1. **~~Conference API does not redirect media for credential connections~~** — Resolved by migrating to Call Control App. The conference bridge now properly redirects media via server-side re-INVITEs.
+### Phase 1 — Conference service layer built, Telnyx API blockers discovered
 
-2. **~~Call Control REST actions return 404 for credential connection CCIDs~~** — Resolved. Call Control App CCIDs support all REST API actions (hold, unhold, transfer, etc.).
+1. Conference API does not redirect media for credential connections
+2. Call Control REST actions return 404 for credential connection CCIDs
+3. B-leg CCIDs identical to A-leg CCIDs
 
-3. **~~B-leg CCIDs identical to A-leg CCIDs~~** — Resolved. Call Control Apps provide distinct A-leg and B-leg `call_control_id`s.
+### Phase 2 — Call Control App migration attempted, portal blocker discovered
 
-## Remaining Concerns
-
-1. **Active calls API may return stale records** — Telnyx flagged this as a possible data sync bug. The three-pass leg matching works around it by preferring SIP-header ccids and skipping stale entries by creation time. Monitor after migration.
-
-2. **SIP header availability** — Verify that `X-Telnyx-Call-Control-ID` headers are still present in SIP 180/200 responses when the credential connection is linked to a Call Control App. If not, leg resolution falls back to phone number matching.
+4. Linking credential connection to a Call Control App in the Telnyx portal reassigns the connection from SIP Trunking to Voice API, breaking SIP registration and normal calling. No dropdown or option exists to keep both.
+5. Active calls API returns stale records and `from=null to=null` for credential connection calls
 
 ## Phase 3: Local Audio Mixing (Planned)
 
@@ -203,3 +202,28 @@ Telnyx confirmed the Conference API is **not supported for Credential Connection
 - [Voice API Commands](https://developers.telnyx.com/docs/voice/programmable-voice/)
 - [SIP Connections Overview](https://developers.telnyx.com/docs/voice/connections)
 - [List Active Calls API](https://developers.telnyx.com/api/call-control/list-connection-active-calls)
+
+---
+
+## Phase 4: Add Call Modal — Remote Identity Display
+
+### Problem
+
+When the "Add Call" modal transitions to its connected state, it only showed the raw dialed phone number with a plain green circle avatar. The main call screen shows the full remote identity (contact name, identicon avatar, formatted number via demo mode masking), but the add-call modal didn't match.
+
+### Solution
+
+Updated `_buildConnectedView()` in `AddCallModal` to mirror the call screen's identity display:
+
+- Looks up the dialed number in `ContactService` to resolve a contact name
+- Filters out "name is just a phone number" cases (same heuristic as the call screen)
+- Applies `DemoModeService` masking for both name and phone
+- Replaces the plain green circle with `ContactIdenticon` (same deterministic avatar used on the call screen)
+- Shows contact name (24px bold) + formatted phone below when a contact matches, or just the formatted phone when no contact exists
+- Status row ("Connected" + timer) moved to top to match call screen layout
+
+### Files
+
+| File | Changes |
+|------|---------|
+| `phonegentic/lib/src/widgets/add_call_modal.dart` | Added `ContactService`, `DemoModeService`, `ContactIdenticon` imports. Rewrote `_buildConnectedView()` with contact lookup, identicon, and two-line name+phone display. |
