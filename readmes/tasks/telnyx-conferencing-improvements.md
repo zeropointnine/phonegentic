@@ -5,11 +5,17 @@
 
 ## Goal
 
-Enable three-way calling (conference merge) for Telnyx Credential Connections. This required building the conference service layer, a webhook relay for B-leg discovery, SIP header extraction for reliable call correlation, and extensive SDP/hold-state handling.
+Enable three-way calling (conference merge) for Telnyx connections. This required building the conference service layer, a webhook relay for B-leg discovery, SIP header extraction for reliable call correlation, and migration from Credential Connections to a Call Control App.
 
 ## Status
 
-The client-side implementation is complete and mechanically correct. However, Telnyx's Conference API does not redirect media for Credential Connection A-legs — the conference bridge acknowledges participants (`;isfocus`) but the SDP media address remains pointed at the original FreeSWITCH server, resulting in silence for remote parties. A detailed support ticket has been filed: `readmes/bugs/telnyx-conference-credential-connection-ticket.md`.
+**Phase 3 planned** — local audio mixing (app-side conference bridge).
+
+Phase 1 built the full conference service layer but hit a fundamental blocker: Telnyx's Conference API does not support Credential Connections (no media redirection, no REST call control actions, identical A/B-leg CCIDs). Telnyx support confirmed this and recommended migrating to a Call Control App.
+
+Phase 2 refactored the provider and service to use a Call Control App connection. However, testing revealed that linking a credential connection to a Call Control App in the Telnyx portal would **reassign the connection away from SIP Trunking to the Voice API**, breaking SIP registration and normal calling. There is no way to keep the credential connection as a SIP Trunk while also routing its calls through a Call Control App. The Telnyx Conference API is effectively unusable with our SIP credential connection architecture.
+
+Phase 3 will abandon the Telnyx Conference API entirely and implement **local audio mixing** in the app. The Flutter app becomes the conference bridge: audio from Call A's WebRTC render stream is injected into Call B's capture stream, and vice versa. No server-side conference bridge is needed.
 
 ---
 
@@ -21,7 +27,7 @@ The client-side implementation is complete and mechanically correct. However, Te
 |------|---------|
 | `phonegentic/lib/src/conference/conference_provider.dart` | Abstract interface + data models (`ActiveCallInfo`, `ConferenceBridge`, `ConferenceParticipant`) for conference providers |
 | `phonegentic/lib/src/conference/conference_service.dart` | Core conference orchestration — leg tracking, hold/unhold, merge logic, WebSocket B-leg relay client |
-| `phonegentic/lib/src/conference/telnyx_conference_provider.dart` | Telnyx-specific implementation — REST API calls for conference CRUD, call parking, active call lookup |
+| `phonegentic/lib/src/conference/telnyx_conference_provider.dart` | Telnyx-specific implementation — REST API calls for conference CRUD, active call lookup (Call Control App) |
 | `static/DEPLOY.md` | Deployment guide for the Rust relay server (SCP, Nginx, systemd) |
 | `readmes/bugs/telnyx-conference-credential-connection-ticket.md` | Detailed Telnyx support ticket with SDP traces |
 
@@ -83,31 +89,141 @@ The `_mergeTelnyx()` method follows this sequence:
 2. **Wait 2s** — for the SIP re-INVITE round-trip to complete
 3. **Resolve legs** — three-pass matching (SIP header ccid → phone number → elimination) against the active_calls API
 4. **Create conference** with the first leg's `call_control_id`
-5. **Join remaining legs** with 1.5s stagger
-6. **Join B-legs** — webhook-captured B-leg ccids (for credential connections these are the same as A-leg ccids, so they're skipped as duplicates)
-7. **Renegotiate media** — force re-INVITE on each SIP leg to prompt Telnyx to return updated SDP with conference bridge media address
+5. **Join remaining A-legs** with 1.5s stagger
+6. **Join B-legs** — webhook-captured B-leg ccids (with Call Control App these are distinct from A-leg ccids and must be explicitly joined)
+7. **Wait 2s** — Call Control App conferences handle media redirection server-side (Telnyx sends re-INVITEs to redirect RTP to the conference bridge)
 8. **Verify participants** via `GET /conferences/{id}/participants`
 
 ### 3. WebSocket B-Leg Relay (`static_server/src/main.rs`)
 
 The Rust server receives Telnyx webhook POSTs at `/web_hooks/telnyx`, extracts `call.initiated` events with `direction=outgoing` (B-legs), and broadcasts the `call_control_id` to all connected WebSocket clients at `/ws/call_control`. The Flutter app's `ConferenceService` maintains a persistent WebSocket connection with auto-reconnect.
 
-### 4. Call Parking
+### 4. Call Control App Setup
 
-On startup, `TelnyxConferenceProvider.enableCallParking()` calls `PATCH /v2/credential_connections/{id}` to set `call_parking_enabled: true` and configure the `webhook_event_url`. This makes Telnyx surface B-leg events via webhooks, which is required for credential connections since the active_calls API only returns A-legs.
+The credential connection must be linked to a Call Control App in the Telnyx Mission Control Portal. The Call Control App's webhook URL points to the Rust relay server, which broadcasts events to the Flutter client via WebSocket. Call parking is no longer needed — Call Control Apps natively surface B-leg events with distinct `call_control_id`s.
 
 ---
 
-## Known Issues / Blockers
+## Issues History
 
-1. **Conference API does not redirect media for credential connections** — The core blocker. Telnyx adds `;isfocus` to the SIP Contact but the SDP `c=`/`m=` lines remain pointed at the original FreeSWITCH. Remote parties hear silence. See the detailed ticket in `readmes/bugs/`.
+### Phase 1 — Conference service layer built, Telnyx API blockers discovered
 
-2. **Call Control REST actions return 404 for credential connection CCIDs** — `PUT /calls/{ccid}/actions/unhold` and similar endpoints are not available for credential connection call_control_ids.
+1. Conference API does not redirect media for credential connections
+2. Call Control REST actions return 404 for credential connection CCIDs
+3. B-leg CCIDs identical to A-leg CCIDs
 
-3. **Active calls API returns stale records** — `GET /connections/{id}/active_calls` includes calls from sessions terminated 30+ minutes ago. The three-pass leg matching works around this by preferring SIP-header ccids and skipping stale entries by creation time.
+### Phase 2 — Call Control App migration attempted, portal blocker discovered
 
-## Next Steps
+4. Linking credential connection to a Call Control App in the Telnyx portal reassigns the connection from SIP Trunking to Voice API, breaking SIP registration and normal calling. No dropdown or option exists to keep both.
+5. Active calls API returns stale records and `from=null to=null` for credential connection calls
 
-- **Await Telnyx support response** on whether conferencing is supported for credential connections
-- **Evaluate Call Control App migration** — Call Control Apps provide distinct A/B-leg ccids, full REST API control, and proper conference bridge media redirection
-- **Consider client-side audio mixing** as a fallback — the `conf=YES` audio pipeline already exists; it would require injecting each remote party's audio into the other call's outgoing stream
+## Phase 3: Local Audio Mixing (Planned)
+
+### Problem
+
+The Telnyx Conference API requires a Call Control App connection, but linking our SIP credential connection to a Call Control App reassigns it away from SIP Trunking — breaking registration and normal calling. There is no portal option to keep both. The Conference API's `createConference` and `joinConference` calls succeed on credential connection CCIDs, but Telnyx never redirects media to the conference bridge (RTP stays on the original path, `remoteRMS=0.0` after merge).
+
+### Approach: App-side conference bridge
+
+Instead of relying on Telnyx to mix audio server-side, the app mixes audio locally across its two concurrent WebRTC sessions. The native `AudioTap` layer (macOS Swift) already supports conference mode (`APM conference mode ON`) and manages separate capture/render audio processing chains per call.
+
+```
+┌──────────────────────────────────────────────────┐
+│                  Flutter App                      │
+│                                                   │
+│  ┌──────────┐    render audio    ┌──────────┐    │
+│  │ Call A    │──────────────────►│ Mixer     │    │
+│  │ (WebRTC) │                   │           │    │
+│  │          │◄──────────────────│ inject B  │    │
+│  └──────────┘    capture inject  │ + mic     │    │
+│                                  │           │    │
+│  ┌──────────┐    render audio    │           │    │
+│  │ Call B    │──────────────────►│           │    │
+│  │ (WebRTC) │                   │ inject A  │    │
+│  │          │◄──────────────────│ + mic     │    │
+│  └──────────┘    capture inject  └──────────┘    │
+│                                                   │
+│  Each party hears: the other party + mic          │
+│  (mic is shared across both capture streams)      │
+└──────────────────────────────────────────────────┘
+         │                    │
+         ▼                    ▼
+    ┌─────────┐          ┌─────────┐
+    │ Telnyx   │          │ Telnyx   │
+    │ (SIP A)  │          │ (SIP B)  │
+    └─────────┘          └─────────┘
+         │                    │
+         ▼                    ▼
+    Remote Party A       Remote Party B
+```
+
+### Key design questions to resolve
+
+1. **Multi-PeerConnection audio routing**: Currently WebRTC uses a single PeerConnection per call. With two concurrent calls, macOS will have two sets of capture/render audio processors. Need to confirm the AudioTap layer can distinguish and cross-route between them.
+
+2. **Capture injection**: The `CapturePostProc` already injects TTS audio into the outbound stream. For conferencing, it needs to also inject the *other call's render audio* into each call's capture stream. This means Call A's `RenderPreProc` output must be readable by Call B's `CapturePostProc`, and vice versa.
+
+3. **Echo / feedback prevention**: When Call A's remote audio is injected into Call B's capture, and Call B's remote audio is injected into Call A's capture, there's a risk of audio feedback loops. AEC is currently disabled in conference mode — may need a simple "don't re-inject what you just received" guard, or a short mixing buffer with origin tagging.
+
+4. **Mic sharing**: The mic signal needs to go into both calls' capture streams. Currently the mic IOProc feeds one ring buffer. Both `CapturePostProc` instances would need to read from the same mic source without contention.
+
+5. **Merge trigger**: The existing `_mergeTelnyx()` flow in `ConferenceService` would be replaced (or a new `_mergeLocal()` path added) that simply activates cross-injection in the AudioTap layer and unholds both SIP legs. No Telnyx REST API calls needed.
+
+6. **TTS routing in conference**: When the AI agent speaks (ElevenLabs TTS), the audio currently goes into the capture stream. In conference mode, TTS output should be injected into both calls' capture streams so all parties hear the agent.
+
+### Existing infrastructure to leverage
+
+- **`AudioTap` (Swift, macOS)**: Already has `enterCallMode`/`exitCallMode`, conference mode flag, `setConferenceMode`, separate `CapturePostProc`/`RenderPreProc` per PeerConnection, ring buffers for mic and TTS injection.
+- **`ConferenceService` (Dart)**: Leg tracking, hold/unhold, merge orchestration — the Dart-side coordination is already built. Just needs a `_mergeLocal()` path.
+- **`CallScreen`**: Conference UI (add call, merge button, per-leg hold) is already implemented.
+
+### What can be removed (Phase 3 cleanup)
+
+- Telnyx Conference REST API calls (`createConference`, `joinConference`, `listParticipants`, hold/unhold participant)
+- B-leg webhook discovery (WebSocket relay, `extractBLegFromWebhook`)
+- `TelnyxConferenceProvider` class (or gut it to just `lookupActiveCalls` if still useful)
+- Rust server webhook broadcast (`/ws/call_control` endpoint)
+- Call Control App in Telnyx portal (can be deleted)
+
+---
+
+## Appendix: Telnyx Support Response (2026-04-15)
+
+Telnyx confirmed the Conference API is **not supported for Credential Connections** — it requires a Call Control App connection. Key points:
+
+- Conference API media redirection only works with Call Control App connections
+- `call_control_id` from `X-Telnyx-Call-Control-ID` SIP headers on credential connections is for identification/tracking only, not full API control
+- Call Control Apps provide: full Conference API, all REST call control actions, separate A/B-leg CCIDs
+- Stale active_calls records may be a Telnyx data sync bug — report with connection ID and timestamps
+
+**Solution applied**: Link existing credential connection to a new Call Control App in Mission Control Portal. SIP registration/calling unchanged; conference operations now use Call Control App's connection ID.
+
+**Reference docs**:
+- [Voice API Commands](https://developers.telnyx.com/docs/voice/programmable-voice/)
+- [SIP Connections Overview](https://developers.telnyx.com/docs/voice/connections)
+- [List Active Calls API](https://developers.telnyx.com/api/call-control/list-connection-active-calls)
+
+---
+
+## Phase 4: Add Call Modal — Remote Identity Display
+
+### Problem
+
+When the "Add Call" modal transitions to its connected state, it only showed the raw dialed phone number with a plain green circle avatar. The main call screen shows the full remote identity (contact name, identicon avatar, formatted number via demo mode masking), but the add-call modal didn't match.
+
+### Solution
+
+Updated `_buildConnectedView()` in `AddCallModal` to mirror the call screen's identity display:
+
+- Looks up the dialed number in `ContactService` to resolve a contact name
+- Filters out "name is just a phone number" cases (same heuristic as the call screen)
+- Applies `DemoModeService` masking for both name and phone
+- Replaces the plain green circle with `ContactIdenticon` (same deterministic avatar used on the call screen)
+- Shows contact name (24px bold) + formatted phone below when a contact matches, or just the formatted phone when no contact exists
+- Status row ("Connected" + timer) moved to top to match call screen layout
+
+### Files
+
+| File | Changes |
+|------|---------|
+| `phonegentic/lib/src/widgets/add_call_modal.dart` | Added `ContactService`, `DemoModeService`, `ContactIdenticon` imports. Rewrote `_buildConnectedView()` with contact lookup, identicon, and two-line name+phone display. |

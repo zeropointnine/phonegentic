@@ -4,10 +4,13 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../conference/conference_service.dart';
+import '../contact_service.dart';
 import '../db/call_history_db.dart';
+import '../demo_mode_service.dart';
 import '../phone_formatter.dart';
 import '../theme_provider.dart';
 import 'action_button.dart';
+import 'dialpad_contact_preview.dart';
 
 /// Full-height modal overlay with an integrated keypad and contact search.
 ///
@@ -427,59 +430,77 @@ class _AddCallModalState extends State<AddCallModal> {
   }
 
   Widget _buildConnectedView() {
-    final display = PhoneFormatter.format(_placedNumber);
-    final initial = _placedNumber.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
-    final letter = initial.isEmpty ? '?' : initial.substring(0, 1).toUpperCase();
+    final contactService = context.read<ContactService>();
+    final demoMode = context.watch<DemoModeService>();
+    final matchedContact = contactService.lookupByPhone(_placedNumber);
+    final rawContactName = matchedContact?['display_name'] as String?;
+    final nameIsPhone = rawContactName != null &&
+        rawContactName.replaceAll(RegExp(r'[^\d]'), '').length >= 7 &&
+        RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(rawContactName);
+    final contactName = (rawContactName != null && !nameIsPhone)
+        ? demoMode.maskDisplayName(rawContactName)
+        : null;
+    final formattedRemote = demoMode.maskPhone(_placedNumber);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: AppColors.green.withValues(alpha: 0.12),
-            border: Border.all(color: AppColors.green.withValues(alpha: 0.3), width: 1.5),
-          ),
-          child: Center(
-            child: Text(
-              letter,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Connected',
+              style: TextStyle(fontSize: 13, color: AppColors.green),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _timerLabel,
               style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w300,
-                color: AppColors.green,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textSecondary,
+                fontFamily: AppColors.timerFontFamily,
+                fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
-          ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        ContactIdenticon(
+          seed: rawContactName ?? _placedNumber,
+          size: 80,
         ),
         const SizedBox(height: 20),
-        Text(
-          display,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
-            letterSpacing: -0.5,
+        if (contactName != null) ...[
+          Text(
+            contactName,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.5,
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Connected',
-          style: TextStyle(fontSize: 14, color: AppColors.green),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _timerLabel,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-            color: AppColors.textSecondary,
-            fontFamily: AppColors.timerFontFamily,
-            fontFamilyFallback: AppColors.timerFontFamilyFallback,
-            fontFeatures: [FontFeature.tabularFigures()],
+          const SizedBox(height: 4),
+          Text(
+            PhoneFormatter.format(formattedRemote),
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
           ),
-        ),
+        ] else
+          Text(
+            PhoneFormatter.format(formattedRemote),
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.5,
+            ),
+          ),
         const SizedBox(height: 32),
         SizedBox(
           width: 56,

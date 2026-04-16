@@ -527,7 +527,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                         borderSide:
                             BorderSide(color: AppColors.border, width: 0.5),
                       ),
-                      helperText: 'SIP credential or Call Control App ID',
+                      helperText: 'Call Control App connection ID',
                       helperStyle: TextStyle(
                           fontSize: 10, color: AppColors.textTertiary),
                     ),
@@ -556,7 +556,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                             BorderSide(color: AppColors.border, width: 0.5),
                       ),
                       helperText:
-                          'Enables call parking + B-leg relay for conferencing',
+                          'WebSocket relay for B-leg discovery during conferencing',
                       helperStyle: TextStyle(
                           fontSize: 10, color: AppColors.textTertiary),
                     ),

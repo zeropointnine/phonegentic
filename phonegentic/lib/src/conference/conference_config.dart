@@ -9,11 +9,10 @@ class ConferenceConfig {
   final String telnyxApiKey;
   final String telnyxConnectionId;
 
-  /// Webhook URL used as a fallback when the configured connection ID is a
-  /// plain SIP credential connection.  The provider auto-patches the
-  /// credential connection to set this URL, which enables the Call Control
-  /// active-calls endpoint.  The server does not need to process events for
-  /// conference merging to work — Telnyx just requires the field to be set.
+  /// Webhook URL for the Call Control App.  Telnyx sends call-control events
+  /// (including B-leg `call.initiated`) to this URL.  The Rust relay server
+  /// at this URL broadcasts events over WebSocket so the Flutter app can
+  /// discover B-leg call_control_ids for conference joining.
   final String telnyxWebhookUrl;
 
   /// When true the platform accepts SIP UPDATE for hold/unhold; when false a

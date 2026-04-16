@@ -907,7 +907,7 @@ class AgentService extends ChangeNotifier {
         // input while TTS is active prevents acoustic echo from reaching
         // inference.  The VAD timer sees silence and drains without running
         // whisper_full().
-        if (!_speaking && !_whisper.isTtsPlaying) {
+        if (!_muted && !_speaking && !_whisper.isTtsPlaying) {
           _whisperKitStt?.feedAudio(chunk);
         }
       });
@@ -2055,6 +2055,7 @@ class AgentService extends ChangeNotifier {
 
   void _onTranscript(TranscriptionEvent event) async {
     if (!event.isFinal || event.text.trim().isEmpty) return;
+    if (_muted) return;
 
     // Drop common Whisper hallucination artifacts before any further processing.
     if (_isWhisperHallucination(event.text.trim())) {
