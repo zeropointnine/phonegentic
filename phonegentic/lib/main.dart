@@ -10,8 +10,10 @@ import 'package:phonegentic/src/conference/conference_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
 import 'package:phonegentic/src/demo_mode_service.dart';
+import 'package:phonegentic/src/inbound_call_flow_service.dart';
 import 'package:phonegentic/src/job_function_service.dart';
 import 'package:phonegentic/src/messaging/messaging_service.dart';
+import 'package:phonegentic/src/ringtone_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
@@ -96,6 +98,12 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider<DemoModeService>(
           create: (_) => DemoModeService()..load(),
+        ),
+        ChangeNotifierProvider<RingtoneService>(
+          create: (_) => RingtoneService()..load(),
+        ),
+        ChangeNotifierProvider<InboundCallFlowService>(
+          create: (_) => InboundCallFlowService()..loadAll(),
         ),
         ChangeNotifierProvider<FlightAwareService>(
           create: (_) => FlightAwareService()..loadConfig(),

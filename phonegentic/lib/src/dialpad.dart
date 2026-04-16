@@ -20,10 +20,12 @@ import 'conference/conference_service.dart';
 import 'conference/telnyx_conference_provider.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
+import 'inbound_call_flow_service.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
 import 'phone_formatter.dart';
 import 'job_function_service.dart';
+import 'ringtone_service.dart';
 import 'tear_sheet_service.dart';
 import 'widgets/action_button.dart';
 import 'widgets/agent_panel.dart';
@@ -32,6 +34,7 @@ import 'widgets/calendar_panel.dart';
 import 'widgets/call_history_panel.dart';
 import 'widgets/contact_list_panel.dart';
 import 'widgets/messaging_panel.dart';
+import 'widgets/inbound_call_flow_editor.dart';
 import 'widgets/job_function_editor.dart';
 import 'widgets/dialpad_contact_preview.dart';
 import 'widgets/phonegentic_logo.dart';
@@ -315,6 +318,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     final contactService = context.watch<ContactService>();
     final tearSheetService = context.watch<TearSheetService>();
     final jobFunctionService = context.watch<JobFunctionService>();
+    final icfService = context.watch<InboundCallFlowService>();
     final calendarService = context.watch<CalendarSyncService>();
     final messagingService = context.watch<MessagingService>();
     final width = MediaQuery.of(context).size.width;
@@ -488,6 +492,25 @@ class _MyDialPadWidget extends State<DialPadWidget>
               right: showPanel ? panelWidth : 0,
               child: const JobFunctionEditor(),
             ),
+          if (icfService.isEditorOpen)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: GestureDetector(
+                onTap: icfService.closeEditor,
+                child: Container(color: Colors.black38),
+              ),
+            ),
+          if (icfService.isEditorOpen)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: showPanel ? panelWidth : 0,
+              child: const InboundCallFlowEditor(),
+            ),
         ],
       ),
     );
@@ -645,6 +668,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
                 ),
               ),
               const SizedBox(width: 8),
+              _buildRingToggleButton(context),
+              const SizedBox(width: 4),
               if (wide) ...[
                 _buildMessagesButton(context),
                 const SizedBox(width: 4),
@@ -662,6 +687,188 @@ class _MyDialPadWidget extends State<DialPadWidget>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildRingToggleButton(BuildContext context) {
+    final ringtone = context.watch<RingtoneService>();
+    final icf = context.watch<InboundCallFlowService>();
+    final enabled = ringtone.ringEnabled;
+    return HoverButton(
+      onTap: () => ringtone.toggleRing(),
+      onLongPress: () => _showRingSettingsPopover(context),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: enabled
+                  ? AppColors.accent.withValues(alpha: 0.12)
+                  : AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: enabled
+                    ? AppColors.accent.withValues(alpha: 0.4)
+                    : AppColors.border.withValues(alpha: 0.5),
+                width: 0.5,
+              ),
+            ),
+            child: Icon(
+              enabled
+                  ? Icons.notifications_active_rounded
+                  : Icons.notifications_off_rounded,
+              size: 16,
+              color: enabled ? AppColors.accent : AppColors.textTertiary,
+            ),
+          ),
+          if (icf.hasEnabledFlow)
+            Positioned(
+              top: -2,
+              right: -2,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: AppColors.green,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.bg, width: 1.5),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showRingSettingsPopover(BuildContext context) {
+    final ringtone = context.read<RingtoneService>();
+    final RenderBox button = context.findRenderObject() as RenderBox;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final offset = button.localToGlobal(
+      Offset(button.size.width / 2, button.size.height),
+      ancestor: overlay,
+    );
+
+    showMenu<void>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx - 140,
+        offset.dy + 4,
+        offset.dx + 140,
+        0,
+      ),
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+            color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+      ),
+      elevation: 8,
+      items: [
+        PopupMenuItem<void>(
+          enabled: false,
+          height: 28,
+          child: Text(
+            'RINGTONE',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textTertiary,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+        ...ringtone.availableRingtones.map((r) => PopupMenuItem<void>(
+              height: 36,
+              onTap: () => ringtone.setRingtone(r.assetPath),
+              child: Row(
+                children: [
+                  Icon(
+                    r.assetPath == ringtone.selectedRingtone
+                        ? Icons.radio_button_checked_rounded
+                        : Icons.radio_button_off_rounded,
+                    size: 14,
+                    color: r.assetPath == ringtone.selectedRingtone
+                        ? AppColors.accent
+                        : AppColors.textTertiary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      r.displayName,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  HoverButton(
+                    onTap: () => ringtone.preview(r.assetPath),
+                    child: Icon(
+                      Icons.play_arrow_rounded,
+                      size: 16,
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            )),
+        PopupMenuItem<void>(
+          height: 36,
+          onTap: () => ringtone.pickCustomRingtone(),
+          child: Row(
+            children: [
+              Icon(Icons.upload_file_rounded,
+                  size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text(
+                'Upload custom...',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.accent,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(height: 1),
+        PopupMenuItem<void>(
+          enabled: false,
+          height: 44,
+          child: StatefulBuilder(
+            builder: (ctx, setMenuState) {
+              return Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Agent auto-answer',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 24,
+                    child: Switch(
+                      value: ringtone.agentAutoAnswer,
+                      activeColor: AppColors.accent,
+                      onChanged: (v) {
+                        ringtone.toggleAutoAnswer();
+                        setMenuState(() {});
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -1156,18 +1363,23 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
     switch (callState.state) {
       case CallStateEnum.CALL_INITIATION:
+        final isIncoming = call.direction == Direction.incoming;
         final isConferenceLeg = _calls.isNotEmpty;
         setState(() {
           _calls[call.id] = call;
           _focusedCall = call;
         });
-        conf.addLeg(call, isOutbound: true);
+        conf.addLeg(call, isOutbound: !isIncoming);
         if (isConferenceLeg) {
           _tapChannel.invokeMethod('setConferenceMode', {'active': true});
           _startConferenceTimeout(call.id!);
         }
+        if (isIncoming) {
+          _handleInboundRing(call);
+        }
         break;
       case CallStateEnum.CONFIRMED:
+        _stopRinging();
         conf.updateLegState(call.id!, LegState.active);
         _cancelConferenceTimeout(call.id!);
         break;
@@ -1179,6 +1391,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
         break;
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
+        _stopRinging();
         _cancelConferenceTimeout(call.id!);
         final wasConferenceLeg = _calls.length > 1;
         conf.removeLeg(call.id!);
@@ -1276,6 +1489,43 @@ class _MyDialPadWidget extends State<DialPadWidget>
     setState(() {
       _focusedCall = _calls.values.isNotEmpty ? _calls.values.first : null;
     });
+  }
+
+  void _handleInboundRing(Call call) {
+    final ringtone = context.read<RingtoneService>();
+    final icf = context.read<InboundCallFlowService>();
+    final jf = context.read<JobFunctionService>();
+    final agent = context.read<AgentService>();
+
+    ringtone.startRinging();
+
+    final caller = call.remote_identity ?? '';
+    final matchedId = icf.resolveJobFunctionId(caller);
+    if (matchedId != null) {
+      jf.select(matchedId).then((_) {
+        agent.updateBootContext(
+          jf.buildBootContext(),
+          jobFunctionName: jf.selected?.title,
+          whisperByDefault: jf.selected?.whisperByDefault,
+        );
+      });
+    }
+
+    if (ringtone.agentAutoAnswer && _calls.length <= 1) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!mounted) return;
+        if (call.state == CallStateEnum.CALL_INITIATION ||
+            call.state == CallStateEnum.PROGRESS) {
+          CallScreenWidget.acceptCall(call, helper!);
+        }
+      });
+    }
+  }
+
+  void _stopRinging() {
+    try {
+      context.read<RingtoneService>().stopRinging();
+    } catch (_) {}
   }
 
   void reRegisterWithCurrentUser() async {

@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/calendar_event.dart';
+import '../models/inbound_call_flow.dart';
 import '../models/job_function.dart';
 
 class CallHistoryDb {
@@ -31,7 +32,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 12,
+        version: 13,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -123,6 +124,7 @@ class CallHistoryDb {
     await _createSpeakerEmbeddingsTable(db);
     await _createCalendarEventsTable(db);
     await _createSmsMessagesTable(db);
+    await _createInboundCallFlowsTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -211,6 +213,10 @@ class CallHistoryDb {
       await db.execute(
         'ALTER TABLE job_functions ADD COLUMN kokoro_voice_style TEXT',
       );
+    }
+
+    if (oldVersion < 13) {
+      await _createInboundCallFlowsTable(db);
     }
   }
 
@@ -1042,5 +1048,57 @@ class CallHistoryDb {
       orderBy: 'created_at DESC',
       limit: limit,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inbound Call Flows
+  // ---------------------------------------------------------------------------
+
+  static Future<void> _createInboundCallFlowsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS inbound_call_flows (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        rules_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  static Future<List<Map<String, dynamic>>> getAllInboundCallFlows() async {
+    final db = await database;
+    return db.query('inbound_call_flows', orderBy: 'created_at ASC');
+  }
+
+  static Future<Map<String, dynamic>?> getInboundCallFlow(int id) async {
+    final db = await database;
+    final rows = await db.query('inbound_call_flows',
+        where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<int> insertInboundCallFlow(InboundCallFlow flow) async {
+    final db = await database;
+    final map = flow.toMap();
+    map.remove('id');
+    return db.insert('inbound_call_flows', map);
+  }
+
+  static Future<void> updateInboundCallFlow(InboundCallFlow flow) async {
+    if (flow.id == null) return;
+    final db = await database;
+    await db.update(
+      'inbound_call_flows',
+      flow.toMap(),
+      where: 'id = ?',
+      whereArgs: [flow.id],
+    );
+  }
+
+  static Future<void> deleteInboundCallFlow(int id) async {
+    final db = await database;
+    await db.delete('inbound_call_flows', where: 'id = ?', whereArgs: [id]);
   }
 }

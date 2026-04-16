@@ -40,6 +40,27 @@ class CallScreenWidget extends StatefulWidget {
 
   CallScreenWidget(this._helper, this._call, {super.key, this.onDismiss});
 
+  /// Accept an incoming call programmatically (e.g. agent auto-answer).
+  /// Can be called without a mounted CallScreenWidget.
+  static Future<void> acceptCall(Call call, SIPUAHelper helper) async {
+    try {
+      final mediaConstraints = <String, dynamic>{
+        'audio': {
+          'echoCancellation': true,
+          'noiseSuppression': true,
+          'autoGainControl': true,
+          'channelCount': 2,
+        },
+        'video': false,
+      };
+      final mediaStream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      call.answer(helper.buildCallOptions(true), mediaStream: mediaStream);
+    } catch (e) {
+      debugPrint('[CallScreen] Auto-answer failed: $e');
+    }
+  }
+
   @override
   State<CallScreenWidget> createState() => _MyCallScreenWidget();
 }

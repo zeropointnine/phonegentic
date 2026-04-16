@@ -116,15 +116,31 @@ class TextAgentService {
   // ─────────────────────────────── internal ───────────────────────────────
 
   /// Submit the result of a tool call so the model can continue.
+  ///
+  /// Claude requires that `tool_result` blocks appear before any text in the
+  /// user message immediately following an assistant `tool_use`.
   void addToolResult(String toolUseId, String result) {
     _debounceTimer?.cancel();
     _pendingToolUseIds.remove(toolUseId);
-    final blocks = <LlmContentBlock>[];
+
+    // If history was reset (e.g. call ended while tool was in-flight), there
+    // is no assistant tool_use to pair with — drop the orphaned result.
+    final hasMatchingToolUse = _history.any((m) =>
+        m.role == LlmRole.assistant &&
+        m.content.any((b) => b is LlmToolUseBlock && b.id == toolUseId));
+    if (!hasMatchingToolUse) {
+      debugPrint(
+          '[TextAgentService] addToolResult: no matching tool_use for $toolUseId — dropped');
+      return;
+    }
+
+    final blocks = <LlmContentBlock>[
+      LlmToolResultBlock(toolUseId: toolUseId, content: result),
+    ];
     if (_pendingContext.isNotEmpty) {
       blocks.add(LlmTextBlock(_pendingContext.join('\n')));
       _pendingContext.clear();
     }
-    blocks.add(LlmToolResultBlock(toolUseId: toolUseId, content: result));
     _history.add(LlmMessage(role: LlmRole.user, content: blocks));
     _respond();
   }
@@ -524,6 +540,8 @@ class TextAgentService {
 
   /// LLMs require strictly alternating user/assistant roles.
   /// Merges consecutive same-role messages by combining their content lists.
+  /// For user messages, ensures `tool_result` blocks precede text blocks so
+  /// the Claude API sees them immediately after the preceding `tool_use`.
   List<LlmMessage> _mergedHistory() {
     if (_history.isEmpty) return [];
     final out = <LlmMessage>[];
@@ -538,8 +556,32 @@ class TextAgentService {
         out.add(m);
       }
     }
+    _reorderUserToolResults(out);
     _stripDanglingToolUse(out);
     return out;
+  }
+
+  /// Ensure tool_result blocks come before text blocks in every user message.
+  /// Claude requires tool_result immediately after the preceding tool_use; if
+  /// merging placed text first this reorders them.
+  static void _reorderUserToolResults(List<LlmMessage> messages) {
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      if (m.role != LlmRole.user) continue;
+      final hasToolResult = m.content.any((b) => b is LlmToolResultBlock);
+      if (!hasToolResult) continue;
+
+      final results = <LlmContentBlock>[];
+      final rest = <LlmContentBlock>[];
+      for (final b in m.content) {
+        if (b is LlmToolResultBlock) {
+          results.add(b);
+        } else {
+          rest.add(b);
+        }
+      }
+      messages[i] = LlmMessage(role: m.role, content: [...results, ...rest]);
+    }
   }
 
   /// Remove tool_use blocks from assistant messages when the next message

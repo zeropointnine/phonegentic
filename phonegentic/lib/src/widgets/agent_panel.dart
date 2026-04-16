@@ -13,6 +13,7 @@ import '../agent_service.dart';
 import '../calendar_sync_service.dart';
 import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
+import '../inbound_call_flow_service.dart';
 import '../job_function_service.dart';
 import '../models/agent_context.dart';
 import '../models/job_function.dart';
@@ -990,6 +991,33 @@ class _JobFunctionDropdown extends StatelessWidget {
                       const SizedBox(width: 8),
                       Text(
                         'New Job Function',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const PopupMenuDivider(height: 1),
+              PopupMenuItem<int>(
+                value: -2,
+                enabled: false,
+                height: 36,
+                child: HoverButton(
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    context.read<InboundCallFlowService>().openEditor();
+                  },
+                  child: Row(
+                    children: [
+                      Icon(Icons.call_received_rounded,
+                          size: 14, color: AppColors.accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Inbound Call Flow',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,

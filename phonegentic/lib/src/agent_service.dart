@@ -6,7 +6,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' hide MessageType;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sip_ua/sip_ua.dart';
@@ -1810,7 +1810,9 @@ class AgentService extends ChangeNotifier {
 
   /// Bracketed Whisper tags for non-speech segments (but not ♪ lyrics ♪).
   static final RegExp _whisperBracketedTagRe = RegExp(
-    r'^\[(BLANK_AUDIO|BLANK audio|blank_audio|Music|Silence|Applause|Laughter|NOISE|noise)\]$',
+    r'^\[(BLANK_AUDIO|BLANK audio|blank_audio|Music|Silence|Applause|Laughter|'
+    r'NOISE|noise|CLICK|click|clicking|typing|COUGH|cough|Sighs?|sighs?|'
+    r'breathing|BREATHING|sneezing|clearing throat)\]$',
     caseSensitive: false,
   );
 
@@ -2245,12 +2247,7 @@ class AgentService extends ChangeNotifier {
           '"$voiceprintName" (confidence=$confidence)');
     }
 
-    _messages.add(ChatMessage.transcript(
-      role,
-      text,
-      speakerName: speaker.label,
-    ));
-    notifyListeners();
+    _addOrMergeTranscript(role, text, speakerName: speaker.label);
 
     callHistory?.addTranscript(
       role: isRemote ? 'remote' : 'host',
@@ -3698,6 +3695,39 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  /// Max gap between transcript chunks to still merge into one bubble.
+  static const _transcriptMergeWindowMs = 12000;
+
+  /// Append [text] to the last transcript bubble if it's from the same
+  /// [role] and within the merge window, otherwise create a new bubble.
+  void _addOrMergeTranscript(
+    ChatRole role,
+    String text, {
+    String? speakerName,
+    Map<String, dynamic>? metadata,
+  }) {
+    if (_messages.isNotEmpty) {
+      final last = _messages.last;
+      if (last.type == MessageType.transcript &&
+          last.role == role &&
+          !last.isStreaming &&
+          last.metadata?['isPreviousCall'] != true &&
+          DateTime.now().difference(last.timestamp).inMilliseconds <
+              _transcriptMergeWindowMs) {
+        last.text = '${last.text} $text';
+        notifyListeners();
+        return;
+      }
+    }
+    _messages.add(ChatMessage.transcript(
+      role,
+      text,
+      speakerName: speakerName,
+      metadata: metadata,
+    ));
+    notifyListeners();
+  }
+
   void addSystemMessage(String text) {
     _messages.add(ChatMessage.system(text));
     notifyListeners();
@@ -4190,11 +4220,11 @@ class AgentService extends ChangeNotifier {
         final settleText = event.text.trim();
         if (settleText.isEmpty) continue;
         if (IvrDetector.isIvr(settleText)) continue;
-        _messages.add(ChatMessage.transcript(
+        _addOrMergeTranscript(
           ChatRole.remoteParty,
           settleText,
           speakerName: speaker.label,
-        ));
+        );
         callHistory?.addTranscript(
           role: 'remote',
           speakerName: speaker.label,
@@ -4260,12 +4290,11 @@ class AgentService extends ChangeNotifier {
       if (IvrDetector.isIvr(text)) continue;
       if (_isEchoOfAgentResponse(text)) continue;
 
-      _messages.add(ChatMessage.transcript(
+      _addOrMergeTranscript(
         ChatRole.remoteParty,
         text,
         speakerName: speaker.label,
-      ));
-      notifyListeners();
+      );
 
       callHistory?.addTranscript(
         role: 'remote',
@@ -4496,13 +4525,19 @@ class AgentService extends ChangeNotifier {
         }
         break;
       case 'onBeepDetected':
-        if (!_ivrHeard || !_inBeepWindow || _voicemailPromptSent) {
+        if (!_inBeepWindow || _voicemailPromptSent) {
           debugPrint(
-              '[AgentService] Native beep IGNORED (ivr=$_ivrHeard window=$_inBeepWindow sent=$_voicemailPromptSent)');
+              '[AgentService] Native beep IGNORED (window=$_inBeepWindow sent=$_voicemailPromptSent)');
           break;
         }
+        // A beep during settle/early-connected is a strong voicemail signal
+        // on its own — don't require prior IVR transcript classification.
+        if (!_ivrHeard) {
+          debugPrint(
+              '[AgentService] Beep overrides settle classification → IVR');
+          _ivrHeard = true;
+        }
         _beepDetected = true;
-        // Cancel beep-watch timeout — we found the beep.
         _beepWatchTimer?.cancel();
         debugPrint('[AgentService] Native beep tone DETECTED (IVR confirmed)');
         if (_callPhase == CallPhase.settling) {
