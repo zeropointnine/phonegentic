@@ -2,7 +2,7 @@
 //
 // Follows the same pattern as [VoiceAgentConfig], [TtsConfig], etc.
 
-enum ConferenceProviderType { none, basic, telnyx }
+enum ConferenceProviderType { none, basic, telnyx, onDevice }
 
 class ConferenceConfig {
   final ConferenceProviderType provider;
@@ -37,6 +37,7 @@ class ConferenceConfig {
       case ConferenceProviderType.none:
         return false;
       case ConferenceProviderType.basic:
+      case ConferenceProviderType.onDevice:
         return true;
       case ConferenceProviderType.telnyx:
         return telnyxApiKey.isNotEmpty && telnyxConnectionId.isNotEmpty;

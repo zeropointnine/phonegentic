@@ -372,7 +372,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
   Widget _buildConferenceCard() {
     final isTelnyx = _conf.provider == ConferenceProviderType.telnyx;
     final isBasic = _conf.provider == ConferenceProviderType.basic;
-    final isActive = isTelnyx || isBasic;
+    final isOnDevice = _conf.provider == ConferenceProviderType.onDevice;
+    final isActive = isTelnyx || isBasic || isOnDevice;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -431,9 +432,11 @@ class _MyRegisterWidget extends State<RegisterWidget>
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            isBasic
-                                ? 'Merge calls via SIP REFER'
-                                : 'Merge calls into a server-side conference bridge',
+                            isOnDevice
+                                ? 'Mix audio locally across two SIP calls'
+                                : isBasic
+                                    ? 'Merge calls via SIP REFER'
+                                    : 'Merge calls into a server-side conference bridge',
                             style: TextStyle(
                                 fontSize: 11, color: AppColors.textTertiary),
                           ),
@@ -458,6 +461,10 @@ class _MyRegisterWidget extends State<RegisterWidget>
                         DropdownMenuItem(
                           value: ConferenceProviderType.telnyx,
                           child: Text('Telnyx'),
+                        ),
+                        DropdownMenuItem(
+                          value: ConferenceProviderType.onDevice,
+                          child: Text('On Device'),
                         ),
                       ],
                       onChanged: (v) {

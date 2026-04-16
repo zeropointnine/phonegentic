@@ -63,6 +63,9 @@ class ConferenceService extends ChangeNotifier {
   ConferenceConfig get config => _config;
   bool get isProviderConfigured => _provider?.isConfigured ?? false;
 
+  set onConferenceModeChanged(void Function(bool active)? cb) =>
+      _onConferenceModeChanged = cb;
+
   void applyConfig(ConferenceConfig config) {
     _config = config;
     _provider = _buildProvider(config);
@@ -85,6 +88,7 @@ class ConferenceService extends ChangeNotifier {
     switch (config.provider) {
       case ConferenceProviderType.none:
       case ConferenceProviderType.basic:
+      case ConferenceProviderType.onDevice:
         return null;
       case ConferenceProviderType.telnyx:
         if (!config.isConfigured) return null;
@@ -99,6 +103,10 @@ class ConferenceService extends ChangeNotifier {
   // -- SIP helper reference ---------------------------------------------------
 
   SIPUAHelper? sipHelper;
+
+  /// Callback to toggle native conference mode (APM, audio cross-routing).
+  /// Set by the call screen when the on-device provider is active.
+  void Function(bool active)? _onConferenceModeChanged;
 
   // -- Leg tracking -----------------------------------------------------------
 
@@ -121,6 +129,7 @@ class ConferenceService extends ChangeNotifier {
       _legs.length >= 2 &&
       _conferenceId == null &&
       (_config.provider == ConferenceProviderType.basic ||
+          _config.provider == ConferenceProviderType.onDevice ||
           isProviderConfigured);
 
   ConferenceCallLeg? get focusedLeg {
@@ -241,6 +250,9 @@ class ConferenceService extends ChangeNotifier {
       return;
     }
 
+    if (_config.provider == ConferenceProviderType.onDevice) {
+      return _mergeLocal();
+    }
     if (_config.provider == ConferenceProviderType.basic) {
       return _mergeBasic();
     }
@@ -289,6 +301,59 @@ class ConferenceService extends ChangeNotifier {
     } catch (e) {
       _mergeError = e.toString();
       debugPrint('[ConferenceService] basic merge failed: $e');
+    } finally {
+      _merging = false;
+      notifyListeners();
+    }
+  }
+
+  // -- On-device merge (local audio mixing) ------------------------------------
+
+  /// Merge via local audio mixing — the app acts as the conference bridge,
+  /// cross-routing render audio between the two WebRTC PeerConnections.
+  /// No server-side bridge or REST API calls needed.
+  Future<void> _mergeLocal() async {
+    _merging = true;
+    _mergeError = null;
+    notifyListeners();
+
+    try {
+      // Unhold every held leg so both SIP sessions have active media.
+      for (final leg in _legs) {
+        final call = sipHelper?.findCall(leg.sipCallId);
+        if (call != null && call.state == CallStateEnum.HOLD) {
+          debugPrint(
+            '[ConferenceService] On-device merge: unholding ${leg.sipCallId} '
+            '(${leg.remoteNumber})',
+          );
+          call.unhold();
+          leg.state = LegState.active;
+        }
+      }
+
+      // Brief wait for the SIP re-INVITE round-trip.
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+
+      // Activate conference mode on the native audio layer.
+      // This disables AEC/NS/AGC (which assume a single stream) and will
+      // eventually enable cross-call audio routing in WebRTCAudioProcessor.
+      if (_onConferenceModeChanged != null) {
+        _onConferenceModeChanged!(true);
+      }
+
+      for (final leg in _legs) {
+        leg.state = LegState.merged;
+      }
+      _conferenceId = 'local-${DateTime.now().millisecondsSinceEpoch}';
+      _conferenceName = 'On-Device Mix';
+
+      debugPrint(
+        '[ConferenceService] On-device conference active with '
+        '${_legs.length} legs',
+      );
+    } catch (e) {
+      _mergeError = e.toString();
+      debugPrint('[ConferenceService] on-device merge failed: $e');
     } finally {
       _merging = false;
       notifyListeners();
@@ -641,6 +706,11 @@ class ConferenceService extends ChangeNotifier {
   // -- Reset ------------------------------------------------------------------
 
   void reset() {
+    if (_conferenceId != null &&
+        _conferenceId!.startsWith('local-') &&
+        _onConferenceModeChanged != null) {
+      _onConferenceModeChanged!(false);
+    }
     _legs.clear();
     _focusedLegId = null;
     _conferenceId = null;
