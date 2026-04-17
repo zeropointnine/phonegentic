@@ -36,7 +36,7 @@ import 'widgets/contact_list_panel.dart';
 import 'widgets/messaging_panel.dart';
 import 'widgets/inbound_call_flow_editor.dart';
 import 'widgets/job_function_editor.dart';
-import 'widgets/dialpad_contact_preview.dart';
+import 'widgets/dialpad_autocomplete_overlay.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/quick_add_overlay.dart';
 import 'widgets/tear_sheet_editor.dart';
@@ -67,7 +67,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
   Call? _focusedCall;
   Call? get _activeCall => _focusedCall;
 
-  Map<String, dynamic>? _matchedContact;
+  List<Map<String, dynamic>> _autocompleteMatches = [];
+  bool _dropdownOpen = false;
+  String? _lastDialedNumber;
 
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
   Timer? _conferenceTimeout;
@@ -124,16 +126,32 @@ class _MyDialPadWidget extends State<DialPadWidget>
   }
 
   void _onDigitsChanged() {
-    final digits = _textController?.text ?? '';
-    if (digits.length < 3) {
-      if (_matchedContact != null) setState(() => _matchedContact = null);
+    final text = _textController?.text ?? '';
+    if (text.length < 2) {
+      if (_autocompleteMatches.isNotEmpty || _dropdownOpen) {
+        setState(() {
+          _autocompleteMatches = [];
+          _dropdownOpen = false;
+        });
+      }
       return;
     }
     final contacts = Provider.of<ContactService>(context, listen: false);
-    final match = contacts.lookupByPhone(digits);
-    if (match != _matchedContact) {
-      setState(() => _matchedContact = match);
+    final matches = contacts.autocompleteSearch(text);
+    if (!_listEquals(matches, _autocompleteMatches)) {
+      setState(() => _autocompleteMatches = matches);
+      if (matches.isEmpty && _dropdownOpen) {
+        setState(() => _dropdownOpen = false);
+      }
     }
+  }
+
+  bool _listEquals(List<Map<String, dynamic>> a, List<Map<String, dynamic>> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i]['id'] != b[i]['id']) return false;
+    }
+    return true;
   }
 
   bool _handleGlobalKeyEvent(KeyEvent event) {
@@ -143,11 +161,25 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
     final FocusNode? primary = FocusManager.instance.primaryFocus;
     if (primary != null && primary.context != null) {
-      if (primary.context!
-              .findAncestorWidgetOfExactType<EditableText>() !=
+      if (primary.context!.findAncestorWidgetOfExactType<EditableText>() !=
           null) {
         return false;
       }
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (_dropdownOpen) {
+        setState(() => _dropdownOpen = false);
+        return true;
+      }
+      if (_textController!.text.isNotEmpty) {
+        setState(() {
+          _textController!.text = '';
+          _autocompleteMatches = [];
+        });
+        return true;
+      }
+      return false;
     }
 
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
@@ -172,17 +204,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
       return true;
     }
 
-    if (RegExp(r'^[a-zA-Z]$').hasMatch(character)) {
-      final FocusNode? agentFocus = AgentPanel.inputFocusNode;
-      final TextEditingController? agentCtrl = AgentPanel.inputController;
-      if (agentFocus != null && agentCtrl != null) {
-        agentCtrl.text += character;
-        agentCtrl.selection = TextSelection.collapsed(
-          offset: agentCtrl.text.length,
-        );
-        agentFocus.requestFocus();
-        return true;
-      }
+    if (RegExp(r'^[a-zA-Z ]$').hasMatch(character)) {
+      setState(() {
+        _textController!.text += character;
+      });
+      return true;
     }
 
     return false;
@@ -213,13 +239,20 @@ class _MyDialPadWidget extends State<DialPadWidget>
   }
 
   Future<Widget?> _handleCall(BuildContext context) async {
-    final dest = _textController?.text;
+    var dest = _textController?.text;
     if (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS) {
       await Permission.microphone.request();
       await Permission.camera.request();
     }
     if (dest == null || dest.isEmpty) {
+      if (_lastDialedNumber != null && _lastDialedNumber!.isNotEmpty) {
+        setState(() {
+          _textController!.text = _lastDialedNumber!;
+        });
+        _onDigitsChanged();
+        return null;
+      }
       showDialog<void>(
         context: context,
         barrierDismissible: false,
@@ -241,6 +274,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
       );
       return null;
     }
+    _lastDialedNumber = dest;
 
     final mediaConstraints = <String, dynamic>{
       'audio': {
@@ -520,12 +554,30 @@ class _MyDialPadWidget extends State<DialPadWidget>
     );
   }
 
+  void _dismissAutocomplete() {
+    if (_dropdownOpen) {
+      setState(() => _dropdownOpen = false);
+    }
+  }
+
   Widget _buildDialpadSection() {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 380),
-        child: _buildPhoneContent(),
-      ),
+    final showDropdown = _dropdownOpen && _autocompleteMatches.isNotEmpty;
+    return Stack(
+      children: [
+        if (showDropdown)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _dismissAutocomplete,
+            ),
+          ),
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380),
+            child: _buildPhoneContent(),
+          ),
+        ),
+      ],
     );
   }
 
@@ -748,8 +800,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     final icf = context.read<InboundCallFlowService>();
     final jf = context.read<JobFunctionService>();
     final RenderBox button = context.findRenderObject() as RenderBox;
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final offset = button.localToGlobal(
       Offset(button.size.width / 2, button.size.height),
       ancestor: overlay,
@@ -895,8 +946,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                         .where((j) => j.id == r.jobFunctionId)
                         .firstOrNull;
                     final name = fn?.title ?? '?';
-                    final pattern =
-                        r.phonePatterns.join(', ');
+                    final pattern = r.phonePatterns.join(', ');
                     return '$name ($pattern)';
                   }).join(' → ');
             return PopupMenuItem<String>(
@@ -1304,10 +1354,41 @@ class _MyDialPadWidget extends State<DialPadWidget>
     );
   }
 
+  void _onAutocompleteSelect(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    final digits = phone.replaceAll(RegExp(r'[^\d+]'), '');
+    setState(() {
+      _textController!.text = digits;
+      _dropdownOpen = false;
+    });
+  }
+
+  void _onAutocompleteCall(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    final digits = phone.replaceAll(RegExp(r'[^\d+]'), '');
+    setState(() {
+      _textController!.text = digits;
+      _dropdownOpen = false;
+      _autocompleteMatches = [];
+    });
+    _handleCall(context);
+  }
+
+  void _onAutocompleteMessage(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    setState(() => _dropdownOpen = false);
+    final messaging = context.read<MessagingService>();
+    if (!messaging.isOpen) messaging.toggleOpen();
+    messaging.selectConversation(phone);
+  }
+
   Widget _buildPhoneContent() {
     final userPhone = TestCredentials.sipUser.displayName;
     final demoMode = context.watch<DemoModeService>();
-    final bool showCard = _matchedContact != null;
+    final showDropdown = _dropdownOpen && _autocompleteMatches.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -1326,88 +1407,148 @@ class _MyDialPadWidget extends State<DialPadWidget>
               ),
             ),
             const SizedBox(height: 8),
+            _buildNumberDisplay(),
             SizedBox(
-              height: 56,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 320),
-                switchInCurve: Curves.easeOut,
-                switchOutCurve: Curves.easeIn,
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, 0.08),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
+              width: double.infinity,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 28),
+                      _buildNumPad(),
+                      const SizedBox(height: 20),
+                      _buildCallRow(),
+                      const SizedBox(height: 12),
+                    ],
+                  ),
+                  if (showDropdown)
+                    Positioned(
+                      top: -0.5,
+                      left: 0,
+                      right: 0,
+                      child: DialpadAutocompleteDropdown(
+                        matches: _autocompleteMatches,
+                        onSelect: _onAutocompleteSelect,
+                        onCall: _onAutocompleteCall,
+                        onMessage: _onAutocompleteMessage,
+                        onDismiss: _dismissAutocomplete,
+                      ),
                     ),
-                  );
-                },
-                child: showCard
-                    ? Padding(
-                        key: ValueKey(_matchedContact!['id']),
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: DialpadContactPreview(
-                            contact: _matchedContact!),
-                      )
-                    : const SizedBox.shrink(key: ValueKey('empty')),
+                ],
               ),
             ),
-            _buildNumberDisplay(),
-            const SizedBox(height: 28),
-            _buildNumPad(),
-            const SizedBox(height: 20),
-            _buildCallRow(),
-            const SizedBox(height: 12),
           ],
         ),
       ),
     );
   }
 
+  void _toggleSearchDropdown() {
+    setState(() => _dropdownOpen = !_dropdownOpen);
+  }
+
   Widget _buildNumberDisplay() {
     final raw = _textController?.text ?? '';
     final demoMode = context.watch<DemoModeService>();
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(raw);
+    final showDropdown = _dropdownOpen && _autocompleteMatches.isNotEmpty;
+    final hasSearchResults = _autocompleteMatches.isNotEmpty;
     final display = raw.isEmpty
         ? ''
-        : demoMode.enabled
-            ? demoMode.maskPhone(raw)
-            : PhoneFormatter.format(raw);
-    return Column(
-      children: [
-        SizedBox(
-          height: 48,
-          child: raw.isEmpty
-              ? Text(
-                  'Enter number',
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w200,
-                    color: AppColors.textTertiary,
-                    letterSpacing: 1,
-                  ),
-                )
-              : FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    display,
-                    style: TextStyle(
-                      fontSize: 34,
-                      fontWeight: FontWeight.w300,
-                      color: AppColors.textPrimary,
-                      letterSpacing: 2,
-                      shadows: [
-                        Shadow(
-                          color: AppColors.phosphor.withValues(alpha: 0.35),
-                          blurRadius: 12,
+        : hasLetters
+            ? raw
+            : demoMode.enabled
+                ? demoMode.maskPhone(raw)
+                : PhoneFormatter.format(raw);
+    final borderColor = AppColors.border.withValues(alpha: 0.5);
+    const borderWidth = 0.5;
+    return Container(
+      width: showDropdown ? double.infinity : null,
+      decoration: showDropdown
+          ? BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.40),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(14),
+                topRight: Radius.circular(14),
+              ),
+              border: Border(
+                top: BorderSide(color: borderColor, width: borderWidth),
+                left: BorderSide(color: borderColor, width: borderWidth),
+                right: BorderSide(color: borderColor, width: borderWidth),
+                bottom: BorderSide(color: borderColor, width: borderWidth),
+              ),
+            )
+          : null,
+      padding: showDropdown ? const EdgeInsets.only(top: 8, bottom: 8) : null,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Center(
+            child: SizedBox(
+              height: 48,
+              child: raw.isEmpty
+                  ? Text(
+                      'Enter number or name',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w200,
+                        color: AppColors.textTertiary,
+                        letterSpacing: 0.5,
+                      ),
+                    )
+                  : FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        display,
+                        style: TextStyle(
+                          fontSize: hasLetters ? 28 : 34,
+                          fontWeight:
+                              hasLetters ? FontWeight.w400 : FontWeight.w300,
+                          color: AppColors.textPrimary,
+                          letterSpacing: hasLetters ? -0.3 : 2,
+                          shadows: hasLetters
+                              ? null
+                              : [
+                                  Shadow(
+                                    color: AppColors.phosphor
+                                        .withValues(alpha: 0.35),
+                                    blurRadius: 12,
+                                  ),
+                                ],
                         ),
-                      ],
+                      ),
                     ),
+            ),
+          ),
+          if (hasSearchResults)
+            Positioned(
+              top: 5,
+              right: 5,
+              child: GestureDetector(
+                onTap: _toggleSearchDropdown,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: _dropdownOpen
+                        ? AppColors.accent.withValues(alpha: 0.15)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.search_rounded,
+                    size: 18,
+                    color: _dropdownOpen
+                        ? AppColors.accent
+                        : AppColors.textSecondary,
                   ),
                 ),
-        ),
-      ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1590,8 +1731,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
               () => _endInboundRingSession(),
             );
           }
-          debugPrint(
-              '[Dialpad] Fork died during ring session '
+          debugPrint('[Dialpad] Fork died during ring session '
               '(remaining=${_calls.length}, grace=${_calls.isEmpty})');
           break;
         }
@@ -1608,6 +1748,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
             _logicalCallKey = null;
             _audioMuted = false;
             _speakerOn = false;
+            _textController?.text = '';
+            _autocompleteMatches = [];
+            _dropdownOpen = false;
           }
         });
 
@@ -1617,7 +1760,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
         _stopRinging();
 
         if (_calls.length <= 1) {
-          _tapChannel.invokeMethod('setConferenceMode', {'active': false});
+          Future.microtask(() =>
+              _tapChannel.invokeMethod('setConferenceMode', {'active': false}));
         }
         if (wasConferenceLeg && _calls.length == 1) {
           final remaining = _calls.values.first;
@@ -1911,4 +2055,3 @@ class _CallButtonState extends State<_CallButton>
     );
   }
 }
-
