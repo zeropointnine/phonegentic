@@ -355,15 +355,18 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     }
   }
 
+  static bool _looksLikePhone(String s) =>
+      s.replaceAll(RegExp(r'[^\d]'), '').length >= 7 &&
+      RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(s);
+
   String _name(DemoModeService demo) {
-    final rawName =
-        (widget.record['remote_display_name'] as String?)?.isNotEmpty == true
-            ? widget.record['remote_display_name'] as String
-            : widget.record['remote_identity'] as String? ?? 'Unknown';
-    if ((widget.record['remote_display_name'] as String?)?.isNotEmpty == true) {
-      return demo.maskDisplayName(rawName);
-    }
-    return demo.maskPhone(rawName);
+    final displayName = widget.record['remote_display_name'] as String? ?? '';
+    final identity = widget.record['remote_identity'] as String? ?? '';
+    final hasName = displayName.isNotEmpty && !_looksLikePhone(displayName);
+    if (hasName) return demo.maskDisplayName(displayName);
+    final number = identity.isNotEmpty ? identity : displayName;
+    if (number.isEmpty) return 'Unknown';
+    return demo.maskPhone(number);
   }
 
   bool get _isOutbound => widget.record['direction'] == 'outbound';
@@ -716,11 +719,15 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                       Row(
                         children: [
                           Icon(
-                            _isOutbound
-                                ? Icons.call_made_rounded
-                                : Icons.call_received_rounded,
+                            widget.record['status'] == 'missed'
+                                ? Icons.phone_missed_rounded
+                                : _isOutbound
+                                    ? Icons.call_made_rounded
+                                    : Icons.call_received_rounded,
                             size: 11,
-                            color: AppColors.textTertiary,
+                            color: widget.record['status'] == 'missed'
+                                ? AppColors.burntAmber
+                                : AppColors.textTertiary,
                           ),
                           const SizedBox(width: 4),
                           Expanded(

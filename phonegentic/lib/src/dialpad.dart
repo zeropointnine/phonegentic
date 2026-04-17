@@ -1715,6 +1715,14 @@ class _MyDialPadWidget extends State<DialPadWidget>
         '(flows=${icf.items.length}, '
         'enabled=${icf.items.where((f) => f.enabled).length})');
 
+    agent.notifyCallPhase(
+      CallPhase.ringing,
+      remoteIdentity: call.remote_identity,
+      remoteDisplayName: call.remote_display_name,
+      localIdentity: call.local_identity,
+      outbound: false,
+    );
+
     final matchedId = icf.resolveJobFunctionId(caller);
     debugPrint('[Dialpad] ICF resolved jobFunctionId=$matchedId for "$caller"');
 

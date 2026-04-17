@@ -160,7 +160,7 @@ final class WebRTCAudioProcessor: NSObject {
     /// Linear gain applied to the remote party's audio in the render path.
     /// Values > 1.0 boost volume; 1.0 = passthrough. Applied after whisper
     /// tap / tone detection so those see the original signal.
-    var remoteGain: Float = 2.0
+    var remoteGain: Float = 1.5
 
     /// Fired (on main thread) when a sustained beep tone is first confirmed.
     var beepDetectedCallback: (() -> Void)?

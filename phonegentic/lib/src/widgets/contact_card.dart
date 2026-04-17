@@ -11,6 +11,7 @@ class ContactCard extends StatefulWidget {
   final void Function(String field, String value) onFieldChanged;
   final VoidCallback? onDelete;
   final VoidCallback? onCall;
+  final VoidCallback? onMessage;
 
   const ContactCard({
     super.key,
@@ -18,6 +19,7 @@ class ContactCard extends StatefulWidget {
     required this.onFieldChanged,
     this.onDelete,
     this.onCall,
+    this.onMessage,
   });
 
   @override
@@ -256,7 +258,17 @@ class _ContactCardState extends State<ContactCard> {
                   color: AppColors.green,
                   onTap: widget.onCall!,
                 ),
-              if (widget.onCall != null) const SizedBox(width: 16),
+              if (widget.onCall != null && widget.onMessage != null)
+                const SizedBox(width: 16),
+              if (widget.onMessage != null)
+                _CardAction(
+                  icon: Icons.message_rounded,
+                  label: 'Message',
+                  color: AppColors.accent,
+                  onTap: widget.onMessage!,
+                ),
+              if (widget.onMessage != null && widget.onDelete != null)
+                const SizedBox(width: 16),
               if (widget.onDelete != null)
                 _CardAction(
                   icon: Icons.delete_outline_rounded,
