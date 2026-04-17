@@ -27,6 +27,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private var whisperKit: WhisperKit?
     #endif
 
+    private var currentModelPath: String?
     private var isInitialized = false
     private var isTranscribing = false
     private let processingQueue = DispatchQueue(label: "com.agentic_ai.whisperkit_stt", qos: .userInitiated)
@@ -36,6 +37,8 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private let bufferLock = NSLock()
     private var transcriptionTimer: Timer?
     private var isProcessing = false
+    private var consecutiveAneFailures = 0
+    private static let maxAneFailuresBeforeCpuFallback = 2
     private static let transcriptionIntervalMs = 1500
     private static let inputSampleRate: Double = 24000
     private static let whisperSampleRate: Double = 16000
@@ -132,6 +135,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                         )
                     )
                     self.whisperKit = kit
+                    self.currentModelPath = modelPath
                     self.isInitialized = true
 
                     DispatchQueue.main.async {
@@ -160,6 +164,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
 
         isTranscribing = true
         isProcessing = false
+        consecutiveAneFailures = 0
         bufferLock.lock()
         audioBuffer = Data()
         bufferLock.unlock()
@@ -202,11 +207,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         audioBuffer = Data()
         bufferLock.unlock()
 
-        // Convert 24kHz PCM16 → 16kHz Float32 (what WhisperKit expects)
         let floatSamples = pcm16ToFloat16k(audioData)
 
         guard floatSamples.count >= WhisperKitChannel.minSamplesForTranscription else {
-            // Not enough audio yet — put it back
             bufferLock.lock()
             audioBuffer.insert(contentsOf: audioData, at: 0)
             bufferLock.unlock()
@@ -217,12 +220,14 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         processingQueue.async { [weak self] in
             guard let self = self else { return }
             Task {
-                defer {
-                    DispatchQueue.main.async { self.isProcessing = false }
-                }
                 do {
                     let results = try await kit.transcribe(audioArray: floatSamples)
                     let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    DispatchQueue.main.async {
+                        self.consecutiveAneFailures = 0
+                        self.isProcessing = false
+                    }
 
                     if !text.isEmpty {
                         DispatchQueue.main.async {
@@ -234,7 +239,74 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                         }
                     }
                 } catch {
-                    NSLog("[WhisperKit] Transcription error: \(error)")
+                    let isAneTimeout = "\(error)".contains("ANE") || "\(error)".contains("Timeout occurred while computing")
+                    NSLog("[WhisperKit] Transcription error (aneTimeout=%d): %@",
+                          isAneTimeout ? 1 : 0, "\(error)")
+
+                    DispatchQueue.main.async {
+                        self.bufferLock.lock()
+                        self.audioBuffer.insert(contentsOf: audioData, at: 0)
+                        let maxBytes = 3 * Int(WhisperKitChannel.inputSampleRate) * 2
+                        if self.audioBuffer.count > maxBytes {
+                            self.audioBuffer = self.audioBuffer.suffix(maxBytes)
+                        }
+                        self.bufferLock.unlock()
+
+                        if isAneTimeout {
+                            self.consecutiveAneFailures += 1
+                            NSLog("[WhisperKit] Consecutive ANE failures: %d/%d",
+                                  self.consecutiveAneFailures,
+                                  WhisperKitChannel.maxAneFailuresBeforeCpuFallback)
+
+                            if self.consecutiveAneFailures >= WhisperKitChannel.maxAneFailuresBeforeCpuFallback {
+                                self.rebuildWithCpuFallback()
+                                return
+                            }
+                        }
+
+                        self.isProcessing = false
+                    }
+                }
+            }
+        }
+        #endif
+    }
+
+    private func rebuildWithCpuFallback() {
+        #if canImport(WhisperKit)
+        guard let modelPath = currentModelPath else { return }
+
+        NSLog("[WhisperKit] ANE unstable — rebuilding with CPU-only compute")
+        transcriptEventSink?([
+            "text": "",
+            "isFinal": true,
+            "language": "en",
+            "warning": "ANE timeout — falling back to CPU transcription"
+        ])
+
+        isProcessing = true
+        processingQueue.async { [weak self] in
+            guard let self = self else { return }
+            Task {
+                do {
+                    let kit = try await WhisperKit(
+                        modelFolder: modelPath,
+                        computeOptions: ModelComputeOptions(
+                            audioEncoderCompute: .cpuOnly,
+                            textDecoderCompute: .cpuOnly
+                        )
+                    )
+                    DispatchQueue.main.async {
+                        self.whisperKit = kit
+                        self.consecutiveAneFailures = 0
+                        self.isProcessing = false
+                        NSLog("[WhisperKit] Rebuilt with CPU-only compute — transcription resumed")
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.isProcessing = false
+                        NSLog("[WhisperKit] CPU fallback rebuild failed: %@", "\(error)")
+                    }
                 }
             }
         }

@@ -28,6 +28,7 @@ import 'elevenlabs_api_service.dart';
 import 'ivr_detector.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
+import 'messaging/models/sms_message.dart';
 import 'messaging/phone_numbers.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
@@ -130,8 +131,19 @@ class AgentService extends ChangeNotifier {
   CallHistoryService? callHistory;
   ContactService? contactService;
   TearSheetService? tearSheetService;
-  MessagingService? messagingService;
+  MessagingService? _messagingService;
   DemoModeService? demoModeService;
+
+  MessagingService? get messagingService => _messagingService;
+  set messagingService(MessagingService? svc) {
+    if (svc == _messagingService) return;
+    _inboundSmsSub?.cancel();
+    _messagingService = svc;
+    if (svc != null) {
+      _inboundSmsSub = svc.inboundMessages.listen(_onInboundSms);
+    }
+  }
+
   FlightAwareService? flightAwareService;
   GmailService? gmailService;
   GoogleCalendarService? googleCalendarService;
@@ -218,6 +230,7 @@ class AgentService extends ChangeNotifier {
   StreamSubscription<Uint8List>? _localAudioSub;
   StreamSubscription<ResponseTextEvent>? _textAgentSub;
   StreamSubscription<ToolCallRequest>? _textAgentToolSub;
+  StreamSubscription<SmsMessage>? _inboundSmsSub;
 
   TextAgentService? _textAgent;
   TextAgentConfig? _textAgentConfig;
@@ -2690,8 +2703,66 @@ class AgentService extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
+  // Inbound SMS → agent context
+  // ---------------------------------------------------------------------------
+
+  void _onInboundSms(SmsMessage msg) {
+    if (!_active) return;
+
+    String senderLabel = msg.from;
+    if (contactService != null) {
+      final contact = contactService!.lookupByPhone(msg.from);
+      if (contact != null) {
+        final name = contact['display_name'] as String?;
+        if (name != null && name.isNotEmpty) {
+          senderLabel = '$name (${msg.from})';
+        }
+      }
+    }
+
+    final preview = msg.text.length > 500
+        ? '${msg.text.substring(0, 500)}…'
+        : msg.text;
+    final contextLine =
+        'SYSTEM EVENT — New inbound SMS received from $senderLabel: '
+        '"$preview" — Use send_sms to reply to ${msg.from} if appropriate.';
+
+    debugPrint('[AgentService] Inbound SMS from $senderLabel: ${preview.length > 80 ? '${preview.substring(0, 80)}...' : preview}');
+
+    _messages.add(ChatMessage.system(
+      'Inbound SMS from $senderLabel: "$preview"',
+      metadata: {'type': 'sms_received', 'from': msg.from},
+    ));
+    notifyListeners();
+
+    if (_textAgent != null) {
+      _textAgent!.sendUserMessage(contextLine);
+    } else if (_active) {
+      _whisper.sendTextMessage(contextLine);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // SMS / Messaging tool handlers
   // ---------------------------------------------------------------------------
+
+  /// Per-number send timestamps for rate limiting (prevents tool-call loops).
+  final Map<String, List<DateTime>> _smsSendLog = {};
+  static const _smsRateWindowSeconds = 60;
+  static const _smsRateMaxPerWindow = 2;
+
+  bool _isSmsRateLimited(String normalizedTo) {
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(seconds: _smsRateWindowSeconds));
+    final log = _smsSendLog[normalizedTo];
+    if (log == null) return false;
+    log.removeWhere((t) => t.isBefore(cutoff));
+    return log.length >= _smsRateMaxPerWindow;
+  }
+
+  void _recordSmsSend(String normalizedTo) {
+    _smsSendLog.putIfAbsent(normalizedTo, () => []).add(DateTime.now());
+  }
 
   Future<String> _handleSendSms(Map<String, dynamic> args) async {
     if (messagingService == null || !messagingService!.isConfigured) {
@@ -2702,12 +2773,20 @@ class AgentService extends ChangeNotifier {
     if (to == null || to.isEmpty || text == null || text.isEmpty) {
       return 'Both "to" and "text" are required.';
     }
+    final normalizedTo = ensureE164(to);
+    if (_isSmsRateLimited(normalizedTo)) {
+      debugPrint('[AgentService] SMS rate-limited to $normalizedTo');
+      return 'Rate limited: you already sent $_smsRateMaxPerWindow messages to '
+          'this number in the last $_smsRateWindowSeconds seconds. '
+          'STOP sending and wait for their reply.';
+    }
     final mediaUrl = args['media_url'] as String?;
     final mediaUrls =
         mediaUrl != null && mediaUrl.isNotEmpty ? [mediaUrl] : null;
     final msg = await messagingService!
         .sendMessage(to: to, text: text, mediaUrls: mediaUrls);
     if (msg != null) {
+      _recordSmsSend(normalizedTo);
       final displayTo = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(to)
           : to;
@@ -2716,7 +2795,8 @@ class AgentService extends ChangeNotifier {
         metadata: {'type': 'sms_sent', 'to': to},
       ));
       notifyListeners();
-      return 'Message sent successfully to $displayTo.';
+      return 'Message sent to $displayTo. Do NOT send another message to this '
+          'number — wait for their reply.';
     }
     return 'Failed to send message.';
   }
@@ -2732,8 +2812,15 @@ class AgentService extends ChangeNotifier {
     if (selected == null) {
       return 'No conversation selected. Use send_sms with a phone number instead.';
     }
+    if (_isSmsRateLimited(selected)) {
+      debugPrint('[AgentService] SMS reply rate-limited to $selected');
+      return 'Rate limited: you already sent $_smsRateMaxPerWindow messages to '
+          'this number in the last $_smsRateWindowSeconds seconds. '
+          'STOP sending and wait for their reply.';
+    }
     final msg = await messagingService!.reply(text);
     if (msg != null) {
+      _recordSmsSend(selected);
       final displayTo = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(selected)
           : selected;
@@ -2742,7 +2829,8 @@ class AgentService extends ChangeNotifier {
         metadata: {'type': 'sms_reply', 'to': selected},
       ));
       notifyListeners();
-      return 'Reply sent to $displayTo.';
+      return 'Reply sent to $displayTo. Do NOT send another message — wait '
+          'for their reply.';
     }
     return 'Failed to send reply.';
   }
@@ -4748,6 +4836,7 @@ class AgentService extends ChangeNotifier {
     _ttsGenerationComplete = false;
     _stopTtsLevelDrain();
     _tapChannel.setMethodCallHandler(null);
+    _inboundSmsSub?.cancel();
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
     _textAgent?.dispose();

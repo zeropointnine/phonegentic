@@ -383,6 +383,25 @@ class AgentBootContext {
         'these whenever your job description or the host calls for texting, '
         'confirmations by SMS, or message lookup — not only during voice calls.');
     buf.writeln();
+    buf.writeln('### Inbound SMS conversations');
+    buf.writeln('When someone replies to your text, the SYSTEM will inject a '
+        'user message starting with "SYSTEM EVENT — New inbound SMS received". '
+        'CRITICAL RULES:');
+    buf.writeln('- NEVER generate, simulate, or role-play an inbound SMS. You '
+        'do NOT know what the other person will say. Only the SYSTEM can '
+        'deliver inbound SMS notifications to you.');
+    buf.writeln('- After sending an SMS, simply confirm to the host that the '
+        'message was sent, then STOP and WAIT. Do not predict, fabricate, or '
+        'imagine the recipient\'s reply. You will be notified when they '
+        'actually respond.');
+    buf.writeln('- When a real "SYSTEM EVENT — New inbound SMS received" '
+        'notification appears, respond to the sender using send_sms. Keep '
+        'replies concise.');
+    buf.writeln('- If the sender asks something you can help with (scheduling, '
+        'info lookup, etc.), use your available tools.');
+    buf.writeln('- If the message is clearly personal and not meant for the '
+        'agent, notify the host rather than replying on their behalf.');
+    buf.writeln();
 
     buf.writeln('## Agent Idnentity');
     buf.writeln(

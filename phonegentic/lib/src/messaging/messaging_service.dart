@@ -19,6 +19,11 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   WebhookListener? _webhookListener;
   StreamSubscription<SmsMessage>? _incomingSub;
 
+  final _inboundController = StreamController<SmsMessage>.broadcast();
+
+  /// Fires for every new inbound SMS after it has been persisted.
+  Stream<SmsMessage> get inboundMessages => _inboundController.stream;
+
   /// Register a handler for Telnyx call control webhook events (e.g. to
   /// capture B-leg call_control_ids for conference merging).
   set callControlHandler(void Function(Map<String, dynamic>)? handler) {
@@ -442,6 +447,9 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     if (_selectedRemotePhone == msg.remotePhone) {
       await _loadMessages(msg.remotePhone);
     }
+    if (msg.direction == SmsDirection.inbound) {
+      _inboundController.add(msg);
+    }
     notifyListeners();
   }
 
@@ -543,6 +551,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _readTimer?.cancel();
     _incomingSub?.cancel();
+    _inboundController.close();
     _webhookListener?.stop();
     _provider?.disconnect();
     super.dispose();

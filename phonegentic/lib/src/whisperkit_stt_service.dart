@@ -68,6 +68,10 @@ class WhisperKitSttService {
       _transcriptSub = _transcriptChannel.receiveBroadcastStream().listen(
         (data) {
           if (data is Map) {
+            final warning = data['warning'] as String?;
+            if (warning != null) {
+              debugPrint('[WhisperKit] Native warning: $warning');
+            }
             _transcriptionController.add(WhisperKitTranscription(
               text: data['text'] as String? ?? '',
               isFinal: data['isFinal'] as bool? ?? false,
