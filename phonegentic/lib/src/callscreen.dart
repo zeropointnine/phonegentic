@@ -230,7 +230,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     super.deactivate();
     _addCallGraceTimer?.cancel();
     helper!.removeSipUaHelperListener(this);
-    _disposeRenderers();
+    _deferDisposeRenderers();
   }
 
   void _startTimer() {
@@ -251,15 +251,16 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (_remoteRenderer != null) await _remoteRenderer!.initialize();
   }
 
-  void _disposeRenderers() {
-    if (_localRenderer != null) {
-      _localRenderer!.dispose();
-      _localRenderer = null;
-    }
-    if (_remoteRenderer != null) {
-      _remoteRenderer!.dispose();
-      _remoteRenderer = null;
-    }
+  void _deferDisposeRenderers() {
+    final local = _localRenderer;
+    final remote = _remoteRenderer;
+    _localRenderer = null;
+    _remoteRenderer = null;
+    // Defer heavy native-texture teardown so it doesn't block the UI frame.
+    Future.microtask(() {
+      local?.dispose();
+      remote?.dispose();
+    });
   }
 
   @override
@@ -339,9 +340,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   void _cleanUp() {
     if (_localStream == null) return;
-    _localStream?.getTracks().forEach((track) => track.stop());
-    _localStream!.dispose();
+    final stream = _localStream!;
     _localStream = null;
+    Future.microtask(() {
+      stream.getTracks().forEach((track) => track.stop());
+      stream.dispose();
+    });
   }
 
   void _backToDialPad() {
