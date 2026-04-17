@@ -3879,7 +3879,14 @@ class AgentService extends ChangeNotifier {
     }
 
     if (phase == CallPhase.ended || phase == CallPhase.failed) {
-      final status = phase == CallPhase.failed ? 'failed' : 'completed';
+      final String status;
+      if (!_isOutbound && _connectedAt == null) {
+        status = 'missed';
+      } else if (phase == CallPhase.failed) {
+        status = 'failed';
+      } else {
+        status = 'completed';
+      }
       callHistory?.endCallRecord(status: status);
 
       // Store the remote party's voiceprint if we know who they are

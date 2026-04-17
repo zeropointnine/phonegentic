@@ -229,6 +229,8 @@ class CallHistoryService extends ChangeNotifier {
       debugPrint('[CallHistory] Failed to finalize record: $e');
     }
     _activeCallRecordId = null;
+    // Refresh the displayed list so new/ended calls appear immediately.
+    loadRecentCalls();
   }
 
   Future<void> addTranscript({

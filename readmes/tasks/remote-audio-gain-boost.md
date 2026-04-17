@@ -15,9 +15,21 @@ Key design decisions:
 - Gain applied per-sample in the real-time audio callback (~480 samples per 10ms frame at 48 kHz) — negligible CPU cost.
 - Whisper feed and tone detection see the original un-boosted signal so AI transcription accuracy and beep detection thresholds are unaffected.
 
+## Phase 2 — Reduce over-modulation
+
+### Problem
+
+The gain was set far too high (Dart called `setRemoteGain` with 5.0, Swift default was 2.0), causing the remote party's audio to clip and distort.
+
+### Solution
+
+Lowered the gain to 1.5x (~+3.5 dB) in both places:
+- Dart `_enterCallMode()` now sends `1.5` instead of `5.0`
+- Swift default `remoteGain` changed from `2.0` to `1.5`
+
+This keeps the remote party audible above the baseline without hard-clipping on normal-level SIP audio.
+
 ## Files
 
-- `phonegentic/macos/Runner/WebRTCAudioProcessor.swift` — added `remoteGain` property; applied gain in `RenderPreProcessor.audioProcessingProcess`
-- `phonegentic/macos/Runner/AudioTapChannel.swift` — added `setRemoteGain` platform channel handler
-- `phonegentic/ios/Runner/AudioTapChannel.swift` — added `setRemoteGain` to no-op stub list
-- `phonegentic/lib/src/callscreen.dart` — calls `setRemoteGain` with 2.0 on call connect
+- `phonegentic/macos/Runner/WebRTCAudioProcessor.swift` — `remoteGain` default: 2.0 → 1.5
+- `phonegentic/lib/src/callscreen.dart` — `setRemoteGain` argument: 5.0 → 1.5

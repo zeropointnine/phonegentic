@@ -263,14 +263,20 @@ class _ConversationViewState extends State<ConversationView> {
   }
 
   Widget _buildDateSeparator(DateTime dt) {
+    final local = dt.toLocal();
     final now = DateTime.now();
+    final h = local.hour > 12
+        ? local.hour - 12
+        : (local.hour == 0 ? 12 : local.hour);
+    final ampm = local.hour >= 12 ? 'PM' : 'AM';
+    final time = '$h:${local.minute.toString().padLeft(2, '0')} $ampm';
     String label;
-    if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
-      label =
-          'Today ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    if (local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day) {
+      label = 'Today $time';
     } else {
-      label =
-          '${dt.month}/${dt.day}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      label = '${local.month}/${local.day}/${local.year} $time';
     }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -387,7 +393,7 @@ class _ConversationViewState extends State<ConversationView> {
                 onKeyEvent: (node, event) {
                   if (event is KeyDownEvent &&
                       event.logicalKey == LogicalKeyboardKey.enter &&
-                      HardwareKeyboard.instance.isShiftPressed) {
+                      !HardwareKeyboard.instance.isShiftPressed) {
                     _send(messaging);
                     return KeyEventResult.handled;
                   }
@@ -401,7 +407,7 @@ class _ConversationViewState extends State<ConversationView> {
                   style:
                       TextStyle(fontSize: 14, color: AppColors.textPrimary),
                   decoration: InputDecoration(
-                    hintText: 'Message... (Shift+Enter to send)',
+                    hintText: 'Message...',
                     hintStyle: TextStyle(
                         fontSize: 13, color: AppColors.textTertiary),
                     border: InputBorder.none,

@@ -5,6 +5,7 @@ import 'package:sip_ua/sip_ua.dart';
 
 import '../contact_service.dart';
 import '../demo_mode_service.dart';
+import '../messaging/messaging_service.dart';
 import '../messaging/phone_numbers.dart';
 import '../theme_provider.dart';
 import 'contact_card.dart';
@@ -258,6 +259,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
               service.deleteContact(contact['id'] as int);
             },
             onCall: () => _callContact(contact),
+            onMessage: () => _messageContact(contact),
           ),
         ],
       ),
@@ -312,6 +314,15 @@ class _ContactListPanelState extends State<ContactListPanel> {
     } catch (e) {
       debugPrint('[ContactListPanel] Call failed: $e');
     }
+  }
+
+  void _messageContact(Map<String, dynamic> contact) {
+    final number = contact['phone_number'] as String?;
+    if (number == null || number.isEmpty) return;
+    final messaging = context.read<MessagingService>();
+    context.read<ContactService>().closeContacts();
+    if (!messaging.isOpen) messaging.toggleOpen();
+    messaging.selectConversation(ensureE164(number));
   }
 }
 
