@@ -318,6 +318,11 @@ class AgentService extends ChangeNotifier {
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
   bool _agentSampling = false;
   String? _agentSamplePath;
+  DateTime? _agentSamplingStartTime;
+  String? _samplingMessageId;
+
+  bool get agentSampling => _agentSampling;
+  DateTime? get agentSamplingStartTime => _agentSamplingStartTime;
 
   // Beep tone detection (native Goertzel filter in RenderPreProcessor).
   // Beep only triggers voicemail if an IVR/voicemail transcript was already
@@ -461,6 +466,11 @@ class AgentService extends ChangeNotifier {
   /// the LLM doesn't generate a duplicate greeting in response to the
   /// remote party's initial "Hello?".
   DateTime? _preGreetGraceUntil;
+
+  /// Grace period after a connected greeting fires. Short remote-party
+  /// acknowledgments (< 4 words) during this window are added as context
+  /// only so the LLM doesn't re-greet in response to "Hello?" / "Hi".
+  DateTime? _postGreetGraceUntil;
 
   // Beep-watch: after IVR detected and speech stops, wait for a beep.
   Timer? _beepWatchTimer;
@@ -1934,11 +1944,10 @@ class AgentService extends ChangeNotifier {
   /// indicating it is likely the agent's own TTS being transcribed back.
   bool _isEchoOfAgentResponse(String text) {
     if (_recentAgentTexts.isEmpty) return false;
-    final lower = text.toLowerCase();
-    if (lower.length < 8) return false; // too short to match reliably
+    final lower = text.toLowerCase().trim();
+    if (lower.length < 4) return false;
     for (final agentText in _recentAgentTexts) {
       final agentLower = agentText.toLowerCase();
-      // Check if the transcript is contained within a recent agent response
       if (agentLower.contains(lower)) return true;
       // Word-overlap check — only for transcripts with 3+ significant words
       // so short commands like "Call Lee" aren't blocked by common words.
@@ -2045,8 +2054,9 @@ class AgentService extends ChangeNotifier {
   /// Handle VAD speech-start/stop events for fast barge-in detection.
   /// When the remote party starts speaking while the agent is playing audio,
   /// we immediately stop the agent without waiting for a full transcript.
-  /// A 600ms debounce avoids false triggers from brief noise, and the VAD
-  /// must still be active when the timer fires (speech_stopped cancels it).
+  /// A 900ms debounce avoids false triggers from echo/noise picked up by the
+  /// server VAD, and the VAD must still be active when the timer fires
+  /// (speech_stopped cancels it).
   void _onVadEvent(bool speechStarted) {
     if (!speechStarted) {
       _vadInterruptDebounce?.cancel();
@@ -2064,7 +2074,7 @@ class AgentService extends ChangeNotifier {
     if (_callPhase == CallPhase.settling) return;
 
     _vadInterruptDebounce?.cancel();
-    _vadInterruptDebounce = Timer(const Duration(milliseconds: 600), () {
+    _vadInterruptDebounce = Timer(const Duration(milliseconds: 900), () {
       // Re-check conditions after debounce.
       if (!_speaking && !_whisper.isTtsPlaying) return;
       if (_ttsInterrupted) return;
@@ -2278,6 +2288,16 @@ class AgentService extends ChangeNotifier {
             '[AgentService] Pre-greet grace (during speak): "$text" as context');
         return;
       }
+      // Require a minimum word count to trigger barge-in — very short
+      // fragments are almost always echo residue or noise artifacts that
+      // slip past _isEchoOfAgentResponse (which skips texts <8 chars).
+      final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+      if (words.length < 3) {
+        debugPrint(
+            '[AgentService] Short fragment during speak ignored: "$text"');
+        _pendingTranscripts.add(event);
+        return;
+      }
       _interruptAgent(event);
       return;
     }
@@ -2400,6 +2420,22 @@ class AgentService extends ChangeNotifier {
       debugPrint(
           '[AgentService] Post-pre-greet grace: added "$text" as context only');
       return;
+    }
+
+    // Post-connected-greeting grace: short acknowledgments from the remote
+    // party (e.g. "Hello?", "Hi", "Hey there") right after the agent's
+    // greeting are added as context so the LLM doesn't re-greet.
+    if (_postGreetGraceUntil != null &&
+        DateTime.now().isBefore(_postGreetGraceUntil!)) {
+      final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+      if (isRemote && words.length < 4) {
+        _textAgent?.addSystemContext('[$label]: $text');
+        debugPrint(
+            '[AgentService] Post-greet grace: added "$text" as context only');
+        return;
+      }
+      // Substantial speech clears the grace window.
+      _postGreetGraceUntil = null;
     }
 
     _textAgent?.addTranscript(label, text);
@@ -3442,7 +3478,14 @@ class AgentService extends ChangeNotifier {
           'startVoiceSample', {'path': _agentSamplePath, 'party': party});
 
       _agentSampling = true;
-      _messages.add(ChatMessage.system('Voice sampling started ($party)'));
+      _agentSamplingStartTime = DateTime.now();
+      final msg = ChatMessage.system(
+        'Capturing voice ($party)',
+        metadata: {'voice_capture': true, 'capture_party': party},
+      );
+      msg.isStreaming = true;
+      _samplingMessageId = msg.id;
+      _messages.add(msg);
       notifyListeners();
       debugPrint(
           '[AgentService] Agent-initiated voice sample → $_agentSamplePath ($party)');
@@ -3471,6 +3514,7 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] Voice sample stopped → $_agentSamplePath');
     } catch (e) {
       _agentSampling = false;
+      _finalizeSamplingMessage(success: false);
       debugPrint('[AgentService] stopVoiceSample failed: $e');
       return 'Failed to stop voice sample: $e';
     }
@@ -3478,6 +3522,8 @@ class AgentService extends ChangeNotifier {
     final name = (args['voice_name'] as String?)?.trim().isNotEmpty == true
         ? args['voice_name'] as String
         : 'Alter Ego ${DateTime.now().millisecondsSinceEpoch}';
+
+    _finalizeSamplingMessage(success: true);
 
     try {
       _messages.add(ChatMessage.system('Cloning voice...'));
@@ -3500,6 +3546,24 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] Voice clone failed: $e');
       return 'Voice cloning failed: $e';
     }
+  }
+
+  void _finalizeSamplingMessage({required bool success}) {
+    if (_samplingMessageId == null) return;
+    final idx = _messages.indexWhere((m) => m.id == _samplingMessageId);
+    if (idx >= 0) {
+      final duration = _agentSamplingStartTime != null
+          ? DateTime.now().difference(_agentSamplingStartTime!).inSeconds
+          : 0;
+      _messages[idx].isStreaming = false;
+      final party = _messages[idx].metadata?['capture_party'] ?? 'remote';
+      _messages[idx].text = success
+          ? 'Voice captured ($party) — ${duration}s'
+          : 'Voice capture failed ($party)';
+    }
+    _samplingMessageId = null;
+    _agentSamplingStartTime = null;
+    notifyListeners();
   }
 
   Future<String> _handleSetAgentVoice(Map<String, dynamic> args) async {
@@ -4312,6 +4376,7 @@ class AgentService extends ChangeNotifier {
       _preGreetFinalText = null;
       _preGreetReady = false;
       _preGreetGraceUntil = null;
+      _postGreetGraceUntil = null;
       _cumulativeSpeechMs = 0;
       _clearRemotePartyName();
       _cancelSettleTimer();
@@ -4339,7 +4404,12 @@ class AgentService extends ChangeNotifier {
         } catch (_) {}
         _agentSampling = false;
         _agentSamplePath = null;
+        _finalizeSamplingMessage(success: false);
       }
+
+      // Reset any cloned-voice override so the agent reverts to its default
+      // voice for subsequent interactions (prevents sticky voice bug).
+      _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
 
       // Return to idle after a brief delay so the agent can listen again
       // between calls. Without this, _callPhase stays at ended forever,
@@ -4619,6 +4689,7 @@ class AgentService extends ChangeNotifier {
     } else if (_active) {
       _whisper.sendSystemDirective(prompt);
     }
+    _postGreetGraceUntil = DateTime.now().add(const Duration(seconds: 8));
     debugPrint('[AgentService] Connected greeting triggered (line quiet, ${_isOutbound ? "outbound" : "inbound"})');
   }
 

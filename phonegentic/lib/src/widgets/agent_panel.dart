@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -1816,7 +1817,9 @@ class _MessageBubble extends StatelessWidget {
         message.metadata?['isPreviousCallFooter'] == true;
 
     Widget child;
-    if (message.type == MessageType.sms) {
+    if (message.metadata?['voice_capture'] == true) {
+      child = _VoiceCaptureBubble(message: message);
+    } else if (message.type == MessageType.sms) {
       child = SmsThreadBubble(message: message);
     } else if (message.type == MessageType.callState) {
       child = _CallStatePill(text: message.text);
@@ -1874,6 +1877,149 @@ class _SystemBubble extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
                 fontSize: 11, color: AppColors.textTertiary, height: 1.4),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceCaptureBubble extends StatefulWidget {
+  final ChatMessage message;
+  const _VoiceCaptureBubble({required this.message});
+
+  @override
+  State<_VoiceCaptureBubble> createState() => _VoiceCaptureBubbleState();
+}
+
+class _VoiceCaptureBubbleState extends State<_VoiceCaptureBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseCtrl;
+  Timer? _tickTimer;
+  int _elapsedSeconds = 0;
+
+  bool get _isLive => widget.message.isStreaming;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    if (_isLive) {
+      _pulseCtrl.repeat(reverse: true);
+      _startTick();
+    }
+  }
+
+  void _startTick() {
+    final agent = context.read<AgentService>();
+    final start = agent.agentSamplingStartTime ?? widget.message.timestamp;
+    _elapsedSeconds = DateTime.now().difference(start).inSeconds;
+    _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || !_isLive) {
+        _tickTimer?.cancel();
+        return;
+      }
+      setState(() {
+        _elapsedSeconds = DateTime.now().difference(start).inSeconds;
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _VoiceCaptureBubble old) {
+    super.didUpdateWidget(old);
+    if (!_isLive && _pulseCtrl.isAnimating) {
+      _pulseCtrl.stop();
+      _tickTimer?.cancel();
+    }
+  }
+
+  @override
+  void dispose() {
+    _tickTimer?.cancel();
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  String _fmtTime(int totalSec) {
+    final m = totalSec ~/ 60;
+    final s = totalSec % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final party =
+        widget.message.metadata?['capture_party'] as String? ?? 'remote';
+    final label = _isLive ? 'Capturing voice ($party)' : widget.message.text;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.accent.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: AppColors.accent.withValues(alpha: _isLive ? 0.25 : 0.12),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_isLive)
+                AnimatedBuilder(
+                  animation: _pulseCtrl,
+                  builder: (_, __) => Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.red.withValues(
+                          alpha: 0.5 + 0.5 * _pulseCtrl.value),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.red.withValues(
+                              alpha: 0.3 * _pulseCtrl.value),
+                          blurRadius: 6,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Icon(Icons.mic_rounded,
+                    size: 12, color: AppColors.textTertiary),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: _isLive ? AppColors.accent : AppColors.textTertiary,
+                  fontWeight: _isLive ? FontWeight.w500 : FontWeight.w400,
+                  height: 1.4,
+                ),
+              ),
+              if (_isLive) ...[
+                const SizedBox(width: 8),
+                Text(
+                  _fmtTime(_elapsedSeconds),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.accent.withValues(alpha: 0.7),
+                    fontFamily: AppColors.timerFontFamily,
+                    fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
