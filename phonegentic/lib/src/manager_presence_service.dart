@@ -57,18 +57,31 @@ class ManagerPresenceService extends ChangeNotifier
   Future<void> start() async {
     WidgetsBinding.instance.addObserver(this);
     _lastFocusedAt = DateTime.now();
-    final config = await UserConfigService.loadAwayReturnConfig();
-    _awayReturnMode = config.mode;
+
+    // Always create the periodic timer first so reminder checks run even if
+    // subsequent DB/config operations fail.
     _reminderCheckTimer?.cancel();
     _reminderCheckTimer =
         Timer.periodic(_reminderCheckInterval, (_) => _checkReminders());
-    await _refreshReminderCache();
-    await _scheduleUpcomingTimers();
+
+    try {
+      final config = await UserConfigService.loadAwayReturnConfig();
+      _awayReturnMode = config.mode;
+    } catch (e) {
+      debugPrint('[ManagerPresence] Error loading away config: $e');
+    }
+
+    try {
+      await _refreshReminderCache();
+      await _scheduleUpcomingTimers();
+    } catch (e) {
+      debugPrint('[ManagerPresence] Error on initial reminder setup: $e');
+    }
+
     debugPrint('[ManagerPresence] Started – mode: ${_awayReturnMode.name}');
 
     if (!_startupCheckDone) {
       _startupCheckDone = true;
-      // Delay so the agent service and UI are fully wired before we push messages.
       Future.delayed(const Duration(seconds: 2), _checkMissedReminders);
     }
   }
@@ -244,36 +257,45 @@ class ManagerPresenceService extends ChangeNotifier
   }
 
   Future<void> _checkReminders() async {
-    await _refreshReminderCache();
-    final fired = await CallHistoryDb.getPendingReminders();
-    if (fired.isNotEmpty) {
-      debugPrint(
-          '[ManagerPresence] _checkReminders: ${fired.length} past-due reminder(s)');
-    }
-    for (final row in fired) {
-      await _fireReminder(row);
-    }
+    try {
+      await _refreshReminderCache();
+      final fired = await CallHistoryDb.getPendingReminders();
+      if (fired.isNotEmpty) {
+        debugPrint(
+            '[ManagerPresence] _checkReminders: ${fired.length} past-due reminder(s)');
+      }
+      for (final row in fired) {
+        await _fireReminder(row);
+      }
 
-    await _scheduleUpcomingTimers();
+      await _scheduleUpcomingTimers();
+    } catch (e, st) {
+      debugPrint('[ManagerPresence] _checkReminders error: $e\n$st');
+    }
   }
 
   Future<void> _fireReminder(Map<String, dynamic> row) async {
-    final id = row['id'] as int;
-    final title = row['title'] as String? ?? 'Reminder';
-    final desc = row['description'] as String?;
+    try {
+      final id = row['id'] as int;
+      final title = row['title'] as String? ?? 'Reminder';
+      final desc = row['description'] as String?;
 
-    _scheduledReminderTimers.remove(id)?.cancel();
-    await CallHistoryDb.updateReminderStatus(id, 'fired');
+      _scheduledReminderTimers.remove(id)?.cancel();
+      await CallHistoryDb.updateReminderStatus(id, 'fired');
 
-    final text = desc != null && desc.isNotEmpty ? '$title — $desc' : title;
-    debugPrint('[ManagerPresence] Firing reminder $id: "$text" (agent=${_agent != null})');
+      final text = desc != null && desc.isNotEmpty ? '$title — $desc' : title;
+      debugPrint(
+          '[ManagerPresence] Firing reminder $id: "$text" (agent=${_agent != null})');
 
-    _agent?.addReminderMessage(text, reminderId: id);
+      _agent?.addReminderMessage(text, reminderId: id);
 
-    _agent?.sendSystemEvent(
-      '[REMINDER FIRED] $text — Please act on this reminder now.',
-      requireResponse: true,
-    );
+      _agent?.sendSystemEvent(
+        '[REMINDER FIRED] $text — Please act on this reminder now.',
+        requireResponse: true,
+      );
+    } catch (e, st) {
+      debugPrint('[ManagerPresence] _fireReminder error: $e\n$st');
+    }
   }
 
   /// Schedule precise timers for upcoming reminders so they fire on time
@@ -328,19 +350,22 @@ class ManagerPresenceService extends ChangeNotifier
   /// Called externally (e.g. after creating a reminder) to immediately
   /// refresh the cache, fire any already-due reminders, and schedule timers.
   Future<void> onReminderCreatedOrChanged() async {
-    await _refreshReminderCache();
+    try {
+      await _refreshReminderCache();
 
-    // Fire any reminders that are already past-due (e.g. timezone correction
-    // made them due immediately).
-    final pastDue = await CallHistoryDb.getPendingReminders();
-    for (final row in pastDue) {
+      final pastDue = await CallHistoryDb.getPendingReminders();
+      for (final row in pastDue) {
+        debugPrint(
+            '[ManagerPresence] onReminderCreatedOrChanged: firing past-due reminder ${row['id']}');
+        await _fireReminder(row);
+      }
+
+      await _scheduleUpcomingTimers();
+      notifyListeners();
+    } catch (e, st) {
       debugPrint(
-          '[ManagerPresence] onReminderCreatedOrChanged: firing past-due reminder ${row['id']}');
-      await _fireReminder(row);
+          '[ManagerPresence] onReminderCreatedOrChanged error: $e\n$st');
     }
-
-    await _scheduleUpcomingTimers();
-    notifyListeners();
   }
 
   void markBriefingDone() {

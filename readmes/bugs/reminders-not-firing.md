@@ -26,12 +26,18 @@ Reminders set by the agent (e.g. "call me at 7:30") never actually trigger at th
 3. Change `sendSystemEvent` for fired reminders to `requireResponse: true` so the agent actually responds/acts.
 4. Add `cancel_reminder` tool in `agent_service.dart` (LLM tools + both dispatch switches) and `whisper_realtime_service.dart`. Uses `updateReminderStatus(id, 'cancelled')` in the DB.
 
-### Phase 2 (current)
+### Phase 2
 
 5. **Strip UTC suffix in `_handleCreateReminder`**: Before `DateTime.parse`, strip trailing `Z`/`z` so the time is interpreted as local. Ensures `07:58` means 7:58 AM local, not 7:58 AM UTC.
 6. **Fire past-due reminders in `onReminderCreatedOrChanged`**: After refreshing the cache, call `getPendingReminders()` and fire any already-due reminders before scheduling upcoming timers.
 7. **Add `debugPrint` in `_fireReminder`, `_checkReminders`, and `onReminderCreatedOrChanged`** so the fire path is visible in logs.
 8. **Await `_fireReminder` calls** in `_checkReminders` to avoid fire-and-forget races.
+
+### Phase 3 (current)
+
+9. **`start()` silent failure**: The `..start()` cascade in `ChangeNotifierProxyProvider` discards the returned `Future`, so any exception during `start()` (e.g. from DB or config loading) silently kills the service with zero log output. This explains why no `[ManagerPresence]` logs appeared at all — the service never finished initializing.
+10. **Fix: Initialize timer before async work**: Restructured `start()` so `_reminderCheckTimer` is created *before* any `await` calls. Even if config/DB loading fails, the periodic check still runs.
+11. **Fix: try-catch everywhere**: Wrapped `start()`, `_checkReminders()`, `onReminderCreatedOrChanged()`, and `_fireReminder()` in try-catch blocks with `debugPrint` so failures are always logged and never silently swallowed.
 
 ## Files
 
