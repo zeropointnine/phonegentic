@@ -585,18 +585,38 @@ class WhisperRealtimeService {
         'type': 'function',
         'name': 'set_agent_voice',
         'description':
-            'Change the agent\'s speaking voice mid-call. Use a voice_id '
-                'returned by stop_and_clone_voice or any ElevenLabs voice ID. '
-                'All subsequent agent speech will use this voice.',
+            'Change the agent\'s speaking voice mid-call. Provide either a '
+                'voice_id (from list_voices or stop_and_clone_voice) or a '
+                'voice_name to search by name. All subsequent agent speech '
+                'will use this voice.',
         'parameters': {
           'type': 'object',
           'properties': {
             'voice_id': {
               'type': 'string',
-              'description': 'The ElevenLabs voice ID to switch to.',
+              'description':
+                  'The ElevenLabs voice ID to switch to. Takes priority over voice_name.',
+            },
+            'voice_name': {
+              'type': 'string',
+              'description':
+                  'The name of the voice to switch to (case-insensitive). '
+                      'Use this when you know the voice name from list_voices.',
             },
           },
-          'required': ['voice_id'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'list_voices',
+        'description':
+            'List all available ElevenLabs voices the agent can switch to. '
+                'Returns voice names, IDs, and categories. Use this when asked '
+                'to change voice or show available voices, BEFORE calling '
+                'set_agent_voice.',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
         },
       },
       {

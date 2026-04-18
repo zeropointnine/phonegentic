@@ -1207,11 +1207,17 @@ class AgentService extends ChangeNotifier {
           '\nThe current inbound caller is the designated **Agent Manager** '
           '(phone: $managerPhone) — '
           'they have the same authority as the host. Treat their requests '
-          'exactly as you would the host\'s: obey direct commands, read '
-          'emails on request, change settings, assign job functions, add '
-          'numbers to call flows, and perform any other privileged operation '
-          'they ask for. Do NOT refuse or apply inbound-caller restrictions '
-          'to this person.'
+          'exactly as you would the host\'s.'
+          '\n\nThe manager has UNRESTRICTED access to every tool and action '
+          'you can perform — no exceptions. This includes but is not limited '
+          'to: sending texts, making calls, reading emails, searching '
+          'contacts, listing and changing voices, cloning voices, creating '
+          'transfer rules, managing reminders, looking up flights, managing '
+          'calendars, running Google searches, and any other tool available '
+          'to you. If the manager asks you to do something and you have a '
+          'tool for it, execute it immediately. NEVER refuse a manager '
+          'request or say you cannot do something — if the tool exists, use it.'
+          '\n\nDo NOT apply inbound-caller restrictions to this person.'
           '\n\nWhen the agent manager says "me", "I", or "my" in requests '
           'like "send me a text", "text me", or "call me", they are '
           'referring to THEMSELVES at $managerPhone. Use that number as the '
@@ -2199,6 +2205,11 @@ class AgentService extends ChangeNotifier {
     for (final event in batch) {
       final text = event.text.trim();
       if (text.isEmpty) continue;
+      final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+      if (words.length < 2) {
+        debugPrint('[AgentService] Buffered single-word dropped: "$text"');
+        continue;
+      }
       if (_isEchoOfAgentResponse(text)) {
         debugPrint('[AgentService] Buffered echo discarded: "$text"');
         continue;
@@ -2602,10 +2613,27 @@ class AgentService extends ChangeNotifier {
     _appendStreamingResponse(event);
   }
 
+  static final _hallucinatedCallStateRe =
+      RegExp(r'\[CALL_STATE:\s*[^\]]*\]', caseSensitive: false);
+
   /// Shared handler for streaming agent responses from either OpenAI
   /// Realtime or the external text agent (Claude, etc.).
   void _appendStreamingResponse(ResponseTextEvent event) {
     if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) return;
+
+    // The LLM must never generate [CALL_STATE: ...] tags — those are
+    // system-only. Strip them to prevent hallucinated state changes from
+    // poisoning the conversation history.
+    if (event.isFinal && _hallucinatedCallStateRe.hasMatch(event.text)) {
+      final cleaned = event.text.replaceAll(_hallucinatedCallStateRe, '').trim();
+      debugPrint('[AgentService] Stripped hallucinated CALL_STATE from LLM output');
+      if (cleaned.isEmpty) {
+        debugPrint('[AgentService] Entire response was hallucinated CALL_STATE — discarding');
+        return;
+      }
+      _appendStreamingResponse(ResponseTextEvent(text: cleaned, isFinal: true));
+      return;
+    }
 
     // Pre-greeting: buffer the response during settling instead of the
     // normal display/TTS path. Flushed on promotion to connected.
@@ -2883,6 +2911,9 @@ class AgentService extends ChangeNotifier {
         case 'set_agent_voice':
           result = await _handleSetAgentVoice(args);
           break;
+        case 'list_voices':
+          result = await _handleListVoices();
+          break;
         case 'lookup_flight':
           result = await _handleLookupFlight(args);
           break;
@@ -3017,6 +3048,9 @@ class AgentService extends ChangeNotifier {
           break;
         case 'set_agent_voice':
           result = await _handleSetAgentVoice(req.arguments);
+          break;
+        case 'list_voices':
+          result = await _handleListVoices();
           break;
         case 'lookup_flight':
           result = await _handleLookupFlight(req.arguments);
@@ -4266,9 +4300,44 @@ class AgentService extends ChangeNotifier {
   }
 
   Future<String> _handleSetAgentVoice(Map<String, dynamic> args) async {
-    final voiceId = args['voice_id'] as String?;
+    var voiceId = args['voice_id'] as String?;
+    final voiceName = args['voice_name'] as String?;
+
+    if ((voiceId == null || voiceId.isEmpty) &&
+        (voiceName != null && voiceName.isNotEmpty)) {
+      final apiKey = _ttsConfig?.elevenLabsApiKey ?? '';
+      if (apiKey.isEmpty) {
+        return 'ElevenLabs API key is not configured. Cannot look up voice by name.';
+      }
+      try {
+        final voices = await ElevenLabsApiService.listVoices(apiKey);
+        final nameLower = voiceName.toLowerCase();
+        final match = voices.cast<ElevenLabsVoice?>().firstWhere(
+              (v) => v!.name.toLowerCase() == nameLower,
+              orElse: () => null,
+            );
+        if (match == null) {
+          final partial = voices.cast<ElevenLabsVoice?>().firstWhere(
+                (v) => v!.name.toLowerCase().contains(nameLower),
+                orElse: () => null,
+              );
+          if (partial == null) {
+            return 'No voice found matching "$voiceName". '
+                'Use list_voices to see available options.';
+          }
+          voiceId = partial.voiceId;
+          debugPrint('[AgentService] Resolved voice name "$voiceName" → '
+              '${partial.name} (${partial.voiceId})');
+        } else {
+          voiceId = match.voiceId;
+        }
+      } catch (e) {
+        return 'Failed to look up voice by name: $e';
+      }
+    }
+
     if (voiceId == null || voiceId.isEmpty) {
-      return 'No voice_id provided.';
+      return 'Provide either voice_id or voice_name.';
     }
 
     if (_tts != null) {
@@ -4284,6 +4353,35 @@ class AgentService extends ChangeNotifier {
     debugPrint('[AgentService] Agent voice swapped to: $voiceId');
     return 'Voice updated. You are now speaking with voice_id=$voiceId. '
         'All subsequent speech will use this voice.';
+  }
+
+  Future<String> _handleListVoices() async {
+    final apiKey = _ttsConfig?.elevenLabsApiKey ?? '';
+    if (apiKey.isEmpty) {
+      return 'ElevenLabs API key is not configured. '
+          'Cannot list voices.';
+    }
+
+    try {
+      final voices = await ElevenLabsApiService.listVoices(apiKey);
+      if (voices.isEmpty) {
+        return 'No voices found on this ElevenLabs account.';
+      }
+
+      final currentVoiceId =
+          _bootContext.elevenLabsVoiceId ?? _ttsConfig?.elevenLabsVoiceId ?? '';
+
+      final buf = StringBuffer('Available voices (${voices.length}):\n');
+      for (final v in voices) {
+        final active = v.voiceId == currentVoiceId ? ' [ACTIVE]' : '';
+        buf.writeln('- ${v.name} (${v.category}) id=${v.voiceId}$active');
+      }
+      buf.writeln('\nUse set_agent_voice with voice_name or voice_id to switch.');
+      return buf.toString();
+    } catch (e) {
+      debugPrint('[AgentService] list_voices failed: $e');
+      return 'Failed to list voices: $e';
+    }
   }
 
   // ---------------------------------------------------------------------------

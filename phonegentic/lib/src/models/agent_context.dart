@@ -331,6 +331,12 @@ class AgentBootContext {
     buf.writeln(
         '- NEVER read these aloud, repeat them, or verbally acknowledge them.');
     buf.writeln(
+        '- NEVER generate [CALL_STATE: ...] tags yourself. These are SYSTEM-ONLY '
+        'messages. You must not output text like "[CALL_STATE: Ended]" or any '
+        'variation. If a caller says "bye", "goodbye", or "hang up", respond '
+        'naturally but do NOT assume the call has ended. The call is ONLY over '
+        'when the SYSTEM sends [CALL_STATE: Ended] — not when someone says "bye".');
+    buf.writeln(
         '- When there is NO active call (Idle), you may respond conversationally to the host. Answer questions, take instructions, execute tool calls, and confirm briefly.');
     buf.writeln(
         '- The INSTANT a call begins (Initiating, Ringing, Connecting, Answered, Settling): produce ZERO output. No confirmation, no plan, no narration. Execute any pending tool calls silently and wait.');
