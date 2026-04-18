@@ -556,19 +556,12 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = AppColors.accent;
     final bubbleColor = _isOutbound
-        ? AppColors.accent
-        : AppColors.surface;
-    final textColor = _isOutbound
-        ? AppColors.onAccent
-        : AppColors.textPrimary;
+        ? accent.withValues(alpha: 0.08)
+        : AppColors.card;
+    final textColor = AppColors.textPrimary;
     final align = _isOutbound ? CrossAxisAlignment.end : CrossAxisAlignment.start;
-    final borderRadius = BorderRadius.only(
-      topLeft: const Radius.circular(18),
-      topRight: const Radius.circular(18),
-      bottomLeft: Radius.circular(_isOutbound || !showTail ? 18 : 4),
-      bottomRight: Radius.circular(!_isOutbound || !showTail ? 18 : 4),
-    );
 
     const double avatarSize = 26;
     const double avatarGap = 6;
@@ -624,25 +617,29 @@ class _MessageBubble extends StatelessWidget {
               margin: EdgeInsets.only(
                 right: _isOutbound ? 0 : 60,
               ),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: bubbleColor,
-                borderRadius: borderRadius,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
+              child: CustomPaint(
+                painter: _SpeechBubblePainter(
+                  borderColor: _isOutbound
+                      ? AppColors.accent.withValues(alpha: 0.35)
+                      : AppColors.accent.withValues(alpha: 0.25),
+                  fillColor: bubbleColor,
+                  tailOnLeft: !_isOutbound,
+                  showTail: showTail,
+                  cornerRadius: 18,
+                  tailWidth: 8,
+                  tailHeight: 6,
+                ),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                      14, 10, 14, showTail ? 16 : 10),
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: textColor,
+                      height: 1.35,
+                    ),
                   ),
-                ],
-              ),
-              child: Text(
-                message.text,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: textColor,
-                  height: 1.35,
                 ),
               ),
             ),
@@ -826,4 +823,91 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+// =============================================================================
+// Speech-bubble outline painter
+// =============================================================================
+
+class _SpeechBubblePainter extends CustomPainter {
+  final Color borderColor;
+  final Color fillColor;
+  final bool tailOnLeft;
+  final bool showTail;
+  final double cornerRadius;
+  final double tailWidth;
+  final double tailHeight;
+
+  _SpeechBubblePainter({
+    required this.borderColor,
+    required this.fillColor,
+    required this.tailOnLeft,
+    this.showTail = true,
+    this.cornerRadius = 18,
+    this.tailWidth = 8,
+    this.tailHeight = 6,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final r = cornerRadius;
+    final bodyH = showTail ? h - tailHeight : h;
+
+    final path = Path();
+
+    path.moveTo(r, 0);
+    path.lineTo(w - r, 0);
+    path.arcToPoint(Offset(w, r),
+        radius: Radius.circular(r), clockwise: true);
+    path.lineTo(w, bodyH - r);
+    path.arcToPoint(Offset(w - r, bodyH),
+        radius: Radius.circular(r), clockwise: true);
+
+    if (showTail && tailOnLeft) {
+      path.lineTo(r + tailWidth + 4, bodyH);
+      path.lineTo(r + 2, bodyH + tailHeight);
+      path.lineTo(r + 4, bodyH);
+      path.lineTo(r, bodyH);
+      path.arcToPoint(Offset(0, bodyH - r),
+          radius: Radius.circular(r), clockwise: true);
+    } else if (showTail && !tailOnLeft) {
+      path.lineTo(w - r - 4, bodyH);
+      path.lineTo(w - r - 2, bodyH + tailHeight);
+      path.lineTo(w - r - tailWidth - 4, bodyH);
+      path.lineTo(r, bodyH);
+      path.arcToPoint(Offset(0, bodyH - r),
+          radius: Radius.circular(r), clockwise: true);
+    } else {
+      path.lineTo(r, bodyH);
+      path.arcToPoint(Offset(0, bodyH - r),
+          radius: Radius.circular(r), clockwise: true);
+    }
+
+    path.lineTo(0, r);
+    path.arcToPoint(Offset(r, 0),
+        radius: Radius.circular(r), clockwise: true);
+    path.close();
+
+    canvas.drawPath(
+        path,
+        Paint()
+          ..color = fillColor
+          ..style = PaintingStyle.fill);
+
+    canvas.drawPath(
+        path,
+        Paint()
+          ..color = borderColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0);
+  }
+
+  @override
+  bool shouldRepaint(_SpeechBubblePainter old) =>
+      old.borderColor != borderColor ||
+      old.fillColor != fillColor ||
+      old.tailOnLeft != tailOnLeft ||
+      old.showTail != showTail;
 }

@@ -438,7 +438,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _enteredCallMode = true;
     try {
       await _tapChannel.invokeMethod('enterCallMode');
-      await _tapChannel.invokeMethod('setRemoteGain', {'gain': 1.5});
+      await _tapChannel.invokeMethod('setRemoteGain', {'gain': 1.19});
       await _tapChannel
           .invokeMethod('setCompressorStrength', {'strength': 0.6});
       debugPrint(
