@@ -132,7 +132,234 @@ class SettingsPortService {
   }
 
   // ---------------------------------------------------------------------------
-  // Import
+  // Export all (full backup)
+  // ---------------------------------------------------------------------------
+
+  static Future<File?> exportAll(
+    ExportFormat format,
+    BuildContext context,
+  ) async {
+    final timestamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .split('.')
+        .first;
+    final baseName = 'phonegentic_all_settings_$timestamp';
+
+    final downloadsDir = await getDownloadsDirectory();
+    if (downloadsDir == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not access Downloads folder'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return null;
+    }
+
+    // Gather all sections into individual JSON files
+    final archive = Archive();
+    for (final section in SettingsSection.values) {
+      final data = await _gatherData(section);
+      final envelope = {
+        'app': 'phonegentic',
+        'version': 1,
+        'section': section.label,
+        'exported_at': DateTime.now().toUtc().toIso8601String(),
+        'data': data,
+      };
+      final jsonBytes = utf8
+          .encode(const JsonEncoder.withIndent('  ').convert(envelope));
+      archive.addFile(ArchiveFile(
+        '${section.label}.json',
+        jsonBytes.length,
+        Uint8List.fromList(jsonBytes),
+      ));
+    }
+
+    File outputFile;
+    switch (format) {
+      case ExportFormat.json:
+      case ExportFormat.zip:
+        final encoded = ZipEncoder().encode(archive);
+        outputFile = File('${downloadsDir.path}/$baseName.zip');
+        await outputFile.writeAsBytes(encoded);
+        break;
+      case ExportFormat.tar:
+        final tarBytes = TarEncoder().encode(archive);
+        final gzBytes = GZipEncoder().encode(tarBytes);
+        outputFile = File('${downloadsDir.path}/$baseName.tar.gz');
+        await outputFile.writeAsBytes(gzBytes);
+        break;
+    }
+
+    await Process.run('open', [downloadsDir.path]);
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Exported all settings to Downloads'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+    return outputFile;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import all (full restore)
+  // ---------------------------------------------------------------------------
+
+  static Future<bool> importAll(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip', 'gz', 'tar'],
+    );
+    if (result == null ||
+        result.files.isEmpty ||
+        result.files.first.path == null) {
+      return false;
+    }
+
+    final file = File(result.files.first.path!);
+    final bytes = await file.readAsBytes();
+
+    Archive? arch;
+    try {
+      if (file.path.endsWith('.zip')) {
+        arch = ZipDecoder().decodeBytes(bytes);
+      } else if (file.path.endsWith('.tar.gz') || file.path.endsWith('.gz')) {
+        arch = TarDecoder().decodeBytes(GZipDecoder().decodeBytes(bytes));
+      } else if (file.path.endsWith('.tar')) {
+        arch = TarDecoder().decodeBytes(bytes);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to read archive: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return false;
+    }
+
+    if (arch == null || arch.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Archive is empty or unreadable'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return false;
+    }
+
+    // Parse each JSON inside the archive
+    final sectionData = <String, Map<String, dynamic>>{};
+    for (final entry in arch) {
+      if (!entry.name.endsWith('.json')) continue;
+      try {
+        final envelope =
+            jsonDecode(utf8.decode(entry.content as List<int>))
+                as Map<String, dynamic>;
+        if (envelope['app'] != 'phonegentic') continue;
+        final section = envelope['section'] as String?;
+        if (section != null) {
+          sectionData[section] = envelope['data'] as Map<String, dynamic>;
+        }
+      } catch (_) {
+        // skip malformed entries
+      }
+    }
+
+    if (sectionData.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No valid settings found in archive'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return false;
+    }
+
+    final sectionNames =
+        sectionData.keys.map((k) {
+          final match = SettingsSection.values.where((s) => s.label == k);
+          return match.isNotEmpty ? match.first.displayName : k;
+        }).join(', ');
+
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Import All Settings?'),
+            content: Text(
+              'This will replace the following with imported values:\n\n'
+              '$sectionNames\n\n'
+              'Contacts and call history are not affected. '
+              'This cannot be undone.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Import'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return false;
+
+    // Apply in dependency order: job functions before inbound workflows
+    const applyOrder = [
+      'sip_settings',
+      'agent_settings',
+      'job_functions',
+      'inbound_workflows',
+    ];
+
+    try {
+      for (final key in applyOrder) {
+        if (!sectionData.containsKey(key)) continue;
+        final section =
+            SettingsSection.values.firstWhere((s) => s.label == key);
+        await _applyData(section, sectionData[key]!);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return false;
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All settings imported successfully'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Import (single section)
   // ---------------------------------------------------------------------------
 
   static Future<bool> importSection(

@@ -562,6 +562,14 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   const SizedBox(height: 16),
                   _buildDemoModeCard(),
                   const SizedBox(height: 24),
+                  FullBackupExportImportCard(
+                    onImported: () {
+                      _load();
+                      context.read<JobFunctionService>().restoreLastUsed();
+                      context.read<InboundCallFlowService>().loadAll();
+                    },
+                  ),
+                  const SizedBox(height: 16),
                   SettingsExportImportCard(
                     section: SettingsSection.jobFunctions,
                     onImported: () {

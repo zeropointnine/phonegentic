@@ -42,9 +42,15 @@ the user, then replaces the current settings for that section. Inbound workflow
 rules remap `job_function_id` by matching on job function title, so the
 recommended import order is Job Functions first, then Inbound Workflows.
 
-**UI** -- a reusable `SettingsExportImportCard` widget is placed at the bottom
-of each settings panel (Phone tab, Agent tab, User tab). It contains the format
-toggle and Export/Import buttons.
+**Full Backup** -- a `FullBackupExportImportCard` on the User tab exports all
+four sections into a single ZIP or TAR archive (one JSON per section inside).
+Import reads the archive and applies all sections in dependency order (job
+functions before inbound workflows). The confirmation dialog explicitly notes
+that contacts and call history are not included.
+
+**Per-section UI** -- a reusable `SettingsExportImportCard` widget is placed at
+the bottom of each settings panel (Phone tab, Agent tab, User tab). It contains
+the format toggle and Export/Import buttons.
 
 ## Files
 
