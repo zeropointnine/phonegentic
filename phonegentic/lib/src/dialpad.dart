@@ -238,6 +238,14 @@ class _MyDialPadWidget extends State<DialPadWidget>
       return false;
     }
 
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        _dropdownOpen &&
+        _highlightedIndex >= 0 &&
+        _highlightedIndex < _autocompleteMatches.length) {
+      _onAutocompleteSelect(_autocompleteMatches[_highlightedIndex]);
+      return true;
+    }
+
     final String? character = event.character;
     if (character == null || character.isEmpty) return false;
 
