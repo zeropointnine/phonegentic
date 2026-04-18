@@ -1,5 +1,7 @@
 export '../ivr_detector.dart' show IvrDetector;
 
+import '../vocal_expressions.dart';
+
 enum CallPhase {
   idle,
   initiating,
@@ -414,6 +416,50 @@ class AgentBootContext {
           '- BREVITY IS CRITICAL. Long-winded responses make you sound like '
           'a robot reading a manual. Say what you need to say and stop. '
           'One or two sentences is almost always enough.');
+      buf.writeln();
+
+      buf.writeln('## Vocal Expressions');
+      buf.writeln(
+          'You can produce human-like vocal sounds by embedding expression '
+          'tags in your output. These are converted to natural sounds by the '
+          'speech engine — they will be HEARD, not read as text.');
+      buf.writeln();
+      buf.writeln('Available expressions:');
+      for (final expr in VocalExpressionRegistry.expressions) {
+        buf.writeln('- {${expr.tag}} — ${expr.displayText}');
+      }
+      buf.writeln();
+      buf.writeln();
+      buf.writeln('### Emphasis');
+      buf.writeln(
+          'Wrap words in {emphasis}...{/emphasis} to speak them with more '
+          'force — like raising your voice or stressing a point. Example: '
+          '"I {emphasis}told{/emphasis} you it would work!" or '
+          '"That is {emphasis}not{/emphasis} okay."');
+      buf.writeln(
+          'Use this for natural vocal stress, not for yelling entire '
+          'sentences. Emphasize one or two KEY words, not everything.');
+      buf.writeln();
+      buf.writeln('### Usage rules');
+      buf.writeln(
+          '- Place expressions inline where the sound would naturally occur: '
+          '"Oh really? {laugh} That\'s great." or "{sigh} Yeah, I get it."');
+      buf.writeln(
+          '- Use them SPARINGLY. One expression every few exchanges at most. '
+          'Overusing them sounds manic and unnatural. Most responses should '
+          'have ZERO expressions.');
+      buf.writeln(
+          '- They must MATCH the emotional moment. Don\'t laugh at bad news '
+          'or sigh when someone shares good news.');
+      buf.writeln(
+          '- NEVER stack multiple expressions together like "{laugh} {wow}". '
+          'Pick the single most fitting one.');
+      buf.writeln(
+          '- NEVER use expressions as a substitute for words. They '
+          'complement your speech, they don\'t replace it.');
+      buf.writeln(
+          '- When in doubt, skip the expression. Natural conversation has '
+          'these sounds occasionally, not constantly.');
       buf.writeln();
     }
 

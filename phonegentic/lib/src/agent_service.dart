@@ -39,6 +39,7 @@ import 'kokoro_tts_service.dart';
 import 'on_device_config.dart';
 import 'llm/llm_interfaces.dart';
 import 'text_agent_service.dart';
+import 'vocal_expressions.dart';
 import 'whisper_realtime_service.dart';
 import 'whisperkit_stt_service.dart';
 
@@ -248,6 +249,7 @@ class AgentService extends ChangeNotifier {
 
   String? _streamingMessageId;
   int _ttsBracketDepth = 0;
+  StreamingExpressionState _vocalExprState = StreamingExpressionState();
 
   /// When TTS is active, hold agent bubble text until the first PCM plays so
   /// the UI does not run ahead of speech. Raw model deltas accumulate here.
@@ -2503,16 +2505,20 @@ class AgentService extends ChangeNotifier {
 
     if (event.isFinal) {
       if (!_ttsMuted && !_muted) _activeTtsEndGeneration();
+      _vocalExprState = StreamingExpressionState();
 
       if (_streamingMessageId != null) {
         final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
         if (idx >= 0) {
-          // Determine the canonical final text.
-          final finalText = event.text.isNotEmpty
+          // Determine the canonical final text (expression tags stripped).
+          final rawFinal = event.text.isNotEmpty
               ? event.text
               : (_voiceUiBuffer != null && _voiceUiBuffer!.isNotEmpty
                   ? _voiceUiBuffer.toString()
                   : _messages[idx].text);
+          final finalText = event.text.isNotEmpty
+              ? VocalExpressionRegistry.stripForDisplay(rawFinal)
+              : rawFinal;
 
           if (_isDuplicateAgentMessage(finalText)) {
             debugPrint('[AgentService] Streaming duplicate suppressed');
@@ -2576,41 +2582,52 @@ class AgentService extends ChangeNotifier {
     final deferAgentTextForTts =
         _splitPipeline && !_isLocalSttMode && _hasTts && ttsActive && !suppressTts;
 
-    // Pipe text delta to TTS (ElevenLabs or Kokoro), stripping bracketed
-    // stage directions. Skip when muted to avoid burning TTS credits/compute.
+    // Process vocal expressions and pipe text to TTS (ElevenLabs or Kokoro),
+    // stripping bracketed stage directions. Skip when muted to avoid burning
+    // TTS credits/compute.
+    if (_streamingMessageId == null) {
+      _vocalExprState = StreamingExpressionState();
+    }
+    final exprResult = VocalExpressionRegistry.processDelta(
+      event.text, _vocalExprState);
+    _vocalExprState = exprResult.state;
+
     if (_hasTts && ttsActive && event.text.isNotEmpty && !suppressTts) {
       if (_streamingMessageId == null) {
         _ttsBracketDepth = 0;
         _activeTtsStartGeneration();
       }
       final ttsText = _flattenMarkdownForTtsDelta(
-        _stripBracketsForTts(event.text),
+        _stripBracketsForTts(exprResult.ttsText),
       );
       if (ttsText.trim().isNotEmpty) {
         _activeTtsSendText(ttsText);
       }
     }
 
+    // Use display text (expression tags stripped) for the chat UI.
+    final displayDelta = exprResult.displayText;
+
     if (_streamingMessageId != null) {
       final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
       if (idx >= 0) {
         if (deferAgentTextForTts && _voiceHoldUntilFirstPcm) {
           _voiceUiBuffer ??= StringBuffer();
-          _voiceUiBuffer!.write(event.text);
+          _voiceUiBuffer!.write(displayDelta);
         } else {
-          _messages[idx].text += event.text;
+          _messages[idx].text += displayDelta;
         }
         notifyListeners();
         return;
       }
     }
 
-    final initialText = deferAgentTextForTts ? '' : event.text;
+    final initialText = deferAgentTextForTts ? '' : displayDelta;
     final msg = ChatMessage.agent(initialText, isStreaming: true);
     _streamingMessageId = msg.id;
     if (deferAgentTextForTts) {
       _voiceHoldUntilFirstPcm = true;
-      _voiceUiBuffer = StringBuffer(event.text);
+      _voiceUiBuffer = StringBuffer(displayDelta);
     } else {
       _resetVoiceUiSyncState();
     }
@@ -2940,6 +2957,16 @@ class AgentService extends ChangeNotifier {
   static const _smsRateWindowSeconds = 60;
   static const _smsRateMaxPerWindow = 2;
 
+  /// Dedup: last successfully sent message per number → (text, timestamp).
+  final Map<String, ({String text, DateTime sentAt})> _smsLastSent = {};
+  static const _smsDedupWindowSeconds = 30;
+
+  /// Consecutive rate-limit hits per number. Reset on successful send or
+  /// when a different number is targeted. Used to force-cancel the LLM
+  /// response after repeated failed attempts.
+  final Map<String, int> _smsConsecutiveRateLimits = {};
+  static const _smsMaxConsecutiveRateLimits = 2;
+
   bool _isSmsRateLimited(String normalizedTo) {
     final now = DateTime.now();
     final cutoff = now.subtract(const Duration(seconds: _smsRateWindowSeconds));
@@ -2949,8 +2976,32 @@ class AgentService extends ChangeNotifier {
     return log.length >= _smsRateMaxPerWindow;
   }
 
-  void _recordSmsSend(String normalizedTo) {
+  bool _isSmsDuplicate(String normalizedTo, String text) {
+    final last = _smsLastSent[normalizedTo];
+    if (last == null) return false;
+    final age = DateTime.now().difference(last.sentAt).inSeconds;
+    return age < _smsDedupWindowSeconds && last.text == text;
+  }
+
+  void _recordSmsSend(String normalizedTo, String text) {
     _smsSendLog.putIfAbsent(normalizedTo, () => []).add(DateTime.now());
+    _smsLastSent[normalizedTo] = (text: text, sentAt: DateTime.now());
+    _smsConsecutiveRateLimits.remove(normalizedTo);
+  }
+
+  String _handleSmsRateLimit(String normalizedTo, String displayTo) {
+    final count = (_smsConsecutiveRateLimits[normalizedTo] ?? 0) + 1;
+    _smsConsecutiveRateLimits[normalizedTo] = count;
+    debugPrint('[AgentService] SMS rate-limited to $normalizedTo '
+        '(consecutive: $count)');
+    if (count >= _smsMaxConsecutiveRateLimits) {
+      _textAgent?.cancelCurrentResponse();
+      debugPrint('[AgentService] Force-cancelled LLM response after '
+          '$count consecutive SMS rate limits to $normalizedTo');
+    }
+    return 'Rate limited: you already sent $_smsRateMaxPerWindow messages to '
+        'this number in the last $_smsRateWindowSeconds seconds. '
+        'STOP sending and wait for their reply.';
   }
 
   Future<String> _handleSendSms(Map<String, dynamic> args) async {
@@ -2963,11 +3014,17 @@ class AgentService extends ChangeNotifier {
       return 'Both "to" and "text" are required.';
     }
     final normalizedTo = ensureE164(to);
+    final displayTo = (demoModeService?.enabled ?? false)
+        ? demoModeService!.maskPhone(to)
+        : to;
     if (_isSmsRateLimited(normalizedTo)) {
-      debugPrint('[AgentService] SMS rate-limited to $normalizedTo');
-      return 'Rate limited: you already sent $_smsRateMaxPerWindow messages to '
-          'this number in the last $_smsRateWindowSeconds seconds. '
-          'STOP sending and wait for their reply.';
+      return _handleSmsRateLimit(normalizedTo, displayTo);
+    }
+    if (_isSmsDuplicate(normalizedTo, text)) {
+      debugPrint('[AgentService] SMS dedup — suppressed duplicate to '
+          '$normalizedTo: "$text"');
+      return 'Message sent from the manager\'s phone to $displayTo. Do NOT '
+          'send another message to this number — wait for their reply.';
     }
     final mediaUrl = args['media_url'] as String?;
     final mediaUrls =
@@ -2975,10 +3032,7 @@ class AgentService extends ChangeNotifier {
     final msg = await messagingService!
         .sendMessage(to: to, text: text, mediaUrls: mediaUrls);
     if (msg != null) {
-      _recordSmsSend(normalizedTo);
-      final displayTo = (demoModeService?.enabled ?? false)
-          ? demoModeService!.maskPhone(to)
-          : to;
+      _recordSmsSend(normalizedTo, text);
       String? contactName;
       if (contactService != null) {
         final contact = contactService!.lookupByPhone(to);
@@ -3010,18 +3064,21 @@ class AgentService extends ChangeNotifier {
     if (selected == null) {
       return 'No conversation selected. Use send_sms with a phone number instead.';
     }
+    final displayTo = (demoModeService?.enabled ?? false)
+        ? demoModeService!.maskPhone(selected)
+        : selected;
     if (_isSmsRateLimited(selected)) {
-      debugPrint('[AgentService] SMS reply rate-limited to $selected');
-      return 'Rate limited: you already sent $_smsRateMaxPerWindow messages to '
-          'this number in the last $_smsRateWindowSeconds seconds. '
-          'STOP sending and wait for their reply.';
+      return _handleSmsRateLimit(selected, displayTo);
+    }
+    if (_isSmsDuplicate(selected, text)) {
+      debugPrint('[AgentService] SMS reply dedup — suppressed duplicate to '
+          '$selected: "$text"');
+      return 'Reply sent from the manager\'s phone to $displayTo. Do NOT '
+          'send another message — wait for their reply.';
     }
     final msg = await messagingService!.reply(text);
     if (msg != null) {
-      _recordSmsSend(selected);
-      final displayTo = (demoModeService?.enabled ?? false)
-          ? demoModeService!.maskPhone(selected)
-          : selected;
+      _recordSmsSend(selected, text);
       String? contactName;
       if (contactService != null) {
         final contact = contactService!.lookupByPhone(selected);
@@ -4831,13 +4888,15 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    _recentAgentTexts.add(text);
+    final displayText = VocalExpressionRegistry.stripForDisplay(text);
+
+    _recentAgentTexts.add(displayText);
     while (_recentAgentTexts.length > _maxRecentAgentTexts) {
       _recentAgentTexts.removeAt(0);
     }
-    callHistory?.addTranscript(role: 'agent', text: text);
+    callHistory?.addTranscript(role: 'agent', text: displayText);
 
-    final msg = ChatMessage.agent(text);
+    final msg = ChatMessage.agent(displayText);
     _messages.add(msg);
     notifyListeners();
 
@@ -4845,7 +4904,7 @@ class AgentService extends ChangeNotifier {
       _ttsBracketDepth = 0;
       _activeTtsStartGeneration();
       final ttsText = _flattenMarkdownForTtsDelta(
-        _stripBracketsForTts(text),
+        _stripBracketsForTts(VocalExpressionRegistry.processForTts(text)),
       ).trim();
       if (ttsText.isNotEmpty) {
         _activeTtsSendText(ttsText);
