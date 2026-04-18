@@ -4,11 +4,15 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:provider/provider.dart';
+import 'package:sip_ua/sip_ua.dart';
 
+import '../contact_service.dart';
 import '../demo_mode_service.dart';
 import '../messaging/messaging_service.dart';
 import '../messaging/models/sms_message.dart';
+import '../messaging/phone_numbers.dart';
 import '../theme_provider.dart';
 import 'dialpad_contact_preview.dart';
 import 'emoji_picker.dart';
@@ -171,7 +175,7 @@ class _ConversationViewState extends State<ConversationView> {
             size: 34,
           ),
           const SizedBox(width: 8),
-          Expanded(
+          Flexible(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -194,6 +198,39 @@ class _ConversationViewState extends State<ConversationView> {
               ],
             ),
           ),
+          const SizedBox(width: 8),
+          HoverButton(
+            onTap: () => _dialRemote(rawPhone),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.4),
+                    width: 0.5),
+              ),
+              child: Icon(Icons.phone_rounded,
+                  size: 15, color: AppColors.accent),
+            ),
+          ),
+          const SizedBox(width: 6),
+          HoverButton(
+            onTap: () => _openContact(rawPhone),
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.4),
+                    width: 0.5),
+              ),
+              child: Icon(Icons.person_rounded,
+                  size: 15, color: AppColors.textSecondary),
+            ),
+          ),
+          const Spacer(),
           HoverButton(
             onTap: () => messaging.close(),
             child: Padding(
@@ -205,6 +242,26 @@ class _ConversationViewState extends State<ConversationView> {
         ],
       ),
     );
+  }
+
+  void _dialRemote(String rawPhone) async {
+    if (rawPhone.isEmpty) return;
+    context.read<MessagingService>().close();
+    try {
+      final helper = context.read<SIPUAHelper>();
+      final stream = await navigator.mediaDevices
+          .getUserMedia(<String, dynamic>{'audio': true, 'video': false});
+      helper.call(ensureE164(rawPhone),
+          voiceOnly: true, mediaStream: stream);
+    } catch (e) {
+      debugPrint('[ConversationView] Call failed: $e');
+    }
+  }
+
+  void _openContact(String rawPhone) {
+    if (rawPhone.isEmpty) return;
+    context.read<MessagingService>().close();
+    context.read<ContactService>().openContactForPhone(rawPhone);
   }
 
   // ---------------------------------------------------------------------------
