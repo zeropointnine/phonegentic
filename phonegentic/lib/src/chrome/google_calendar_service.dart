@@ -71,6 +71,79 @@ class GoogleCalendarService extends ChangeNotifier {
 }
 ''';
 
+  // ── JS: scrape available calendars from sidebar ────────────────────
+
+  static const _listCalendarsJs = r'''
+() => {
+  const calendars = [];
+  const seen = new Set();
+  // Calendar list items have data-id (base64-encoded calendar email)
+  // and a checkbox with aria-label containing the calendar name
+  const items = document.querySelectorAll('div[data-id][jsname="o2uvtb"]');
+  for (const item of items) {
+    const b64 = item.getAttribute('data-id');
+    if (!b64 || seen.has(b64)) continue;
+    seen.add(b64);
+    let id = '';
+    try { id = atob(b64); } catch(e) { id = b64; }
+    // Name from checkbox aria-label or tooltip data-text
+    const checkbox = item.querySelector('input[aria-label]');
+    const tooltip = item.querySelector('[data-text]');
+    const name = (checkbox && checkbox.getAttribute('aria-label'))
+      || (tooltip && tooltip.getAttribute('data-text'))
+      || '';
+    if (name) calendars.push({ id, name });
+  }
+  return calendars;
+}
+''';
+
+  // ── JS: fill "Create new calendar" form and submit ─────────────────
+
+  static const _createCalendarJs = r'''
+(calendarName) => {
+  // The settings "Create new calendar" page has an input for the name
+  // and a "Create calendar" button.
+  const inputs = document.querySelectorAll('input[type="text"], input[aria-label]');
+  let nameInput = null;
+  for (const inp of inputs) {
+    const label = (inp.getAttribute('aria-label') || '').toLowerCase();
+    const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
+    if (label.includes('name') || ph.includes('name') || inp.id.includes('name')) {
+      nameInput = inp;
+      break;
+    }
+  }
+  // Fallback: first visible text input on the page
+  if (!nameInput) {
+    for (const inp of inputs) {
+      if (inp.offsetParent !== null) { nameInput = inp; break; }
+    }
+  }
+  if (!nameInput) {
+    return { success: false, error: 'Could not find calendar name input field.' };
+  }
+  // Set value via native setter to trigger React/Closure change detection
+  const nativeSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype, 'value').set;
+  nativeSetter.call(nameInput, calendarName);
+  nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+  nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+  // Find and click "Create calendar" button
+  const buttons = [...document.querySelectorAll('button, div[role="button"]')];
+  const createBtn = buttons.find(b =>
+    /create\s+calendar/i.test(b.textContent) ||
+    /create\s+calendar/i.test(b.getAttribute('aria-label') || '')
+  );
+  if (!createBtn) {
+    return { success: false, error: 'Could not find "Create calendar" button.' };
+  }
+  createBtn.click();
+  return { success: true, error: null };
+}
+''';
+
   // ── JS: confirm event creation page loaded ───────────────────────────
 
   static const _createEventJs = r'''
@@ -129,6 +202,83 @@ class GoogleCalendarService extends ChangeNotifier {
     return _connected ?? false;
   }
 
+  // ── List calendars ──────────────────────────────────────────────────
+
+  Future<List<Map<String, String>>> listCalendars() async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final now = DateTime.now();
+      final url =
+          'https://calendar.google.com/calendar/r/day/${now.year}/${now.month}/${now.day}';
+      _log.i('Listing calendars from: $url');
+
+      final raw = await _chrome.navigateAndEvaluate<List<dynamic>>(
+        url,
+        _listCalendarsJs,
+        renderDelay: const Duration(seconds: 5),
+      );
+
+      final calendars = raw
+          .whereType<Map>()
+          .map((m) => <String, String>{
+                'id': (m['id'] as String?) ?? '',
+                'name': (m['name'] as String?) ?? '',
+              })
+          .where((c) => c['id']!.isNotEmpty && c['name']!.isNotEmpty)
+          .toList();
+
+      _connected = true;
+      _error = calendars.isEmpty ? 'No calendars found in sidebar' : null;
+      _log.i('Found ${calendars.length} calendar(s)');
+      return calendars;
+    } catch (e, st) {
+      _log.e('Calendar list failed', error: e, stackTrace: st);
+      _error = 'List failed: ${e.toString().split('\n').first}';
+      return [];
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  // ── Create calendar ────────────────────────────────────────────────
+
+  Future<bool> createCalendar({required String name}) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      const url = 'https://calendar.google.com/calendar/r/settings/createcalendar';
+      _log.i('Creating new calendar "$name" at: $url');
+
+      final raw = await _chrome.navigateAndEvaluate(
+        url,
+        '($_createCalendarJs)(${_jsStringLiteral(name)})',
+        renderDelay: const Duration(seconds: 5),
+      );
+      final result = Map<String, dynamic>.from(raw as Map);
+
+      final success = result['success'] as bool? ?? false;
+      if (!success) {
+        _error = result['error'] as String? ?? 'Failed to create calendar';
+      }
+      _connected = true;
+      _log.i('Create calendar result: $result');
+      return success;
+    } catch (e, st) {
+      _log.e('Calendar creation failed', error: e, stackTrace: st);
+      _error = 'Create calendar failed: ${e.toString().split('\n').first}';
+      return false;
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
   // ── Create event ────────────────────────────────────────────────────
 
   Future<bool> createEvent({
@@ -138,6 +288,7 @@ class GoogleCalendarService extends ChangeNotifier {
     required String endTime,
     String? description,
     String? location,
+    String? calendarId,
   }) async {
     _loading = true;
     _error = null;
@@ -166,6 +317,9 @@ class GoogleCalendarService extends ChangeNotifier {
       }
       if (location != null && location.isNotEmpty) {
         params.add('location=${Uri.encodeComponent(location)}');
+      }
+      if (calendarId != null && calendarId.isNotEmpty) {
+        params.add('src=${Uri.encodeComponent(calendarId)}');
       }
 
       final url =
@@ -332,6 +486,15 @@ class GoogleCalendarService extends ChangeNotifier {
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────
+
+  static String _jsStringLiteral(String s) {
+    final escaped = s
+        .replaceAll(r'\', r'\\')
+        .replaceAll("'", r"\'")
+        .replaceAll('\n', r'\n')
+        .replaceAll('\r', r'\r');
+    return "'$escaped'";
+  }
 
   DateTime? _parseDateTime(String date, String time) {
     try {

@@ -1278,11 +1278,19 @@ class AgentService extends ChangeNotifier {
             : '';
     return '\n\n## Google Calendar Integration\n'
         'You can interact with the user\'s Google Calendar using these tools:\n'
+        '- **list_google_calendars**: List all available calendars (name + ID). '
+        'Call this before creating events.\n'
         '- **create_google_calendar_event**: Create an event. Parameters: title, date (YYYY-MM-DD), '
-        'start_time (HH:MM), end_time (HH:MM), description (optional), location (optional).\n'
+        'start_time (HH:MM), end_time (HH:MM), description (optional), location (optional), '
+        'calendar_id (optional — from list_google_calendars).\n'
+        '- **create_new_google_calendar**: Create a brand-new calendar (not an event). '
+        'Parameter: name (the calendar name, e.g. "Work", "Gym").\n'
         '- **read_google_calendar**: Read events for a date. Parameter: date (YYYY-MM-DD).\n'
         '- **sync_google_calendar**: Sync local calendar with Google Calendar (bidirectional).\n'
-        'Use these when asked to create, check, or sync calendar events.$accessNote\n';
+        '\n'
+        '**Important**: When a user asks to create a calendar event, first call list_google_calendars. '
+        'If multiple calendars are available, ask the user which calendar they want the event on '
+        'before creating it. Pass the chosen calendar_id to create_google_calendar_event.$accessNote\n';
   }
 
   static const _flightToolsOpenAi = [
@@ -1502,6 +1510,18 @@ class AgentService extends ChangeNotifier {
   static const _googleCalendarToolsOpenAi = [
     {
       'type': 'function',
+      'name': 'list_google_calendars',
+      'description':
+          'List all available Google Calendars for the connected account. '
+              'Returns calendar names and IDs. Call this before creating events '
+              'so you can ask the user which calendar to use.',
+      'parameters': {
+        'type': 'object',
+        'properties': {},
+      },
+    },
+    {
+      'type': 'function',
       'name': 'create_google_calendar_event',
       'description': 'Create an event on Google Calendar.',
       'parameters': {
@@ -1531,6 +1551,12 @@ class AgentService extends ChangeNotifier {
             'type': 'string',
             'description': 'Optional event location.',
           },
+          'calendar_id': {
+            'type': 'string',
+            'description':
+                'Optional calendar ID to create the event on. Use list_google_calendars to get available IDs. '
+                    'If omitted, uses the default calendar.',
+          },
         },
         'required': ['title', 'date', 'start_time', 'end_time'],
       },
@@ -1553,6 +1579,23 @@ class AgentService extends ChangeNotifier {
     },
     {
       'type': 'function',
+      'name': 'create_new_google_calendar',
+      'description':
+          'Create a brand-new Google Calendar (not an event — a whole new calendar). '
+              'Use when the user wants to add a new calendar like "Work", "Gym", etc.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'name': {
+            'type': 'string',
+            'description': 'Name for the new calendar.',
+          },
+        },
+        'required': ['name'],
+      },
+    },
+    {
+      'type': 'function',
       'name': 'sync_google_calendar',
       'description':
           'Synchronize the local calendar with Google Calendar (bidirectional). '
@@ -1565,6 +1608,17 @@ class AgentService extends ChangeNotifier {
   ];
 
   static final _googleCalendarToolsLlm = <LlmTool>[
+    LlmTool(
+      name: 'list_google_calendars',
+      description:
+          'List all available Google Calendars for the connected account. '
+          'Returns calendar names and IDs. Call this before creating events '
+          'so you can ask the user which calendar to use.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {},
+      },
+    ),
     LlmTool(
       name: 'create_google_calendar_event',
       description: 'Create an event on Google Calendar.',
@@ -1595,6 +1649,12 @@ class AgentService extends ChangeNotifier {
             'type': 'string',
             'description': 'Optional event location.',
           },
+          'calendar_id': {
+            'type': 'string',
+            'description':
+                'Optional calendar ID to create the event on. Use list_google_calendars to get available IDs. '
+                'If omitted, uses the default calendar.',
+          },
         },
         'required': ['title', 'date', 'start_time', 'end_time'],
       },
@@ -1611,6 +1671,22 @@ class AgentService extends ChangeNotifier {
           },
         },
         'required': ['date'],
+      },
+    ),
+    LlmTool(
+      name: 'create_new_google_calendar',
+      description:
+          'Create a brand-new Google Calendar (not an event — a whole new calendar). '
+          'Use when the user wants to add a new calendar like "Work", "Gym", etc.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'name': {
+            'type': 'string',
+            'description': 'Name for the new calendar.',
+          },
+        },
+        'required': ['name'],
       },
     ),
     LlmTool(
@@ -2612,8 +2688,14 @@ class AgentService extends ChangeNotifier {
         case 'read_gmail':
           result = await _handleReadGmail(args);
           break;
+        case 'list_google_calendars':
+          result = await _handleListGoogleCalendars(args);
+          break;
         case 'create_google_calendar_event':
           result = await _handleCreateGoogleCalendarEvent(args);
+          break;
+        case 'create_new_google_calendar':
+          result = await _handleCreateNewGoogleCalendar(args);
           break;
         case 'read_google_calendar':
           result = await _handleReadGoogleCalendar(args);
@@ -2714,8 +2796,14 @@ class AgentService extends ChangeNotifier {
         case 'read_gmail':
           result = await _handleReadGmail(req.arguments);
           break;
+        case 'list_google_calendars':
+          result = await _handleListGoogleCalendars(req.arguments);
+          break;
         case 'create_google_calendar_event':
           result = await _handleCreateGoogleCalendarEvent(req.arguments);
+          break;
+        case 'create_new_google_calendar':
+          result = await _handleCreateNewGoogleCalendar(req.arguments);
           break;
         case 'read_google_calendar':
           result = await _handleReadGoogleCalendar(req.arguments);
@@ -3702,6 +3790,27 @@ class AgentService extends ChangeNotifier {
   // Google Calendar tool handlers
   // ---------------------------------------------------------------------------
 
+  Future<String> _handleListGoogleCalendars(
+      Map<String, dynamic> args) async {
+    if (googleCalendarService == null ||
+        !googleCalendarService!.config.enabled) {
+      return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    try {
+      final calendars = await googleCalendarService!.listCalendars();
+      if (calendars.isEmpty) {
+        return 'No calendars found. The sidebar may not have loaded or no calendars are visible.';
+      }
+      final buf = StringBuffer('Available calendars (${calendars.length}):\n');
+      for (var i = 0; i < calendars.length; i++) {
+        buf.writeln('${i + 1}. ${calendars[i]['name']} (id: ${calendars[i]['id']})');
+      }
+      return buf.toString();
+    } catch (e) {
+      return 'Failed to list calendars: ${e.toString().split('\n').first}';
+    }
+  }
+
   Future<String> _handleCreateGoogleCalendarEvent(
       Map<String, dynamic> args) async {
     if (googleCalendarService == null ||
@@ -3728,12 +3837,32 @@ class AgentService extends ChangeNotifier {
         endTime: endTime,
         description: args['description'] as String?,
         location: args['location'] as String?,
+        calendarId: args['calendar_id'] as String?,
       );
       return ok
           ? 'Event "$title" created on $date from $startTime to $endTime.'
           : 'Failed to create event: ${googleCalendarService!.error ?? "unknown error"}';
     } catch (e) {
       return 'Event creation failed: ${e.toString().split('\n').first}';
+    }
+  }
+
+  Future<String> _handleCreateNewGoogleCalendar(
+      Map<String, dynamic> args) async {
+    if (googleCalendarService == null ||
+        !googleCalendarService!.config.enabled) {
+      return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
+    }
+    final name = args['name'] as String?;
+    if (name == null || name.isEmpty) return 'No calendar name provided.';
+
+    try {
+      final ok = await googleCalendarService!.createCalendar(name: name);
+      return ok
+          ? 'New calendar "$name" created successfully.'
+          : 'Failed to create calendar: ${googleCalendarService!.error ?? "unknown error"}';
+    } catch (e) {
+      return 'Calendar creation failed: ${e.toString().split('\n').first}';
     }
   }
 
