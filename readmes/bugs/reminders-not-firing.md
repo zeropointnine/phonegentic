@@ -38,14 +38,24 @@ Reminders set by the agent (e.g. "call me at 7:30") never actually trigger at th
 9. **`start()` silent failure prevention**: Restructured `start()` so `_reminderCheckTimer` is created *before* any `await` calls, and wrapped async work in try-catch. Even if config/DB loading fails, the periodic check still runs.
 10. **try-catch everywhere**: Wrapped `start()`, `_checkReminders()`, `onReminderCreatedOrChanged()`, and `_fireReminder()` in try-catch blocks with `debugPrint` so failures are always logged.
 
-### Phase 4 (current)
+### Phase 4
 
 11. **Provider is lazy — service never created**: `ChangeNotifierProxyProvider<AgentService, ManagerPresenceService>` defaults to `lazy: true`. Since no widget in the tree ever calls `context.watch<ManagerPresenceService>()` or `context.read<ManagerPresenceService>()`, the `create` callback never fires. The service is only referenced as a field on `AgentService` (set in the `update` callback), but `update` also never runs because `create` hasn't run. **The service was literally never instantiated.** This is why zero `[ManagerPresence]` logs appeared across multiple debugging sessions.
 12. **Fix: `lazy: false`**: Added `lazy: false` to the provider in `main.dart` so `ManagerPresenceService` is created eagerly at app startup regardless of whether any widget reads it.
 
+### Phase 5 (current)
+
+13. **LLM bad time arithmetic for relative reminders**: When the user says "remind me in 5 minutes", the LLM has the current time in its system prompt but still miscalculates the absolute timestamp. In one case, the current time was 12:11 PM but the LLM computed `17:34` (off by 5+ hours) as the `remind_at` value. The agent told the user "5 minutes" but silently scheduled it for hours later.
+14. **Fix: server-side time computation via delay/offset parameters**: Added `delay_minutes`, `delay_hours`, `delay_days`, and `at_time` parameters to `create_reminder` (both voice and text-agent tool definitions). The handler computes the exact `DateTime` server-side so the LLM never does time arithmetic:
+    - `delay_days`, `delay_hours`, `delay_minutes` — additive offsets from `DateTime.now()`, can be freely combined (e.g. `delay_hours=1, delay_minutes=30` for "in an hour and a half")
+    - `at_time` — `"HH:MM"` 24-hour format, overrides the time-of-day on the computed date. When used alone (no delay_* params), fires today if the time hasn't passed, otherwise tomorrow
+    - `remind_at` — kept as a last-resort fallback for fully-specified absolute datetimes
+    - System prompt gives explicit examples mapping natural language to parameters so the LLM never needs to compute timestamps
+
 ## Files
 
 - `phonegentic/lib/src/manager_presence_service.dart` — polling interval, precise timer scheduling, requireResponse, immediate past-due fire, logging
-- `phonegentic/lib/src/agent_service.dart` — cancel_reminder tool + handler, notify presence on create, timezone normalization
-- `phonegentic/lib/src/whisper_realtime_service.dart` — cancel_reminder tool definition
+- `phonegentic/lib/src/agent_service.dart` — cancel_reminder tool + handler, timezone normalization, delay_minutes parameter + handler logic, updated system prompt instructions
+- `phonegentic/lib/src/whisper_realtime_service.dart` — cancel_reminder and create_reminder tool definitions with delay_minutes
+- `phonegentic/lib/main.dart` — lazy: false for ManagerPresenceService
 - `readmes/bugs/reminders-not-firing.md` — this file

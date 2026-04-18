@@ -708,8 +708,14 @@ class WhisperRealtimeService {
         'type': 'function',
         'name': 'create_reminder',
         'description':
-            'Create a timed reminder for the manager. The reminder fires at '
-                'the specified time. Offer to also add it to Google Calendar.',
+            'Create a timed reminder for the manager. '
+                'ALWAYS prefer the delay/offset parameters (delay_minutes, delay_hours, '
+                'delay_days) over remind_at — the server computes the exact fire time so '
+                'you never need to do time arithmetic. Combine them freely: e.g. '
+                'delay_days=1 + at_time="17:00" for "tomorrow at 5 PM". '
+                'Only fall back to remind_at for a fully-specified absolute datetime '
+                'like "April 25 2026 at 3 PM". '
+                'Offer to also add it to Google Calendar.',
         'parameters': {
           'type': 'object',
           'properties': {
@@ -717,11 +723,39 @@ class WhisperRealtimeService {
               'type': 'string',
               'description': 'Short title for the reminder.',
             },
+            'delay_minutes': {
+              'type': 'integer',
+              'description':
+                  'Additional minutes from now to fire. Can combine with '
+                      'delay_hours and delay_days.',
+            },
+            'delay_hours': {
+              'type': 'integer',
+              'description':
+                  'Additional hours from now to fire. Can combine with '
+                      'delay_minutes and delay_days.',
+            },
+            'delay_days': {
+              'type': 'integer',
+              'description':
+                  'Additional days from now to fire. "tomorrow" = 1, '
+                      '"next week" = 7, "in 3 weeks" = 21. '
+                      'Can combine with delay_hours, delay_minutes, and at_time.',
+            },
+            'at_time': {
+              'type': 'string',
+              'description':
+                  'Time of day in HH:MM 24-hour format (e.g. "17:00" for 5 PM, '
+                      '"09:30" for 9:30 AM). Overrides the time-of-day on the '
+                      'computed date. If used alone without delay_days/hours/minutes, '
+                      'fires today if the time is still ahead, otherwise tomorrow.',
+            },
             'remind_at': {
               'type': 'string',
               'description':
-                  'ISO 8601 datetime when the reminder should fire '
-                      '(e.g. "2026-04-17T15:00:00").',
+                  'ISO 8601 datetime (e.g. "2026-04-25T15:00:00"). '
+                      'LAST RESORT — only use when the user gives a full absolute '
+                      'date+time and none of the delay/at_time params fit.',
             },
             'description': {
               'type': 'string',
@@ -733,7 +767,7 @@ class WhisperRealtimeService {
                   'If true, also create a Google Calendar event for this reminder.',
             },
           },
-          'required': ['title', 'remind_at'],
+          'required': ['title'],
         },
       },
       {

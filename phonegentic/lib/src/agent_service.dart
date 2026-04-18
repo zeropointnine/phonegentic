@@ -1239,8 +1239,18 @@ class AgentService extends ChangeNotifier {
     final buf = StringBuffer('\n\n## Reminders and Activity Awareness\n');
     buf.write(
         'You can create timed reminders for the manager using `create_reminder`. '
-        'When someone asks to be reminded about something at a specific time, '
-        'use this tool. Always offer to also add important reminders to Google Calendar.\n\n');
+        'NEVER compute an absolute timestamp yourself — always use the server-side '
+        'delay parameters so the time is exact:\n'
+        '- "in 5 minutes" → delay_minutes=5\n'
+        '- "in 2 hours" → delay_hours=2\n'
+        '- "tomorrow at 5 PM" → delay_days=1, at_time="17:00"\n'
+        '- "next week at 9 AM" → delay_days=7, at_time="09:00"\n'
+        '- "in 3 weeks" → delay_days=21\n'
+        '- "at 3 PM" (today) → at_time="15:00"\n'
+        '- "in an hour and a half" → delay_hours=1, delay_minutes=30\n'
+        'Only use remind_at as a last resort for fully-specified absolute datetimes '
+        'like "April 25 2026 at 3 PM". '
+        'Always offer to also add important reminders to Google Calendar.\n\n');
     buf.write(
         'Use `list_reminders` when the manager asks about scheduled reminders, '
         'upcoming events they set through you, or "do I have any reminders?". '
@@ -1842,8 +1852,14 @@ class AgentService extends ChangeNotifier {
     LlmTool(
       name: 'create_reminder',
       description:
-          'Create a timed reminder for the manager. The reminder fires at '
-          'the specified time. Offer to also add it to Google Calendar.',
+          'Create a timed reminder for the manager. '
+          'ALWAYS prefer the delay/offset parameters (delay_minutes, delay_hours, '
+          'delay_days) over remind_at — the server computes the exact fire time so '
+          'you never need to do time arithmetic. Combine them freely: e.g. '
+          'delay_days=1 + at_time="17:00" for "tomorrow at 5 PM". '
+          'Only fall back to remind_at for a fully-specified absolute datetime '
+          'like "April 25 2026 at 3 PM". '
+          'Offer to also add it to Google Calendar.',
       inputSchema: {
         'type': 'object',
         'properties': {
@@ -1851,11 +1867,39 @@ class AgentService extends ChangeNotifier {
             'type': 'string',
             'description': 'Short title for the reminder.',
           },
+          'delay_minutes': {
+            'type': 'integer',
+            'description':
+                'Additional minutes from now to fire. Can combine with '
+                'delay_hours and delay_days.',
+          },
+          'delay_hours': {
+            'type': 'integer',
+            'description':
+                'Additional hours from now to fire. Can combine with '
+                'delay_minutes and delay_days.',
+          },
+          'delay_days': {
+            'type': 'integer',
+            'description':
+                'Additional days from now to fire. "tomorrow" = 1, '
+                '"next week" = 7, "in 3 weeks" = 21. '
+                'Can combine with delay_hours, delay_minutes, and at_time.',
+          },
+          'at_time': {
+            'type': 'string',
+            'description':
+                'Time of day in HH:MM 24-hour format (e.g. "17:00" for 5 PM, '
+                '"09:30" for 9:30 AM). Overrides the time-of-day on the '
+                'computed date. If used alone without delay_days/hours/minutes, '
+                'fires today if the time is still ahead, otherwise tomorrow.',
+          },
           'remind_at': {
             'type': 'string',
             'description':
-                'ISO 8601 datetime when the reminder should fire '
-                '(e.g. "2026-04-17T15:00:00").',
+                'ISO 8601 datetime (e.g. "2026-04-25T15:00:00"). '
+                'LAST RESORT — only use when the user gives a full absolute '
+                'date+time and none of the delay/at_time params fit.',
           },
           'description': {
             'type': 'string',
@@ -1867,7 +1911,7 @@ class AgentService extends ChangeNotifier {
                 'If true, also create a Google Calendar event for this reminder.',
           },
         },
-        'required': ['title', 'remind_at'],
+        'required': ['title'],
       },
     ),
     LlmTool(
@@ -3506,26 +3550,69 @@ class AgentService extends ChangeNotifier {
     final title = args['title'] as String?;
     if (title == null || title.isEmpty) return 'Reminder title is required.';
 
+    final delayMinutes = args['delay_minutes'] as int?;
+    final delayHours = args['delay_hours'] as int?;
+    final delayDays = args['delay_days'] as int?;
+    final atTime = args['at_time'] as String?;
     final remindAtRaw = args['remind_at'] as String?;
-    if (remindAtRaw == null) return 'remind_at datetime is required.';
+
+    final hasDelay =
+        delayMinutes != null || delayHours != null || delayDays != null;
+
+    if (!hasDelay && atTime == null && remindAtRaw == null) {
+      return 'A time is required. Use delay_minutes/delay_hours/delay_days, '
+          'at_time, or remind_at.';
+    }
 
     DateTime remindAt;
-    try {
-      // LLMs typically send times in the user's local timezone but may append
-      // a Z suffix (UTC indicator) by mistake. Strip trailing Z/z so
-      // DateTime.parse interprets the value as local time.
-      final normalized = remindAtRaw.endsWith('Z') || remindAtRaw.endsWith('z')
-          ? remindAtRaw.substring(0, remindAtRaw.length - 1)
-          : remindAtRaw;
-      remindAt = DateTime.parse(normalized);
-      if (remindAt.isUtc) {
-        remindAt = DateTime(remindAt.year, remindAt.month, remindAt.day,
-            remindAt.hour, remindAt.minute, remindAt.second);
+    if (hasDelay || atTime != null) {
+      final now = DateTime.now();
+      remindAt = now.add(Duration(
+        days: delayDays ?? 0,
+        hours: delayHours ?? 0,
+        minutes: delayMinutes ?? 0,
+      ));
+
+      if (atTime != null) {
+        final parts = atTime.split(':');
+        if (parts.length >= 2) {
+          final hour = int.tryParse(parts[0]) ?? remindAt.hour;
+          final minute = int.tryParse(parts[1]) ?? remindAt.minute;
+          remindAt = DateTime(
+              remindAt.year, remindAt.month, remindAt.day, hour, minute);
+          // at_time alone with no delay: if the time already passed today,
+          // push to tomorrow.
+          if (!hasDelay && remindAt.isBefore(now)) {
+            remindAt = remindAt.add(const Duration(days: 1));
+          }
+        }
       }
+
       debugPrint(
-          '[AgentService] create_reminder: raw="$remindAtRaw" → local=$remindAt (utc=${remindAt.toUtc()})');
-    } catch (_) {
-      return 'Invalid remind_at format. Use ISO 8601 (e.g. 2026-04-17T15:00:00).';
+          '[AgentService] create_reminder: '
+          'delay_days=$delayDays delay_hours=$delayHours '
+          'delay_minutes=$delayMinutes at_time=$atTime '
+          '→ local=$remindAt (utc=${remindAt.toUtc()})');
+    } else {
+      try {
+        // LLMs typically send times in the user's local timezone but may append
+        // a Z suffix (UTC indicator) by mistake. Strip trailing Z/z so
+        // DateTime.parse interprets the value as local time.
+        final normalized =
+            remindAtRaw!.endsWith('Z') || remindAtRaw.endsWith('z')
+                ? remindAtRaw.substring(0, remindAtRaw.length - 1)
+                : remindAtRaw;
+        remindAt = DateTime.parse(normalized);
+        if (remindAt.isUtc) {
+          remindAt = DateTime(remindAt.year, remindAt.month, remindAt.day,
+              remindAt.hour, remindAt.minute, remindAt.second);
+        }
+        debugPrint(
+            '[AgentService] create_reminder: raw="$remindAtRaw" '
+            '→ local=$remindAt (utc=${remindAt.toUtc()})');
+      } catch (_) {
+        return 'Invalid remind_at format. Use ISO 8601 (e.g. 2026-04-17T15:00:00).';
+      }
     }
 
     final description = args['description'] as String?;
