@@ -34,6 +34,8 @@ import 'messaging/models/sms_message.dart';
 import 'messaging/phone_numbers.dart';
 import 'models/agent_context.dart';
 import 'models/chat_message.dart';
+import 'models/transfer_rule.dart';
+import 'transfer_rule_service.dart';
 import 'tear_sheet_service.dart';
 import 'elevenlabs_tts_service.dart';
 import 'kokoro_tts_service.dart';
@@ -154,7 +156,14 @@ class AgentService extends ChangeNotifier {
   GoogleSearchService? googleSearchService;
   JobFunctionService? _jobFunctionService;
   ConferenceService? conferenceService;
+  TransferRuleService? _transferRuleService;
   SIPUAHelper? sipHelper;
+
+  TransferRuleService? get transferRuleService => _transferRuleService;
+  set transferRuleService(TransferRuleService? svc) {
+    _transferRuleService = svc;
+    svc?.loadAll();
+  }
 
   set jobFunctionService(JobFunctionService? svc) {
     _jobFunctionService = svc;
@@ -702,6 +711,7 @@ class AgentService extends ChangeNotifier {
 
       _statusText = 'Connecting...';
       _messages.clear();
+      _smsHistoryLoadedPhones.clear();
       _resetVoiceUiSyncState();
       _streamingMessageId = null;
       _messages.add(ChatMessage.system('Connecting to AI...'));
@@ -894,6 +904,7 @@ class AgentService extends ChangeNotifier {
     _isLocalSttMode = true;
     _statusText = 'Initializing...';
     _messages.clear();
+    _smsHistoryLoadedPhones.clear();
     _resetVoiceUiSyncState();
     _streamingMessageId = null;
     _messages.add(ChatMessage.system('Loading STT model...'));
@@ -1131,10 +1142,10 @@ class AgentService extends ChangeNotifier {
     if (events.isEmpty) return '';
 
     final buf = StringBuffer();
-    buf.writeln('\n## Calendar Schedule');
-    buf.writeln('You have make_call, end_call, and (when configured) SMS tools '
-        '(send_sms, reply_sms, search_messages). SMS messages are sent and '
-        'received on the manager\'s phone — you are texting on their behalf.');
+    buf.writeln('\n## Local Calendar (Calendly-synced events stored in the app)');
+    buf.writeln('These events are from the local database. When the manager asks '
+        'about "my calendar", "my schedule", or "local calendar", refer to '
+        'these events — do NOT open Google Calendar for this.');
     buf.writeln('When a calendar event starts, follow the job function '
         'instructions. If the event involves a call, use make_call to dial; '
         'if it involves texting, use the SMS tools as appropriate.');
@@ -1211,6 +1222,10 @@ class AgentService extends ChangeNotifier {
         'When someone asks to be reminded about something at a specific time, '
         'use this tool. Always offer to also add important reminders to Google Calendar.\n\n');
     buf.write(
+        'Use `list_reminders` when the manager asks about scheduled reminders, '
+        'upcoming events they set through you, or "do I have any reminders?". '
+        'This returns all agent-created reminders from the local database.\n\n');
+    buf.write(
         'When the manager returns after being away, or asks about recent activity, '
         'use `get_call_summary` to catch them up on what happened. Offer to play '
         'back recordings of specific calls if they exist.\n\n');
@@ -1222,6 +1237,21 @@ class AgentService extends ChangeNotifier {
     if (managerPresenceService != null) {
       if (managerPresenceService!.isAway) {
         buf.write('\nNote: The manager appears to be away from the app.\n');
+      }
+
+      final pending = managerPresenceService!.pendingReminders;
+      if (pending.isNotEmpty) {
+        buf.write('\n### Current Pending Reminders\n');
+        for (final r in pending.take(10)) {
+          final title = r['title'] as String? ?? 'Untitled';
+          final remindAt =
+              DateTime.parse(r['remind_at'] as String).toLocal();
+          final mins = remindAt.difference(DateTime.now()).inMinutes;
+          final timeLabel = mins > 0 ? 'in $mins min' : 'overdue';
+          buf.writeln('- "$title" $timeLabel (${_fmtTime(remindAt)})');
+        }
+      } else {
+        buf.write('\nNo pending reminders at this time.\n');
       }
     }
 
@@ -1853,6 +1883,23 @@ class AgentService extends ChangeNotifier {
         'required': ['call_record_id'],
       },
     ),
+    LlmTool(
+      name: 'list_reminders',
+      description:
+          'List all scheduled reminders. Use when the manager asks about '
+          'upcoming reminders, what is scheduled, or "do I have any reminders?".',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'include_fired': {
+            'type': 'boolean',
+            'description':
+                'If true, include already-fired and dismissed reminders. '
+                'Defaults to false (only pending).',
+          },
+        },
+      },
+    ),
   ];
 
   /// Push integration-specific tools and instructions to both pipelines.
@@ -1879,6 +1926,9 @@ class AgentService extends ChangeNotifier {
 
     _whisper.setExtraTools(oaiExtra);
     _textAgent?.setExtraTools(llmExtra);
+    debugPrint('[AgentService] Integration tools applied: '
+        '${oaiExtra.length} OAI extra, ${llmExtra.length} LLM extra '
+        '(names: ${llmExtra.map((t) => t.name).join(', ')})');
   }
 
   // ---------------------------------------------------------------------------
@@ -2881,6 +2931,24 @@ class AgentService extends ChangeNotifier {
         case 'play_call_recording':
           result = await _handlePlayCallRecording(args);
           break;
+        case 'list_reminders':
+          result = await _handleListReminders(args);
+          break;
+        case 'create_transfer_rule':
+          result = await _handleCreateTransferRule(args);
+          break;
+        case 'update_transfer_rule':
+          result = await _handleUpdateTransferRule(args);
+          break;
+        case 'delete_transfer_rule':
+          result = await _handleDeleteTransferRule(args);
+          break;
+        case 'list_transfer_rules':
+          result = await _handleListTransferRules();
+          break;
+        case 'request_transfer_approval':
+          result = await _handleRequestTransferApproval(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -2998,6 +3066,24 @@ class AgentService extends ChangeNotifier {
         case 'play_call_recording':
           result = await _handlePlayCallRecording(req.arguments);
           break;
+        case 'list_reminders':
+          result = await _handleListReminders(req.arguments);
+          break;
+        case 'create_transfer_rule':
+          result = await _handleCreateTransferRule(req.arguments);
+          break;
+        case 'update_transfer_rule':
+          result = await _handleUpdateTransferRule(req.arguments);
+          break;
+        case 'delete_transfer_rule':
+          result = await _handleDeleteTransferRule(req.arguments);
+          break;
+        case 'list_transfer_rules':
+          result = await _handleListTransferRules();
+          break;
+        case 'request_transfer_approval':
+          result = await _handleRequestTransferApproval(req.arguments);
+          break;
         default:
           result = 'Unknown tool: ${req.name}';
       }
@@ -3014,7 +3100,11 @@ class AgentService extends ChangeNotifier {
   // Inbound SMS → agent context
   // ---------------------------------------------------------------------------
 
-  void _onInboundSms(SmsMessage msg) {
+  /// Phone numbers for which we've already injected conversation history into
+  /// the current agent session, so we don't re-send 20 messages on every text.
+  final Set<String> _smsHistoryLoadedPhones = {};
+
+  Future<void> _onInboundSms(SmsMessage msg) async {
     if (!_active) return;
 
     String senderLabel = msg.from;
@@ -3031,11 +3121,6 @@ class AgentService extends ChangeNotifier {
     final preview = msg.text.length > 500
         ? '${msg.text.substring(0, 500)}…'
         : msg.text;
-    final contextLine =
-        'SYSTEM EVENT — New inbound SMS received on the manager\'s phone '
-        'from $senderLabel: "$preview" — This text was sent to the manager. '
-        'Use send_sms to reply to ${msg.from} on the manager\'s behalf if '
-        'appropriate.';
 
     debugPrint('[AgentService] Inbound SMS from $senderLabel: ${preview.length > 80 ? '${preview.substring(0, 80)}...' : preview}');
 
@@ -3053,6 +3138,61 @@ class AgentService extends ChangeNotifier {
       contactName: contactName,
     ));
     notifyListeners();
+
+    // Build the context payload. On the first message from this number in the
+    // current session, prepend the last 20 messages so the agent has the full
+    // thread context.
+    final buf = StringBuffer();
+    final normalizedPhone = ensureE164(msg.from);
+    if (!_smsHistoryLoadedPhones.contains(normalizedPhone)) {
+      _smsHistoryLoadedPhones.add(normalizedPhone);
+      try {
+        final rows = await CallHistoryDb.getSmsMessagesForConversation(
+          normalizedPhone,
+          limit: 20,
+        );
+        if (rows.length > 1) {
+          final history = rows
+              .map((r) => SmsMessage.fromDbMap(r))
+              .toList()
+            ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+          // Exclude the just-received message (last inbound) from the history
+          // block since it's included in the main event line below.
+          final prior = history.where((m) =>
+              !(m.direction == SmsDirection.inbound &&
+                  m.text == msg.text &&
+                  m == history.last)).toList();
+          if (prior.isNotEmpty) {
+            buf.writeln(
+                'SYSTEM CONTEXT — Recent SMS conversation history with '
+                '$senderLabel (most recent last):');
+            for (final m in prior) {
+              final dir = m.direction == SmsDirection.inbound
+                  ? senderLabel
+                  : 'Manager (you)';
+              final ts = '${m.createdAt.month}/${m.createdAt.day} '
+                  '${m.createdAt.hour}:${m.createdAt.minute.toString().padLeft(2, '0')}';
+              final body = m.text.length > 300
+                  ? '${m.text.substring(0, 300)}…'
+                  : m.text;
+              buf.writeln('  [$ts] $dir: "$body"');
+            }
+            buf.writeln('--- End of conversation history ---\n');
+          }
+        }
+      } catch (e) {
+        debugPrint('[AgentService] Failed to load SMS history for '
+            '$normalizedPhone: $e');
+      }
+    }
+
+    buf.write(
+        'SYSTEM EVENT — New inbound SMS received on the manager\'s phone '
+        'from $senderLabel: "$preview" — This text was sent to the manager. '
+        'Use send_sms to reply to ${msg.from} on the manager\'s behalf if '
+        'appropriate.');
+
+    final contextLine = buf.toString();
 
     if (_textAgent != null) {
       _textAgent!.sendUserMessage(contextLine);
@@ -3433,6 +3573,39 @@ class AgentService extends ChangeNotifier {
     return 'Playing recording of call with $remoteName (call #$callId).';
   }
 
+  Future<String> _handleListReminders(Map<String, dynamic> args) async {
+    final includeFired = args['include_fired'] as bool? ?? false;
+
+    final allReminders = await CallHistoryDb.getAllReminders(limit: 50);
+    if (allReminders.isEmpty) return 'No reminders found.';
+
+    final filtered = includeFired
+        ? allReminders
+        : allReminders.where((r) => r['status'] == 'pending').toList();
+
+    if (filtered.isEmpty) return 'No pending reminders.';
+
+    final buf = StringBuffer('${filtered.length} reminder(s):\n');
+    for (final r in filtered) {
+      final title = r['title'] as String? ?? 'Untitled';
+      final desc = r['description'] as String?;
+      final status = r['status'] as String? ?? 'pending';
+      final remindAt = DateTime.parse(r['remind_at'] as String).toLocal();
+      final id = r['id'] as int?;
+
+      final mins = remindAt.difference(DateTime.now()).inMinutes;
+      final timeLabel = mins > 0
+          ? 'in $mins min (${_fmtTime(remindAt)})'
+          : 'overdue by ${-mins} min';
+
+      buf.write('- [$status] "$title" $timeLabel');
+      if (desc != null && desc.isNotEmpty) buf.write(' — $desc');
+      if (id != null) buf.write(' [id=$id]');
+      buf.writeln();
+    }
+    return buf.toString();
+  }
+
   // ---------------------------------------------------------------------------
 
   String _handleCheckLocale() {
@@ -3628,6 +3801,177 @@ class AgentService extends ChangeNotifier {
     } catch (e) {
       return 'Merge error: $e';
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transfer rule context injection + tool handlers
+  // ---------------------------------------------------------------------------
+
+  /// When a call connects, check if a transfer rule matches the caller and
+  /// inject context so the agent knows to execute the transfer.
+  void _injectTransferRuleContext() {
+    if (_transferRuleService == null) return;
+    final caller = _remoteIdentity;
+    if (caller == null || caller.isEmpty) return;
+
+    final rule = _transferRuleService!.resolve(caller);
+    if (rule == null) return;
+
+    final mode = rule.silent ? 'SILENT (do not announce)' : 'ANNOUNCED (tell the caller you are transferring them)';
+    final jfNote = rule.jobFunctionId != null
+        ? ' Switch to job function #${rule.jobFunctionId} before transferring.'
+        : '';
+    final contextLine =
+        'SYSTEM CONTEXT — Transfer rule "${rule.name}" is active for this '
+        'caller. Transfer this call to ${rule.transferTarget} ($mode).$jfNote '
+        'Execute the transfer now using the transfer_call tool unless the '
+        'manager explicitly overrides.';
+
+    debugPrint('[AgentService] Injecting transfer rule context: ${rule.name}');
+
+    if (_textAgent != null) {
+      _textAgent!.addSystemContext(contextLine);
+    }
+    if (_active) {
+      _whisper.sendSystemContext(contextLine);
+    }
+  }
+
+  Future<String> _handleCreateTransferRule(Map<String, dynamic> args) async {
+    if (_transferRuleService == null) {
+      return 'Transfer rule service not available.';
+    }
+    final name = args['name'] as String?;
+    final target = args['transfer_target'] as String?;
+    if (name == null || name.isEmpty) return '"name" is required.';
+    if (target == null || target.isEmpty) return '"transfer_target" is required.';
+
+    final patterns = (args['caller_patterns'] as List?)?.cast<String>() ??
+        const <String>['*'];
+    final silent = args['silent'] as bool? ?? false;
+    final jfId = args['job_function_id'] as int?;
+    final normalizedTarget = target.contains('@') ? target : ensureE164(target);
+
+    final rule = TransferRule(
+      name: name,
+      callerPatterns: patterns.map((p) => p == '*' ? '*' : ensureE164(p)).toList(),
+      transferTarget: normalizedTarget,
+      silent: silent,
+      jobFunctionId: jfId,
+    );
+    final saved = await _transferRuleService!.save(rule);
+    return 'Transfer rule created (id=${saved.id}): ${saved.toSummary()}';
+  }
+
+  Future<String> _handleUpdateTransferRule(Map<String, dynamic> args) async {
+    if (_transferRuleService == null) {
+      return 'Transfer rule service not available.';
+    }
+    final id = args['id'] as int?;
+    if (id == null) return '"id" is required.';
+
+    final row = await CallHistoryDb.getTransferRule(id);
+    if (row == null) return 'Transfer rule #$id not found.';
+    var rule = TransferRule.fromMap(row);
+
+    if (args.containsKey('name')) {
+      rule = rule.copyWith(name: args['name'] as String?);
+    }
+    if (args.containsKey('enabled')) {
+      rule = rule.copyWith(enabled: args['enabled'] as bool?);
+    }
+    if (args.containsKey('caller_patterns')) {
+      final patterns = (args['caller_patterns'] as List).cast<String>();
+      rule = rule.copyWith(
+          callerPatterns:
+              patterns.map((p) => p == '*' ? '*' : ensureE164(p)).toList());
+    }
+    if (args.containsKey('transfer_target')) {
+      final t = args['transfer_target'] as String;
+      rule = rule.copyWith(
+          transferTarget: t.contains('@') ? t : ensureE164(t));
+    }
+    if (args.containsKey('silent')) {
+      rule = rule.copyWith(silent: args['silent'] as bool?);
+    }
+    if (args.containsKey('job_function_id')) {
+      final jfId = args['job_function_id'] as int?;
+      rule = rule.copyWith(jobFunctionId: () => jfId);
+    }
+
+    await _transferRuleService!.save(rule);
+    return 'Transfer rule #$id updated: ${rule.toSummary()}';
+  }
+
+  Future<String> _handleDeleteTransferRule(Map<String, dynamic> args) async {
+    if (_transferRuleService == null) {
+      return 'Transfer rule service not available.';
+    }
+    final id = args['id'] as int?;
+    if (id == null) return '"id" is required.';
+
+    final row = await CallHistoryDb.getTransferRule(id);
+    if (row == null) return 'Transfer rule #$id not found.';
+    await _transferRuleService!.delete(id);
+    return 'Transfer rule #$id deleted.';
+  }
+
+  Future<String> _handleListTransferRules() async {
+    if (_transferRuleService == null) {
+      return 'Transfer rule service not available.';
+    }
+    await _transferRuleService!.loadAll();
+    final rules = _transferRuleService!.items;
+    if (rules.isEmpty) return 'No transfer rules configured.';
+
+    final buf = StringBuffer('Transfer rules:\n');
+    for (final r in rules) {
+      final status = r.enabled ? 'enabled' : 'disabled';
+      buf.writeln('  #${r.id} ($status): ${r.toSummary()}');
+    }
+    return buf.toString();
+  }
+
+  Future<String> _handleRequestTransferApproval(
+      Map<String, dynamic> args) async {
+    final reason = args['reason'] as String? ?? 'Caller requested a transfer.';
+    final target = args['requested_target'] as String?;
+
+    final callerName = _resolveCallerName() ?? _remoteIdentity ?? 'Unknown';
+    final targetDesc =
+        target != null && target.isNotEmpty ? ' to $target' : '';
+
+    final canSms = messagingService != null &&
+        messagingService!.isConfigured &&
+        _agentManagerConfig.isConfigured;
+
+    // Always show in the chat panel so it's visible if the manager is looking.
+    _messages.add(ChatMessage.system(
+      'TRANSFER REQUEST: $callerName wants to be transferred$targetDesc. '
+      'Reason: $reason — Tell the agent YES or NO.',
+    ));
+    notifyListeners();
+
+    // Send SMS to the manager's phone so they can approve even when away.
+    if (canSms) {
+      final smsText = 'TRANSFER REQUEST: $callerName is on the line and '
+          'requesting to be transferred$targetDesc. Reason: $reason — '
+          'Reply YES to approve or NO to decline.';
+
+      await messagingService!.sendMessage(
+          to: _agentManagerConfig.phoneNumber, text: smsText);
+
+      return 'Approval request sent to the manager via SMS and posted in the '
+          'chat panel. Tell the caller you are checking with the manager and '
+          'will transfer them shortly if approved. Wait for the manager\'s '
+          'response — do NOT transfer until you receive explicit approval.';
+    }
+
+    return 'Approval request posted in the chat for the manager (SMS not '
+        'configured — manager phone or messaging must be set up in Settings). '
+        'Tell the caller you are checking with the manager. Wait for the '
+        'manager\'s response — do NOT transfer until you receive explicit '
+        'approval.';
   }
 
   Future<String> _handleSearchContacts(Map<String, dynamic> args) async {
@@ -4210,9 +4554,12 @@ class AgentService extends ChangeNotifier {
       return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
     }
     try {
-      final calendars = await googleCalendarService!.listCalendars();
+      final calendars = await googleCalendarService!
+          .listCalendars()
+          .timeout(const Duration(seconds: 30),
+              onTimeout: () => <Map<String, String>>[]);
       if (calendars.isEmpty) {
-        return 'No calendars found. The sidebar may not have loaded or no calendars are visible.';
+        return 'No calendars found. The sidebar may not have loaded, no calendars are visible, or the request timed out.';
       }
       final buf = StringBuffer('Available calendars (${calendars.length}):\n');
       for (var i = 0; i < calendars.length; i++) {
@@ -4243,18 +4590,20 @@ class AgentService extends ChangeNotifier {
     if (endTime == null || endTime.isEmpty) return 'No end time provided.';
 
     try {
-      final ok = await googleCalendarService!.createEvent(
-        title: title,
-        date: date,
-        startTime: startTime,
-        endTime: endTime,
-        description: args['description'] as String?,
-        location: args['location'] as String?,
-        calendarId: args['calendar_id'] as String?,
-      );
+      final ok = await googleCalendarService!
+          .createEvent(
+            title: title,
+            date: date,
+            startTime: startTime,
+            endTime: endTime,
+            description: args['description'] as String?,
+            location: args['location'] as String?,
+            calendarId: args['calendar_id'] as String?,
+          )
+          .timeout(const Duration(seconds: 30), onTimeout: () => false);
       return ok
           ? 'Event "$title" created on $date from $startTime to $endTime.'
-          : 'Failed to create event: ${googleCalendarService!.error ?? "unknown error"}';
+          : 'Failed to create event: ${googleCalendarService!.error ?? "timed out or unknown error"}';
     } catch (e) {
       return 'Event creation failed: ${e.toString().split('\n').first}';
     }
@@ -4270,10 +4619,12 @@ class AgentService extends ChangeNotifier {
     if (name == null || name.isEmpty) return 'No calendar name provided.';
 
     try {
-      final ok = await googleCalendarService!.createCalendar(name: name);
+      final ok = await googleCalendarService!
+          .createCalendar(name: name)
+          .timeout(const Duration(seconds: 30), onTimeout: () => false);
       return ok
           ? 'New calendar "$name" created successfully.'
-          : 'Failed to create calendar: ${googleCalendarService!.error ?? "unknown error"}';
+          : 'Failed to create calendar: ${googleCalendarService!.error ?? "timed out or unknown error"}';
     } catch (e) {
       return 'Calendar creation failed: ${e.toString().split('\n').first}';
     }
@@ -4294,9 +4645,11 @@ class AgentService extends ChangeNotifier {
     if (date == null || date.isEmpty) return 'No date provided.';
 
     try {
-      final events = await googleCalendarService!.readEvents(date);
+      final events = await googleCalendarService!
+          .readEvents(date)
+          .timeout(const Duration(seconds: 30), onTimeout: () => []);
       if (events.isEmpty) {
-        return 'No events found on $date.';
+        return 'No events found on $date (or the request timed out).';
       }
       final buf = StringBuffer('Events on $date (${events.length}):\n');
       for (var i = 0; i < events.length; i++) {
@@ -4320,7 +4673,10 @@ class AgentService extends ChangeNotifier {
       return 'Google Calendar integration is not enabled. Enable it in Settings > Integrations.';
     }
     try {
-      return await googleCalendarService!.syncBidirectional();
+      return await googleCalendarService!
+          .syncBidirectional()
+          .timeout(const Duration(seconds: 30),
+              onTimeout: () => 'Calendar sync timed out after 30s.');
     } catch (e) {
       return 'Calendar sync failed: ${e.toString().split('\n').first}';
     }
@@ -4576,6 +4932,21 @@ class AgentService extends ChangeNotifier {
           const MessageAction(label: 'Snooze 15m', value: 'snooze_reminder'),
         ],
         const MessageAction(label: 'Tell me more', value: 'tell_me_more'),
+      ],
+    ));
+    notifyListeners();
+  }
+
+  void addMissedReminderMessage(String text, {int? reminderId}) {
+    _messages.add(ChatMessage.reminder(
+      text,
+      reminderId: reminderId,
+      actions: [
+        if (reminderId != null) ...[
+          const MessageAction(
+              label: 'Still do this', value: 'confirm_missed_reminder'),
+          const MessageAction(label: 'Dismiss', value: 'dismiss_reminder'),
+        ],
       ],
     ));
     notifyListeners();
@@ -4855,6 +5226,7 @@ class AgentService extends ChangeNotifier {
       if (!_hasConnectedBefore) {
         _scheduleConnectedGreeting();
         _hasConnectedBefore = true;
+        _injectTransferRuleContext();
       }
     } else {
       _cancelConnectedGreeting();
@@ -5583,6 +5955,7 @@ class AgentService extends ChangeNotifier {
     _callPhase = CallPhase.idle;
     _levels.clear();
     _messages.clear();
+    _smsHistoryLoadedPhones.clear();
     _resetVoiceUiSyncState();
     _streamingMessageId = null;
     _statusText = 'Reconnecting...';

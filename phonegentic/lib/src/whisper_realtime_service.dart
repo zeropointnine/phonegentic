@@ -750,6 +750,157 @@ class WhisperRealtimeService {
           'required': ['call_record_id'],
         },
       },
+      {
+        'type': 'function',
+        'name': 'list_reminders',
+        'description':
+            'List all scheduled reminders. Use when the manager asks about '
+                'upcoming reminders, what is scheduled, or "do I have any reminders?".',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'include_fired': {
+              'type': 'boolean',
+              'description':
+                  'If true, include already-fired and dismissed reminders. '
+                      'Defaults to false (only pending).',
+            },
+          },
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'create_transfer_rule',
+        'description':
+            'Create a persistent call transfer rule. When a caller matching '
+                'the pattern calls in, the call is automatically transferred to '
+                'the target number. The manager can specify silent or announced '
+                'mode, and optionally assign a job function.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'name': {
+              'type': 'string',
+              'description':
+                  'Short label for this rule (e.g. "Amber → my cell").',
+            },
+            'caller_patterns': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  'Phone numbers or patterns to match the caller. '
+                      'Use "*" for any caller. E.164 format preferred '
+                      '(e.g. ["+14155551234"]).',
+            },
+            'transfer_target': {
+              'type': 'string',
+              'description':
+                  'Phone number or SIP URI to transfer matching calls to.',
+            },
+            'silent': {
+              'type': 'boolean',
+              'description':
+                  'If true, transfer silently. If false (default), announce.',
+            },
+            'job_function_id': {
+              'type': 'integer',
+              'description':
+                  'Optional job function ID to activate for this transfer.',
+            },
+          },
+          'required': ['name', 'caller_patterns', 'transfer_target'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'update_transfer_rule',
+        'description':
+            'Update an existing transfer rule. Provide the rule ID and '
+                'only the fields you want to change.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'id': {
+              'type': 'integer',
+              'description': 'The ID of the transfer rule to update.',
+            },
+            'name': {
+              'type': 'string',
+              'description': 'New label for this rule.',
+            },
+            'enabled': {
+              'type': 'boolean',
+              'description': 'Enable or disable this rule.',
+            },
+            'caller_patterns': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description': 'New caller patterns to match.',
+            },
+            'transfer_target': {
+              'type': 'string',
+              'description': 'New transfer destination.',
+            },
+            'silent': {
+              'type': 'boolean',
+              'description': 'Whether to transfer silently.',
+            },
+            'job_function_id': {
+              'type': 'integer',
+              'description': 'Job function ID to activate, or null to remove.',
+            },
+          },
+          'required': ['id'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'delete_transfer_rule',
+        'description': 'Delete a transfer rule by ID.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'id': {
+              'type': 'integer',
+              'description': 'The ID of the transfer rule to delete.',
+            },
+          },
+          'required': ['id'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'list_transfer_rules',
+        'description': 'List all transfer rules, including disabled ones.',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'request_transfer_approval',
+        'description':
+            'Send an SMS to the manager asking for approval to transfer '
+                'the current call. Use when a REMOTE PARTY (not the manager) '
+                'requests a transfer. Never transfer on a remote party\'s '
+                'request without manager approval.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'reason': {
+              'type': 'string',
+              'description': 'Why the caller wants to be transferred.',
+            },
+            'requested_target': {
+              'type': 'string',
+              'description':
+                  'The number/person the caller wants to reach, if specified.',
+            },
+          },
+          'required': ['reason'],
+        },
+      },
       ..._extraTools,
     ];
 

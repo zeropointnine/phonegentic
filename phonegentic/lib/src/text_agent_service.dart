@@ -487,6 +487,138 @@ class TextAgentService {
         'required': ['voice_id'],
       },
     ),
+    LlmTool(
+      name: 'create_transfer_rule',
+      description: 'Create a persistent call transfer rule. When a caller matching '
+          'the pattern calls in, the call will be automatically transferred to '
+          'the target number. The manager can specify silent (no announcement) '
+          'or announced mode, and optionally assign a job function.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'name': {
+            'type': 'string',
+            'description':
+                'Short label for this rule (e.g. "Amber → my cell").',
+          },
+          'caller_patterns': {
+            'type': 'array',
+            'items': {'type': 'string'},
+            'description':
+                'Phone numbers or patterns to match the caller. '
+                    'Use "*" for any caller. E.164 format preferred '
+                    '(e.g. ["+14155551234"]). Can also be a contact name '
+                    'that you resolve to a number first via search_contacts.',
+          },
+          'transfer_target': {
+            'type': 'string',
+            'description':
+                'Phone number or SIP URI to transfer matching calls to '
+                    '(e.g. "+18005551234").',
+          },
+          'silent': {
+            'type': 'boolean',
+            'description':
+                'If true, transfer silently without announcing to the caller. '
+                    'If false (default), tell the caller they are being transferred.',
+          },
+          'job_function_id': {
+            'type': 'integer',
+            'description':
+                'Optional job function ID to activate for this transfer. '
+                    'Use list_transfer_rules or search the job functions to find IDs.',
+          },
+        },
+        'required': ['name', 'caller_patterns', 'transfer_target'],
+      },
+    ),
+    LlmTool(
+      name: 'update_transfer_rule',
+      description: 'Update an existing transfer rule. Only provide the fields you '
+          'want to change along with the rule ID.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'id': {
+            'type': 'integer',
+            'description': 'The ID of the transfer rule to update.',
+          },
+          'name': {
+            'type': 'string',
+            'description': 'New label for this rule.',
+          },
+          'enabled': {
+            'type': 'boolean',
+            'description': 'Enable or disable this rule.',
+          },
+          'caller_patterns': {
+            'type': 'array',
+            'items': {'type': 'string'},
+            'description': 'New caller patterns to match.',
+          },
+          'transfer_target': {
+            'type': 'string',
+            'description': 'New transfer destination.',
+          },
+          'silent': {
+            'type': 'boolean',
+            'description': 'Whether to transfer silently.',
+          },
+          'job_function_id': {
+            'type': 'integer',
+            'description':
+                'Job function ID to activate, or null to remove.',
+          },
+        },
+        'required': ['id'],
+      },
+    ),
+    LlmTool(
+      name: 'delete_transfer_rule',
+      description: 'Delete a transfer rule by ID.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'id': {
+            'type': 'integer',
+            'description': 'The ID of the transfer rule to delete.',
+          },
+        },
+        'required': ['id'],
+      },
+    ),
+    LlmTool(
+      name: 'list_transfer_rules',
+      description: 'List all transfer rules, including disabled ones.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {},
+      },
+    ),
+    LlmTool(
+      name: 'request_transfer_approval',
+      description: 'Send an SMS to the manager asking for approval to transfer '
+          'the current call. Use this when a REMOTE PARTY (not the manager) '
+          'asks to be transferred. Never transfer on a remote party\'s request '
+          'without manager approval.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'reason': {
+            'type': 'string',
+            'description':
+                'Why the caller wants to be transferred (brief summary).',
+          },
+          'requested_target': {
+            'type': 'string',
+            'description':
+                'The number or person the caller wants to be transferred to, '
+                    'if specified. Leave empty if they did not specify.',
+          },
+        },
+        'required': ['reason'],
+      },
+    ),
   ];
 
   Future<void> _callLlm() async {

@@ -1848,6 +1848,17 @@ class _MessageBubble extends StatelessWidget {
                 remindAt: DateTime.now().add(const Duration(minutes: 15)),
               );
             }
+          } else if (value == 'confirm_missed_reminder') {
+            final rid = message.metadata?['reminder_id'] as int?;
+            if (rid != null) {
+              CallHistoryDb.updateReminderStatus(rid, 'fired');
+            }
+            final cleanText = message.text.replaceFirst(
+                RegExp(r'^Missed \([^)]+\):\s*'), '');
+            agent.sendSystemEvent(
+              '[MISSED REMINDER CONFIRMED] Manager wants to proceed with: $cleanText',
+              requireResponse: true,
+            );
           } else if (value == 'tell_me_more') {
             agent.sendUserMessage('Tell me more about: ${message.text}');
           }

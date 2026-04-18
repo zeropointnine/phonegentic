@@ -22,6 +22,8 @@ class ManagerPresenceService extends ChangeNotifier
   bool _isAway = false;
   AwayReturnMode _awayReturnMode = AwayReturnMode.quietBadge;
   DateTime? _lastBriefingAt;
+  List<Map<String, dynamic>> _cachedPendingReminders = [];
+  List<Map<String, dynamic>> _cachedUpcomingReminders = [];
 
   bool get windowFocused => _windowFocused;
   bool get isAway => _isAway;
@@ -29,6 +31,10 @@ class ManagerPresenceService extends ChangeNotifier
   DateTime? get lastUnfocusedAt => _lastUnfocusedAt;
   AwayReturnMode get awayReturnMode => _awayReturnMode;
   DateTime? get lastBriefingAt => _lastBriefingAt;
+
+  /// Pending reminders cached from the last periodic check (synchronous access).
+  List<Map<String, dynamic>> get pendingReminders => _cachedPendingReminders;
+  List<Map<String, dynamic>> get upcomingReminders => _cachedUpcomingReminders;
 
   Duration? get awayDuration {
     if (!_isAway || _lastUnfocusedAt == null) return null;
@@ -45,6 +51,8 @@ class ManagerPresenceService extends ChangeNotifier
     notifyListeners();
   }
 
+  bool _startupCheckDone = false;
+
   Future<void> start() async {
     WidgetsBinding.instance.addObserver(this);
     _lastFocusedAt = DateTime.now();
@@ -53,7 +61,14 @@ class ManagerPresenceService extends ChangeNotifier
     _reminderCheckTimer?.cancel();
     _reminderCheckTimer =
         Timer.periodic(_reminderCheckInterval, (_) => _checkReminders());
+    await _refreshReminderCache();
     debugPrint('[ManagerPresence] Started – mode: ${_awayReturnMode.name}');
+
+    if (!_startupCheckDone) {
+      _startupCheckDone = true;
+      // Delay so the agent service and UI are fully wired before we push messages.
+      Future.delayed(const Duration(seconds: 2), _checkMissedReminders);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -178,10 +193,56 @@ class ManagerPresenceService extends ChangeNotifier
   }
 
   // ---------------------------------------------------------------------------
+  // Startup: missed-reminder triage
+  // ---------------------------------------------------------------------------
+
+  Future<void> _checkMissedReminders() async {
+    final overdue = await CallHistoryDb.getPendingReminders();
+    if (overdue.isEmpty) return;
+
+    debugPrint(
+        '[ManagerPresence] ${overdue.length} missed reminder(s) on startup');
+
+    for (final row in overdue) {
+      final id = row['id'] as int;
+      final title = row['title'] as String? ?? 'Reminder';
+      final desc = row['description'] as String?;
+      final remindAt = DateTime.parse(row['remind_at'] as String).toLocal();
+      final ago = DateTime.now().difference(remindAt);
+
+      String timeAgo;
+      if (ago.inDays > 0) {
+        timeAgo = '${ago.inDays}d ago';
+      } else if (ago.inHours > 0) {
+        timeAgo = '${ago.inHours}h ago';
+      } else {
+        timeAgo = '${ago.inMinutes}m ago';
+      }
+
+      final text = desc != null && desc.isNotEmpty
+          ? 'Missed ($timeAgo): $title — $desc'
+          : 'Missed ($timeAgo): $title';
+
+      _agent?.addMissedReminderMessage(text, reminderId: id);
+    }
+
+    await _refreshReminderCache();
+  }
+
+  // ---------------------------------------------------------------------------
   // Periodic reminder check
   // ---------------------------------------------------------------------------
 
+  Future<void> _refreshReminderCache() async {
+    _cachedPendingReminders = await CallHistoryDb.getAllReminders(limit: 50);
+    _cachedPendingReminders = _cachedPendingReminders
+        .where((r) => r['status'] == 'pending')
+        .toList();
+    _cachedUpcomingReminders = await CallHistoryDb.getUpcomingReminders();
+  }
+
   Future<void> _checkReminders() async {
+    await _refreshReminderCache();
     final fired = await CallHistoryDb.getPendingReminders();
     for (final row in fired) {
       final id = row['id'] as int;

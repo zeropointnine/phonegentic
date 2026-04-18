@@ -8,6 +8,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../models/calendar_event.dart';
 import '../models/inbound_call_flow.dart';
 import '../models/job_function.dart';
+import '../models/transfer_rule.dart';
 
 class CallHistoryDb {
   static Database? _db;
@@ -32,7 +33,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 14,
+        version: 15,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -126,6 +127,7 @@ class CallHistoryDb {
     await _createSmsMessagesTable(db);
     await _createInboundCallFlowsTable(db);
     await _createAgentRemindersTable(db);
+    await _createTransferRulesTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -222,6 +224,10 @@ class CallHistoryDb {
 
     if (oldVersion < 14) {
       await _createAgentRemindersTable(db);
+    }
+
+    if (oldVersion < 15) {
+      await _createTransferRulesTable(db);
     }
   }
 
@@ -1221,5 +1227,60 @@ class CallHistoryDb {
       orderBy: 'remind_at DESC',
       limit: limit,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transfer Rules
+  // ---------------------------------------------------------------------------
+
+  static Future<void> _createTransferRulesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS transfer_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        caller_patterns TEXT NOT NULL DEFAULT '["*"]',
+        transfer_target TEXT NOT NULL,
+        silent INTEGER NOT NULL DEFAULT 0,
+        job_function_id INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+  }
+
+  static Future<List<Map<String, dynamic>>> getAllTransferRules() async {
+    final db = await database;
+    return db.query('transfer_rules', orderBy: 'created_at ASC');
+  }
+
+  static Future<Map<String, dynamic>?> getTransferRule(int id) async {
+    final db = await database;
+    final rows =
+        await db.query('transfer_rules', where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  static Future<int> insertTransferRule(TransferRule rule) async {
+    final db = await database;
+    final map = rule.toMap();
+    map.remove('id');
+    return db.insert('transfer_rules', map);
+  }
+
+  static Future<void> updateTransferRule(TransferRule rule) async {
+    if (rule.id == null) return;
+    final db = await database;
+    await db.update(
+      'transfer_rules',
+      rule.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [rule.id],
+    );
+  }
+
+  static Future<void> deleteTransferRule(int id) async {
+    final db = await database;
+    await db.delete('transfer_rules', where: 'id = ?', whereArgs: [id]);
   }
 }

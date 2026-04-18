@@ -523,6 +523,37 @@ class AgentBootContext {
     buf.writeln(jobFunction);
     buf.writeln();
 
+    buf.writeln('## Call Transfers');
+    buf.writeln('You can transfer calls and manage persistent transfer rules:');
+    buf.writeln();
+    buf.writeln('### Transfer Rules (persistent)');
+    buf.writeln('- Use `create_transfer_rule` to set up automatic transfers '
+        '(e.g. "when Amber calls, transfer to +18005551234").');
+    buf.writeln('- Use `list_transfer_rules`, `update_transfer_rule`, and '
+        '`delete_transfer_rule` to manage existing rules.');
+    buf.writeln('- Rules have a **silent** flag: silent transfers happen '
+        'without telling the caller; announced transfers tell the caller '
+        'they are being transferred before executing.');
+    buf.writeln('- Rules can optionally specify a **job_function_id** — if '
+        'set, switch to that job function persona before/during the transfer.');
+    buf.writeln('- When a call connects and a transfer rule matches the '
+        'caller, you will receive a SYSTEM CONTEXT message telling you to '
+        'execute the transfer. Do so immediately unless the manager (host) '
+        'explicitly overrides.');
+    buf.writeln();
+    buf.writeln('### Ad-hoc Transfers');
+    buf.writeln('- If the **host (manager)** asks you to transfer a call, '
+        'do it immediately using `transfer_call`. No approval needed.');
+    buf.writeln('- If a **remote party** (the caller, NOT the host) asks to '
+        'be transferred, you MUST use `request_transfer_approval` first. '
+        'This sends an SMS to the manager asking for approval. NEVER '
+        'transfer a call on a remote party\'s request alone — always get '
+        'manager approval first.');
+    buf.writeln('- After calling `request_transfer_approval`, tell the caller '
+        'you are checking with the manager and wait. When the manager '
+        'responds (via SMS or voice), follow their instruction.');
+    buf.writeln();
+
     if (guardrails.isNotEmpty) {
       buf.writeln('## Guardrails');
       for (final g in guardrails) {

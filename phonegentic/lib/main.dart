@@ -12,6 +12,7 @@ import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
 import 'package:phonegentic/src/demo_mode_service.dart';
 import 'package:phonegentic/src/inbound_call_flow_service.dart';
+import 'package:phonegentic/src/transfer_rule_service.dart';
 import 'package:phonegentic/src/job_function_service.dart';
 import 'package:phonegentic/src/messaging/messaging_service.dart';
 import 'package:phonegentic/src/ringtone_service.dart';
@@ -106,6 +107,9 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<InboundCallFlowService>(
           create: (_) => InboundCallFlowService()..loadAll(),
         ),
+        ChangeNotifierProvider<TransferRuleService>(
+          create: (_) => TransferRuleService()..loadAll(),
+        ),
         ChangeNotifierProvider<FlightAwareService>(
           create: (_) => FlightAwareService()..loadConfig(),
         ),
@@ -159,6 +163,7 @@ class MyApp extends StatelessWidget {
             sync!.jobFunctionService = jf;
             agent.calendarSyncService = sync;
             agent.messagingService = context.read<MessagingService>();
+            agent.transferRuleService = context.read<TransferRuleService>();
             return sync;
           },
         ),
