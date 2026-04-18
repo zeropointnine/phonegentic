@@ -792,13 +792,24 @@ class WhisperRealtimeService {
         'type': 'function',
         'name': 'play_call_recording',
         'description':
-            'Play back a call recording inline in the chat for the manager.',
+            'Play back a call recording for the manager or host. '
+            'Only managers/hosts may use this — never play recordings for '
+            'regular callers. Set play_over_stream=true when the manager is '
+            'on a phone call and wants to hear the recording through the call.',
         'parameters': {
           'type': 'object',
           'properties': {
             'call_record_id': {
               'type': 'integer',
               'description': 'The ID of the call record whose recording to play.',
+            },
+            'play_over_stream': {
+              'type': 'boolean',
+              'description':
+                  'If true, stream the recording audio over the active phone '
+                  'call so the caller hears it. If false (default), show an '
+                  'inline player in the chat UI. Use true when the manager is '
+                  'on a call and asks to hear a recording.',
             },
           },
           'required': ['call_record_id'],

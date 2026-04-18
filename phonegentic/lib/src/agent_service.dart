@@ -1281,9 +1281,21 @@ class AgentService extends ChangeNotifier {
         'use `get_call_summary` to catch them up on what happened. Offer to play '
         'back recordings of specific calls if they exist.\n\n');
     buf.write(
-        'You can play call recordings inline using `play_call_recording` when '
-        'the manager wants to hear a specific call. Include the call_record_id '
-        'from the call summary results.\n');
+        'You can play call recordings using `play_call_recording` when '
+        'the manager or host wants to hear a specific call. Include the '
+        'call_record_id from the call summary results.\n\n'
+        '**Recording playback policy:**\n'
+        '- ONLY the manager or host may listen to call recordings. NEVER '
+        'play recordings for regular callers or anyone else unless '
+        'explicitly instructed otherwise.\n'
+        '- If the manager is on a phone call and asks to hear a recording, '
+        'ask them whether they want it played over the call (so they hear it '
+        'through the phone) or shown inline in the chat. If they clearly want '
+        'to hear it right now over the phone, set `play_over_stream: true`.\n'
+        '- If you are unsure whether they want it over the stream, ASK: '
+        '"Would you like me to play that over the call so you can hear it '
+        'now, or show it in the chat for later?"\n'
+        '- When idle (no active call), always play inline in the chat.\n');
 
     if (managerPresenceService != null) {
       if (managerPresenceService!.isAway) {
@@ -1955,7 +1967,10 @@ class AgentService extends ChangeNotifier {
     LlmTool(
       name: 'play_call_recording',
       description:
-          'Play back a call recording inline in the chat for the manager.',
+          'Play back a call recording for the manager or host. '
+          'Only managers/hosts may use this — never play recordings for '
+          'regular callers. Set play_over_stream=true when the manager is '
+          'on a phone call and wants to hear the recording through the call.',
       inputSchema: {
         'type': 'object',
         'properties': {
@@ -1963,6 +1978,14 @@ class AgentService extends ChangeNotifier {
             'type': 'integer',
             'description':
                 'The ID of the call record whose recording to play.',
+          },
+          'play_over_stream': {
+            'type': 'boolean',
+            'description':
+                'If true, stream the recording audio over the active phone '
+                'call so the caller hears it. If false (default), show an '
+                'inline player in the chat UI. Use true when the manager is '
+                'on a call and asks to hear a recording.',
           },
         },
         'required': ['call_record_id'],
@@ -3767,6 +3790,13 @@ class AgentService extends ChangeNotifier {
   }
 
   Future<String> _handlePlayCallRecording(Map<String, dynamic> args) async {
+    // Only the host (device user) or configured manager may play recordings.
+    final hasInboundCall = _callPhase.isActive && !_isOutbound;
+    if (hasInboundCall && !_isCallerAgentManager) {
+      return 'Recording playback is restricted to the manager or host. '
+          'The current caller does not have permission.';
+    }
+
     final callId = args['call_record_id'] as int?;
     if (callId == null) return 'call_record_id is required.';
 
@@ -3792,6 +3822,14 @@ class AgentService extends ChangeNotifier {
         rows.first['remote_identity'] as String? ??
         'Unknown';
 
+    final playOverStream = args['play_over_stream'] as bool? ?? false;
+
+    if (playOverStream && _callPhase.isActive) {
+      _playRecordingOverStream(recordingPath);
+      return 'Streaming recording of call with $remoteName (call #$callId) '
+          'over the active call. The caller will hear it through the phone.';
+    }
+
     _messages.add(ChatMessage(
       id: 'rec_${DateTime.now().millisecondsSinceEpoch}',
       role: ChatRole.system,
@@ -3805,7 +3843,100 @@ class AgentService extends ChangeNotifier {
     ));
     notifyListeners();
 
-    return 'Playing recording of call with $remoteName (call #$callId).';
+    return 'Playing recording of call with $remoteName (call #$callId) '
+        'inline in the chat.';
+  }
+
+  /// Loads a WAV recording, converts to PCM16 24 kHz mono, and streams it
+  /// through the native audio tap so it plays over the active phone call.
+  void _playRecordingOverStream(String wavPath) {
+    () async {
+      try {
+        final bytes = await File(wavPath).readAsBytes();
+        final pcm = _wavToPcm24k(bytes);
+        debugPrint('[AgentService] Streaming recording over call: '
+            '${pcm.length} bytes from $wavPath');
+
+        const int chunkBytes = 48000; // ~1 s at 24 kHz mono 16-bit
+        for (int i = 0; i < pcm.length; i += chunkBytes) {
+          if (!_callPhase.isActive) break;
+          final end = (i + chunkBytes).clamp(0, pcm.length);
+          await _whisper.playResponseAudio(pcm.sublist(i, end));
+        }
+      } catch (e) {
+        debugPrint('[AgentService] Recording stream playback failed: $e');
+      }
+    }();
+  }
+
+  /// Parse WAV → mono PCM16 @ 24 kHz for native audio tap playback.
+  static Uint8List _wavToPcm24k(Uint8List wav) {
+    final ByteData hdr = wav.buffer.asByteData(wav.offsetInBytes);
+    final int channels = hdr.getInt16(22, Endian.little);
+    final int sampleRate = hdr.getInt32(24, Endian.little);
+    final int bitsPerSample = hdr.getInt16(34, Endian.little);
+
+    int dataOffset = 0;
+    int dataSize = 0;
+    for (int i = 12; i < wav.length - 8; i++) {
+      if (wav[i] == 0x64 &&
+          wav[i + 1] == 0x61 &&
+          wav[i + 2] == 0x74 &&
+          wav[i + 3] == 0x61) {
+        dataSize = hdr.getInt32(i + 4, Endian.little);
+        dataOffset = i + 8;
+        break;
+      }
+    }
+    if (dataOffset == 0) throw Exception('No data chunk in WAV');
+
+    final int end = (dataOffset + dataSize).clamp(0, wav.length);
+    Uint8List pcm = wav.sublist(dataOffset, end);
+
+    if (bitsPerSample != 16) {
+      throw Exception('Unsupported WAV bit depth: $bitsPerSample');
+    }
+
+    if (channels == 2) {
+      final ByteData bd = pcm.buffer.asByteData(pcm.offsetInBytes);
+      final int numSamples = pcm.length ~/ 4;
+      final Uint8List mono = Uint8List(numSamples * 2);
+      final ByteData mbd = mono.buffer.asByteData();
+      for (int i = 0; i < numSamples; i++) {
+        final int l = bd.getInt16(i * 4, Endian.little);
+        final int r = bd.getInt16(i * 4 + 2, Endian.little);
+        mbd.setInt16(i * 2, (l + r) ~/ 2, Endian.little);
+      }
+      pcm = mono;
+    }
+
+    if (sampleRate != 24000) {
+      pcm = _resamplePcm16(pcm, sampleRate, 24000);
+    }
+    return pcm;
+  }
+
+  static Uint8List _resamplePcm16(Uint8List input, int srcRate, int dstRate) {
+    final ByteData bd = input.buffer.asByteData(input.offsetInBytes);
+    final int srcCount = input.length ~/ 2;
+    final int dstCount = (srcCount * dstRate / srcRate).round();
+    final Uint8List out = Uint8List(dstCount * 2);
+    final ByteData obd = out.buffer.asByteData();
+    final double ratio = srcRate / dstRate;
+    for (int i = 0; i < dstCount; i++) {
+      final double srcPos = i * ratio;
+      final int idx = srcPos.floor();
+      final double frac = srcPos - idx;
+      final int s0 =
+          idx < srcCount ? bd.getInt16(idx * 2, Endian.little) : 0;
+      final int s1 = (idx + 1) < srcCount
+          ? bd.getInt16((idx + 1) * 2, Endian.little)
+          : s0;
+      final int sample =
+          (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767);
+      obd.setInt16(i * 2, sample, Endian.little);
+    }
+    return out;
   }
 
   Future<String> _handleListReminders(Map<String, dynamic> args) async {
