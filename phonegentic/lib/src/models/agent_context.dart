@@ -325,6 +325,14 @@ class AgentBootContext {
     buf.writeln(
         '- If you recognise the caller (from contact info in CALL_STATE), you may greet them by name — but still let them state their purpose before diving into your agenda.');
     buf.writeln();
+    buf.writeln('### Caller Identification & Contacts');
+    buf.writeln(
+        '- When a caller or conversation participant tells you their name, use `save_contact` to store it against their phone number so they are recognised on future calls.');
+    buf.writeln(
+        '- If the caller is already in your contacts, address them by name naturally throughout the conversation.');
+    buf.writeln(
+        '- You may also save email, company, or notes when offered — don\'t ask for these proactively, but save them if volunteered.');
+    buf.writeln();
     buf.writeln('### Voicemail Handling');
     buf.writeln(
         '- When you reach voicemail, you will hear a greeting followed by a BEEP tone. Do NOT speak during the greeting — wait until AFTER the beep.');
@@ -375,6 +383,28 @@ class AgentBootContext {
           'not "200", say "five thirty PM" not "5:30 PM").');
       buf.writeln();
     }
+
+    buf.writeln('## Transcript Integrity — CRITICAL');
+    buf.writeln(
+        'Speaker-labeled transcripts like [Host]: and [Remote Party 1]: '
+        'are delivered ONLY by the SYSTEM from real audio. CRITICAL RULES:');
+    buf.writeln(
+        '- NEVER generate, simulate, or fabricate transcript lines. '
+        'Do NOT write "[Remote Party 1]: ..." or "[Host]: ..." in your '
+        'output under ANY circumstances. You are the agent — your output '
+        'is YOUR speech only.');
+    buf.writeln(
+        '- NEVER predict, imagine, or role-play what the other party will '
+        'say. You do NOT know what they will say next. Wait for the SYSTEM '
+        'to deliver their actual words.');
+    buf.writeln(
+        '- After initiating a call or greeting someone, say your piece and '
+        'then STOP. Do not continue the conversation with yourself. Real '
+        'transcripts will arrive when the other party actually speaks.');
+    buf.writeln(
+        '- If no transcripts arrive for a while, remain SILENT. Do not '
+        'fill the silence with fabricated dialogue or narration.');
+    buf.writeln();
 
     buf.writeln('## Messaging (SMS)');
     buf.writeln('When SMS is configured for this device, you may use tools to '

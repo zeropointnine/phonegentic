@@ -44,6 +44,20 @@ class DemoModeConfig {
   }
 }
 
+class AgentManagerConfig {
+  final String phoneNumber;
+
+  const AgentManagerConfig({this.phoneNumber = ''});
+
+  bool get isConfigured => phoneNumber.isNotEmpty;
+
+  AgentManagerConfig copyWith({String? phoneNumber}) {
+    return AgentManagerConfig(
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+    );
+  }
+}
+
 class UserConfigService {
   static const _prefix = 'user_';
 
@@ -73,6 +87,21 @@ class UserConfigService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('${_prefix}demo_mode_enabled', config.enabled);
     await prefs.setString('${_prefix}demo_fake_number', config.fakeNumber);
+  }
+
+  static Future<AgentManagerConfig> loadAgentManagerConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    return AgentManagerConfig(
+      phoneNumber:
+          prefs.getString('${_prefix}agent_manager_phone') ?? '',
+    );
+  }
+
+  static Future<void> saveAgentManagerConfig(
+      AgentManagerConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        '${_prefix}agent_manager_phone', config.phoneNumber);
   }
 
   static Future<FlightAwareConfig> loadFlightAwareConfig() =>

@@ -64,6 +64,45 @@ class ContactService extends ChangeNotifier {
     return _phoneCache[normalized];
   }
 
+  /// Fast synchronous autocomplete for the dialpad.
+  ///
+  /// If [query] is purely digits, matches contacts whose normalized phone
+  /// contains the digit sequence. If it contains letters, does a
+  /// case-insensitive substring match on display_name, company, and email.
+  /// Capped at 8 results for snappy rendering.
+  List<Map<String, dynamic>> autocompleteSearch(String query) {
+    if (query.length < 2) return [];
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(query);
+
+    if (!hasLetters) {
+      final stripped = query.replaceAll(RegExp(r'[^\d]'), '');
+      if (stripped.length < 3) return [];
+      final results = <Map<String, dynamic>>[];
+      for (final entry in _phoneCache.entries) {
+        if (entry.key.contains(stripped)) {
+          results.add(entry.value);
+          if (results.length >= 8) break;
+        }
+      }
+      return results;
+    }
+
+    final lower = query.toLowerCase();
+    final results = <Map<String, dynamic>>[];
+    for (final c in _contacts) {
+      final name = (c['display_name'] as String? ?? '').toLowerCase();
+      final company = (c['company'] as String? ?? '').toLowerCase();
+      final email = (c['email'] as String? ?? '').toLowerCase();
+      if (name.contains(lower) ||
+          company.contains(lower) ||
+          email.contains(lower)) {
+        results.add(c);
+        if (results.length >= 8) break;
+      }
+    }
+    return results;
+  }
+
   /// Returns every contact whose normalized phone matches [phoneNumber].
   List<Map<String, dynamic>> lookupAllByPhone(String phoneNumber) {
     final normalized = CallHistoryDb.normalizePhone(phoneNumber);

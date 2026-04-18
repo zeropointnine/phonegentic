@@ -407,6 +407,42 @@ class WhisperRealtimeService {
       },
       {
         'type': 'function',
+        'name': 'save_contact',
+        'description':
+            'Save or update a contact in the local contacts database. '
+                'Use when a caller provides their name, email, or company. '
+                'If a contact already exists for the phone number, it is updated; '
+                'otherwise a new contact is created.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'phone_number': {
+              'type': 'string',
+              'description':
+                  'Phone number (E.164 preferred). Uses the current caller\'s '
+                      'number if omitted during an active call.',
+            },
+            'display_name': {
+              'type': 'string',
+              'description': 'Contact display name (e.g. "John Smith").',
+            },
+            'email': {
+              'type': 'string',
+              'description': 'Email address (optional).',
+            },
+            'company': {
+              'type': 'string',
+              'description': 'Company or organization (optional).',
+            },
+            'notes': {
+              'type': 'string',
+              'description': 'Free-form notes about the contact (optional).',
+            },
+          },
+        },
+      },
+      {
+        'type': 'function',
         'name': 'create_tear_sheet',
         'description':
             'Create a Tear Sheet (automated call queue) from a list of contacts/numbers. '
