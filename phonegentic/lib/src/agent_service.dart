@@ -1915,6 +1915,23 @@ class AgentService extends ChangeNotifier {
         },
       },
     ),
+    LlmTool(
+      name: 'cancel_reminder',
+      description:
+          'Cancel/remove a pending reminder. Use when the manager asks to '
+          'cancel, remove, or delete a reminder. List reminders first if the '
+          'ID is unknown.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'reminder_id': {
+            'type': 'integer',
+            'description': 'The ID of the reminder to cancel.',
+          },
+        },
+        'required': ['reminder_id'],
+      },
+    ),
   ];
 
   /// Push integration-specific tools and instructions to both pipelines.
@@ -2974,6 +2991,9 @@ class AgentService extends ChangeNotifier {
         case 'list_reminders':
           result = await _handleListReminders(args);
           break;
+        case 'cancel_reminder':
+          result = await _handleCancelReminder(args);
+          break;
         case 'create_transfer_rule':
           result = await _handleCreateTransferRule(args);
           break;
@@ -3111,6 +3131,9 @@ class AgentService extends ChangeNotifier {
           break;
         case 'list_reminders':
           result = await _handleListReminders(req.arguments);
+          break;
+        case 'cancel_reminder':
+          result = await _handleCancelReminder(req.arguments);
           break;
         case 'create_transfer_rule':
           result = await _handleCreateTransferRule(req.arguments);
@@ -3455,7 +3478,19 @@ class AgentService extends ChangeNotifier {
 
     DateTime remindAt;
     try {
-      remindAt = DateTime.parse(remindAtRaw);
+      // LLMs typically send times in the user's local timezone but may append
+      // a Z suffix (UTC indicator) by mistake. Strip trailing Z/z so
+      // DateTime.parse interprets the value as local time.
+      final normalized = remindAtRaw.endsWith('Z') || remindAtRaw.endsWith('z')
+          ? remindAtRaw.substring(0, remindAtRaw.length - 1)
+          : remindAtRaw;
+      remindAt = DateTime.parse(normalized);
+      if (remindAt.isUtc) {
+        remindAt = DateTime(remindAt.year, remindAt.month, remindAt.day,
+            remindAt.hour, remindAt.minute, remindAt.second);
+      }
+      debugPrint(
+          '[AgentService] create_reminder: raw="$remindAtRaw" → local=$remindAt (utc=${remindAt.toUtc()})');
     } catch (_) {
       return 'Invalid remind_at format. Use ISO 8601 (e.g. 2026-04-17T15:00:00).';
     }
@@ -3489,6 +3524,8 @@ class AgentService extends ChangeNotifier {
       remindAt: remindAt,
       googleCalendarEventId: gcalEventId,
     );
+
+    managerPresenceService?.onReminderCreatedOrChanged();
 
     final localTime = remindAt.toLocal();
     final timeStr =
@@ -3647,6 +3684,25 @@ class AgentService extends ChangeNotifier {
       buf.writeln();
     }
     return buf.toString();
+  }
+
+  Future<String> _handleCancelReminder(Map<String, dynamic> args) async {
+    final id = args['reminder_id'] as int?;
+    if (id == null) return 'reminder_id is required.';
+
+    final row = await CallHistoryDb.getReminderById(id);
+    if (row == null) return 'No reminder found with id=$id.';
+
+    final status = row['status'] as String? ?? '';
+    if (status != 'pending') {
+      return 'Reminder $id is already $status — cannot cancel.';
+    }
+
+    await CallHistoryDb.updateReminderStatus(id, 'cancelled');
+    managerPresenceService?.onReminderCreatedOrChanged();
+
+    final title = row['title'] as String? ?? 'Untitled';
+    return 'Reminder "$title" [id=$id] has been cancelled.';
   }
 
   // ---------------------------------------------------------------------------

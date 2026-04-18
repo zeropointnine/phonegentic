@@ -1208,6 +1208,17 @@ class CallHistoryDb {
     );
   }
 
+  static Future<Map<String, dynamic>?> getReminderById(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      'agent_reminders',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
   static Future<void> updateReminderStatus(int id, String status) async {
     final db = await database;
     await db.update(

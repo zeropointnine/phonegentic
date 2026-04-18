@@ -790,6 +790,24 @@ class WhisperRealtimeService {
       },
       {
         'type': 'function',
+        'name': 'cancel_reminder',
+        'description':
+            'Cancel/remove a pending reminder. Use when the manager asks to '
+                'cancel, remove, or delete a reminder. List reminders first if '
+                'the ID is unknown.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'reminder_id': {
+              'type': 'integer',
+              'description': 'The ID of the reminder to cancel.',
+            },
+          },
+          'required': ['reminder_id'],
+        },
+      },
+      {
+        'type': 'function',
         'name': 'create_transfer_rule',
         'description':
             'Create a persistent call transfer rule. When a caller matching '
