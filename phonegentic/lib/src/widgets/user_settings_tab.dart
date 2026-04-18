@@ -196,6 +196,7 @@ class UserSettingsTab extends StatefulWidget {
 class _UserSettingsTabState extends State<UserSettingsTab> {
   CalendlyConfig _calendly = const CalendlyConfig();
   DemoModeConfig _demo = const DemoModeConfig();
+  AgentManagerConfig _agentManager = const AgentManagerConfig();
   TelnyxMessagingConfig _telnyxMsg = const TelnyxMessagingConfig();
   TwilioMessagingConfig _twilioMsg = const TwilioMessagingConfig();
   MessagingBackend _messagingBackend = MessagingBackend.telnyx;
@@ -235,6 +236,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   final _twilioTokenCtrl = TextEditingController();
   final _twilioFromCtrl = TextEditingController();
 
+  final _agentManagerPhoneCtrl = TextEditingController();
+
   final _flightNumberCtrl = TextEditingController();
   final _originCtrl = TextEditingController();
   final _destCtrl = TextEditingController();
@@ -249,6 +252,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   void dispose() {
     _calendlyKeyCtrl.dispose();
     _fakeNumberCtrl.dispose();
+    _agentManagerPhoneCtrl.dispose();
     _telnyxMsgKeyCtrl.dispose();
     _telnyxMsgFromCtrl.dispose();
     _telnyxMsgProfileCtrl.dispose();
@@ -276,10 +280,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final gm = await GmailConfig.load();
     final gc = await GoogleCalendarConfig.load();
     final gs = await GoogleSearchConfig.load();
+    final am = await UserConfigService.loadAgentManagerConfig();
     if (!mounted) return;
     setState(() {
       _calendly = c;
       _demo = d;
+      _agentManager = am;
       _telnyxMsg = t;
       _twilioMsg = tw;
       _messagingBackend = backend;
@@ -289,6 +295,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _googleSearch = gs;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
+      _agentManagerPhoneCtrl.text = am.phoneNumber;
       _telnyxMsgKeyCtrl.text = t.apiKey;
       _telnyxMsgFromCtrl.text = t.fromNumber;
       _telnyxMsgProfileCtrl.text = t.messagingProfileId;
@@ -305,6 +312,11 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     if (c.apiKey.isNotEmpty) {
       context.read<CalendarSyncService>().syncNow();
     }
+  }
+
+  void _updateAgentManager(AgentManagerConfig am) {
+    setState(() => _agentManager = am);
+    UserConfigService.saveAgentManagerConfig(am);
   }
 
   void _updateDemo(DemoModeConfig d) {
@@ -541,6 +553,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   _buildAppearanceCard(),
                   const SizedBox(height: 16),
                   _buildIntegrationsCard(),
+                  const SizedBox(height: 16),
+                  _buildAgentManagerCard(),
                   const SizedBox(height: 16),
                   _buildDemoModeCard(),
                   const SizedBox(height: 40),
@@ -1076,6 +1090,122 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
           ),
         ],
       ),
+    );
+  }
+
+  // ───── Agent Manager ─────
+
+  Widget _buildAgentManagerCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'AGENT MANAGER',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: _agentManager.isConfigured
+                            ? AppColors.accent.withValues(alpha: 0.12)
+                            : AppColors.card,
+                      ),
+                      child: Icon(Icons.admin_panel_settings_rounded,
+                          size: 17,
+                          color: _agentManager.isConfigured
+                              ? AppColors.accent
+                              : AppColors.textTertiary),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Manager Phone Number',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'This caller gets host-level privileges on inbound calls',
+                            style: TextStyle(
+                                fontSize: 11, color: AppColors.textTertiary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 100,
+                      child: Text('Phone',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _agentManagerPhoneCtrl,
+                        autocorrect: false,
+                        keyboardType: TextInputType.phone,
+                        style: TextStyle(
+                            fontSize: 14, color: AppColors.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: '+1 (555) 123-4567',
+                          hintStyle: TextStyle(
+                              fontSize: 13, color: AppColors.textTertiary),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onChanged: (val) => _updateAgentManager(
+                            _agentManager.copyWith(phoneNumber: val)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

@@ -37,6 +37,7 @@ import 'widgets/messaging_panel.dart';
 import 'widgets/inbound_call_flow_editor.dart';
 import 'widgets/job_function_editor.dart';
 import 'widgets/dialpad_autocomplete_overlay.dart';
+import 'widgets/dialpad_contact_preview.dart';
 import 'widgets/phonegentic_logo.dart';
 import 'widgets/quick_add_overlay.dart';
 import 'widgets/tear_sheet_editor.dart';
@@ -69,6 +70,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   List<Map<String, dynamic>> _autocompleteMatches = [];
   bool _dropdownOpen = false;
+  int _highlightedIndex = -1;
+  Map<String, dynamic>? _selectedContact;
   String? _lastDialedNumber;
 
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
@@ -127,22 +130,60 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _onDigitsChanged() {
     final text = _textController?.text ?? '';
-    if (text.length < 2) {
+    final contacts = Provider.of<ContactService>(context, listen: false);
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(text);
+
+    if (_selectedContact != null) {
+      final selectedDigits =
+          (_selectedContact!['phone_number'] as String? ?? '')
+              .replaceAll(RegExp(r'[^\d+]'), '');
+      if (text != selectedDigits) {
+        _selectedContact = null;
+      }
+    }
+
+    if (_selectedContact == null && !hasLetters && text.length >= 7) {
+      final match = contacts.lookupByPhone(text);
+      if (match != null) {
+        _selectedContact = match;
+      }
+    }
+
+    if (text.isEmpty) {
       if (_autocompleteMatches.isNotEmpty || _dropdownOpen) {
         setState(() {
+          _selectedContact = null;
           _autocompleteMatches = [];
           _dropdownOpen = false;
+          _highlightedIndex = -1;
         });
       }
       return;
     }
-    final contacts = Provider.of<ContactService>(context, listen: false);
-    final matches = contacts.autocompleteSearch(text);
-    if (!_listEquals(matches, _autocompleteMatches)) {
-      setState(() => _autocompleteMatches = matches);
-      if (matches.isEmpty && _dropdownOpen) {
-        setState(() => _dropdownOpen = false);
+
+    final List<Map<String, dynamic>> matches;
+    if (text.length < 2) {
+      if (_dropdownOpen) {
+        matches = contacts.contacts.take(8).toList();
+      } else {
+        return;
       }
+    } else {
+      matches = contacts.autocompleteSearch(text);
+    }
+
+    if (!_listEquals(matches, _autocompleteMatches)) {
+      setState(() {
+        _autocompleteMatches = matches;
+        _highlightedIndex = -1;
+        if (matches.isEmpty && _dropdownOpen) {
+          _dropdownOpen = false;
+        } else if (hasLetters && matches.isNotEmpty && !_dropdownOpen) {
+          _dropdownOpen = true;
+        }
+      });
+    } else if (hasLetters && matches.isNotEmpty && !_dropdownOpen) {
+      setState(() => _dropdownOpen = true);
     }
   }
 
@@ -160,12 +201,16 @@ class _MyDialPadWidget extends State<DialPadWidget>
     if (_activeCall != null) return false;
 
     final FocusNode? primary = FocusManager.instance.primaryFocus;
-    if (primary != null && primary.context != null) {
-      if (primary.context!.findAncestorWidgetOfExactType<EditableText>() !=
-          null) {
-        return false;
-      }
+    final bool inTextField = primary != null &&
+        primary.context != null &&
+        primary.context!.findAncestorWidgetOfExactType<EditableText>() != null;
+
+    if (event.logicalKey == LogicalKeyboardKey.slash && !inTextField) {
+      _handleSlashSearch();
+      return true;
     }
+
+    if (inTextField) return false;
 
     if (event.logicalKey == LogicalKeyboardKey.escape) {
       if (_dropdownOpen) {
@@ -380,6 +425,59 @@ class _MyDialPadWidget extends State<DialPadWidget>
                                   : Focus(
                                       autofocus: true,
                                       focusNode: _focusNode,
+                                      onKeyEvent: (node, event) {
+                                        if (event is! KeyDownEvent &&
+                                            event is! KeyRepeatEvent) {
+                                          return KeyEventResult.ignored;
+                                        }
+                                        if (!_dropdownOpen ||
+                                            _autocompleteMatches.isEmpty) {
+                                          return KeyEventResult.ignored;
+                                        }
+                                        final len =
+                                            _autocompleteMatches.length;
+                                        final key = event.logicalKey;
+                                        if (key ==
+                                                LogicalKeyboardKey
+                                                    .arrowDown ||
+                                            (key ==
+                                                    LogicalKeyboardKey
+                                                        .tab &&
+                                                !HardwareKeyboard.instance
+                                                    .isShiftPressed)) {
+                                          setState(() {
+                                            _highlightedIndex =
+                                                (_highlightedIndex + 1) %
+                                                    len;
+                                          });
+                                          return KeyEventResult.handled;
+                                        }
+                                        if (key ==
+                                                LogicalKeyboardKey
+                                                    .arrowUp ||
+                                            (key ==
+                                                    LogicalKeyboardKey
+                                                        .tab &&
+                                                HardwareKeyboard.instance
+                                                    .isShiftPressed)) {
+                                          setState(() {
+                                            _highlightedIndex =
+                                                (_highlightedIndex - 1 +
+                                                        len) %
+                                                    len;
+                                          });
+                                          return KeyEventResult.handled;
+                                        }
+                                        if (key ==
+                                                LogicalKeyboardKey.enter &&
+                                            _highlightedIndex >= 0) {
+                                          _onAutocompleteSelect(
+                                              _autocompleteMatches[
+                                                  _highlightedIndex]);
+                                          return KeyEventResult.handled;
+                                        }
+                                        return KeyEventResult.ignored;
+                                      },
                                       child: _buildDialpadSection(),
                                     ),
                             ),
@@ -556,7 +654,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _dismissAutocomplete() {
     if (_dropdownOpen) {
-      setState(() => _dropdownOpen = false);
+      setState(() {
+        _dropdownOpen = false;
+        _highlightedIndex = -1;
+      });
     }
   }
 
@@ -573,7 +674,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
           ),
         Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 380),
+            constraints: const BoxConstraints(maxWidth: 450),
             child: _buildPhoneContent(),
           ),
         ),
@@ -1359,8 +1460,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
     if (phone.isEmpty) return;
     final digits = phone.replaceAll(RegExp(r'[^\d+]'), '');
     setState(() {
+      _selectedContact = contact;
       _textController!.text = digits;
       _dropdownOpen = false;
+      _highlightedIndex = -1;
     });
   }
 
@@ -1430,6 +1533,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                       right: 0,
                       child: DialpadAutocompleteDropdown(
                         matches: _autocompleteMatches,
+                        highlightedIndex: _highlightedIndex,
                         onSelect: _onAutocompleteSelect,
                         onCall: _onAutocompleteCall,
                         onMessage: _onAutocompleteMessage,
@@ -1449,6 +1553,31 @@ class _MyDialPadWidget extends State<DialPadWidget>
     setState(() => _dropdownOpen = !_dropdownOpen);
   }
 
+  void _handleSlashSearch() {
+    if (_dropdownOpen) {
+      setState(() {
+        _dropdownOpen = false;
+        _highlightedIndex = -1;
+      });
+      return;
+    }
+    if (_autocompleteMatches.isNotEmpty) {
+      setState(() => _dropdownOpen = true);
+      return;
+    }
+    final text = _textController?.text ?? '';
+    final contacts = Provider.of<ContactService>(context, listen: false);
+    final matches = text.length >= 2
+        ? contacts.autocompleteSearch(text)
+        : contacts.contacts.take(8).toList();
+    if (matches.isNotEmpty) {
+      setState(() {
+        _autocompleteMatches = matches;
+        _dropdownOpen = true;
+      });
+    }
+  }
+
   Widget _buildNumberDisplay() {
     final raw = _textController?.text ?? '';
     final demoMode = context.watch<DemoModeService>();
@@ -1464,6 +1593,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                 : PhoneFormatter.format(raw);
     final borderColor = AppColors.border.withValues(alpha: 0.5);
     const borderWidth = 0.5;
+
     return Container(
       width: showDropdown ? double.infinity : null,
       decoration: showDropdown
@@ -1498,51 +1628,102 @@ class _MyDialPadWidget extends State<DialPadWidget>
                         letterSpacing: 0.5,
                       ),
                     )
-                  : FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        display,
-                        style: TextStyle(
-                          fontSize: hasLetters ? 28 : 34,
-                          fontWeight:
-                              hasLetters ? FontWeight.w400 : FontWeight.w300,
-                          color: AppColors.textPrimary,
-                          letterSpacing: hasLetters ? -0.3 : 2,
-                          shadows: hasLetters
-                              ? null
-                              : [
-                                  Shadow(
-                                    color: AppColors.phosphor
-                                        .withValues(alpha: 0.35),
-                                    blurRadius: 12,
+                  : _selectedContact != null
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ContactIdenticon(
+                              seed: (_selectedContact!['display_name']
+                                          as String? ??
+                                      '')
+                                  .isEmpty
+                                  ? display
+                                  : _selectedContact!['display_name']
+                                      as String,
+                              size: 36,
+                            ),
+                            const SizedBox(width: 10),
+                            Flexible(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    demoMode.maskDisplayName(
+                                        _selectedContact!['display_name']
+                                                as String? ??
+                                            display),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                      letterSpacing: -0.3,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    display,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w400,
+                                      color: AppColors.textSecondary,
+                                    ),
                                   ),
                                 ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            display,
+                            style: TextStyle(
+                              fontSize: hasLetters ? 28 : 34,
+                              fontWeight:
+                                  hasLetters ? FontWeight.w400 : FontWeight.w300,
+                              color: AppColors.textPrimary,
+                              letterSpacing: hasLetters ? -0.3 : 2,
+                              shadows: hasLetters
+                                  ? null
+                                  : [
+                                      Shadow(
+                                        color: AppColors.phosphor
+                                            .withValues(alpha: 0.35),
+                                        blurRadius: 12,
+                                      ),
+                                    ],
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
             ),
           ),
           if (hasSearchResults)
             Positioned(
-              top: 5,
-              right: 5,
+              top: 6,
+              right: 10,
               child: GestureDetector(
                 onTap: _toggleSearchDropdown,
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: _dropdownOpen
-                        ? AppColors.accent.withValues(alpha: 0.15)
+                        ? AppColors.burntAmber.withValues(alpha: 0.18)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
                     Icons.search_rounded,
-                    size: 18,
+                    size: 24,
                     color: _dropdownOpen
-                        ? AppColors.accent
-                        : AppColors.textSecondary,
+                        ? AppColors.burntAmber
+                        : AppColors.burntAmber.withValues(alpha: 0.55),
                   ),
                 ),
               ),

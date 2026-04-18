@@ -24,6 +24,7 @@ import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
+import 'user_config_service.dart';
 import 'elevenlabs_api_service.dart';
 import 'ivr_detector.dart';
 import 'job_function_service.dart';
@@ -234,6 +235,7 @@ class AgentService extends ChangeNotifier {
 
   TextAgentService? _textAgent;
   TextAgentConfig? _textAgentConfig;
+  AgentManagerConfig _agentManagerConfig = const AgentManagerConfig();
   bool get _splitPipeline => _textAgent != null;
 
   ElevenLabsTtsService? _tts;
@@ -649,6 +651,7 @@ class AgentService extends ChangeNotifier {
       _echoGuardMs = config.echoGuardMs;
       _textAgentConfig = await AgentConfigService.loadTextConfig();
       _ttsConfig = await AgentConfigService.loadTtsConfig();
+      _agentManagerConfig = await UserConfigService.loadAgentManagerConfig();
 
       // ── Kokoro TTS diagnostic ──
       debugPrint('[KokoroTTS-DIAG] OnDeviceConfig.enabled=${OnDeviceConfig.enabled}');
@@ -1168,6 +1171,16 @@ class AgentService extends ChangeNotifier {
     if (gmail.isNotEmpty) buf.write(gmail);
     if (gcal.isNotEmpty) buf.write(gcal);
     if (gsearch.isNotEmpty) buf.write(gsearch);
+    if (_isCallerAgentManager) {
+      buf.write('\n\n## Agent Manager'
+          '\nThe current inbound caller is the designated **Agent Manager** — '
+          'they have the same authority as the host. Treat their requests '
+          'exactly as you would the host\'s: obey direct commands, read '
+          'emails on request, change settings, assign job functions, add '
+          'numbers to call flows, and perform any other privileged operation '
+          'they ask for. Do NOT refuse or apply inbound-caller restrictions '
+          'to this person.');
+    }
     if (prompt.isNotEmpty) {
       buf.write('\n\n## Additional Instructions\n$prompt');
     }
@@ -1865,6 +1878,28 @@ class AgentService extends ChangeNotifier {
     return false;
   }
 
+  /// Returns true if [text] is a near-duplicate of a recent agent message
+  /// in the UI, preventing the same greeting from appearing twice.
+  bool _isDuplicateAgentMessage(String text) {
+    final lower = text.toLowerCase();
+    final words = lower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+    if (words.length < 4) return false;
+    final now = DateTime.now();
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      final m = _messages[i];
+      if (m.role != ChatRole.agent) continue;
+      if (now.difference(m.timestamp).inSeconds > 15) break;
+      if (m.isStreaming) continue;
+      final mWords =
+          m.text.toLowerCase().split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      if (mWords.isEmpty) continue;
+      final overlap = words.intersection(mWords).length;
+      final ratio = overlap / words.length;
+      if (ratio >= 0.5) return true;
+    }
+    return false;
+  }
+
   /// TTS generation finished — all audio chunks have been emitted to native.
   /// Transition UI to "Listening" quickly, but keep isTtsPlaying gated until
   /// native confirms playback is done (onPlaybackComplete).  This gives a
@@ -2366,6 +2401,15 @@ class AgentService extends ChangeNotifier {
                   ? _voiceUiBuffer.toString()
                   : _messages[idx].text);
 
+          if (_isDuplicateAgentMessage(finalText)) {
+            debugPrint('[AgentService] Streaming duplicate suppressed');
+            _messages.removeAt(idx);
+            _streamingMessageId = null;
+            _resetVoiceUiSyncState();
+            notifyListeners();
+            return;
+          }
+
           _recentAgentTexts.add(finalText);
           while (_recentAgentTexts.length > _maxRecentAgentTexts) {
             _recentAgentTexts.removeAt(0);
@@ -2528,6 +2572,9 @@ class AgentService extends ChangeNotifier {
         case 'search_contacts':
           result = await _handleSearchContacts(args);
           break;
+        case 'save_contact':
+          result = await _handleSaveContact(args);
+          break;
         case 'create_tear_sheet':
           result = await _handleCreateTearSheet(args);
           break;
@@ -2626,6 +2673,9 @@ class AgentService extends ChangeNotifier {
           break;
         case 'search_contacts':
           result = await _handleSearchContacts(req.arguments);
+          break;
+        case 'save_contact':
+          result = await _handleSaveContact(req.arguments);
           break;
         case 'create_tear_sheet':
           result = await _handleCreateTearSheet(req.arguments);
@@ -3123,6 +3173,67 @@ class AgentService extends ChangeNotifier {
     return buf.toString();
   }
 
+  Future<String> _handleSaveContact(Map<String, dynamic> args) async {
+    var phone = args['phone_number'] as String? ?? '';
+    if (phone.isEmpty && _callPhase.isActive) {
+      phone = _remoteIdentity ?? '';
+    }
+    if (phone.isEmpty) return 'No phone number provided and no active call.';
+
+    final name = args['display_name'] as String?;
+    final email = args['email'] as String?;
+    final company = args['company'] as String?;
+    final notes = args['notes'] as String?;
+
+    try {
+      final existing = contactService?.lookupByPhone(phone);
+      if (existing != null) {
+        final id = existing['id'] as int;
+        final updates = <String, dynamic>{};
+        if (name != null && name.isNotEmpty) updates['display_name'] = name;
+        if (email != null && email.isNotEmpty) updates['email'] = email;
+        if (company != null && company.isNotEmpty) updates['company'] = company;
+        if (notes != null && notes.isNotEmpty) updates['notes'] = notes;
+        if (updates.isEmpty) return 'Contact already exists — no new fields to update.';
+        await CallHistoryDb.updateContact(id, updates);
+        await contactService?.loadAll();
+
+        // Also update the remote speaker label if we just learned their name.
+        if (name != null && name.isNotEmpty && _callPhase.isActive) {
+          final rid = _remoteIdentity;
+          if (rid != null &&
+              CallHistoryDb.normalizePhone(phone) ==
+                  CallHistoryDb.normalizePhone(rid)) {
+            setRemotePartyName(name);
+          }
+        }
+        return 'Contact updated: ${name ?? existing['display_name']} ($phone).';
+      }
+
+      final displayName = (name != null && name.isNotEmpty) ? name : phone;
+      await CallHistoryDb.insertContact(
+        displayName: displayName,
+        phoneNumber: phone,
+        email: email,
+        company: company,
+        notes: notes,
+      );
+      await contactService?.loadAll();
+
+      if (name != null && name.isNotEmpty && _callPhase.isActive) {
+        final rid = _remoteIdentity;
+        if (rid != null &&
+            CallHistoryDb.normalizePhone(phone) ==
+                CallHistoryDb.normalizePhone(rid)) {
+          setRemotePartyName(name);
+        }
+      }
+      return 'Contact saved: $displayName ($phone).';
+    } catch (e) {
+      return 'Failed to save contact: ${e.toString().split('\n').first}';
+    }
+  }
+
   Future<String> _handleCreateTearSheet(Map<String, dynamic> args) async {
     if (tearSheetService == null) return 'Tear sheet service not available.';
 
@@ -3371,6 +3482,37 @@ class AgentService extends ChangeNotifier {
   // Access control helper for Gmail / Google Calendar read operations
   // ---------------------------------------------------------------------------
 
+  /// Returns the known display name for the current remote party, or null.
+  String? _resolveCallerName() {
+    // Prefer the speaker label if it was set (e.g. from contacts or voiceprint).
+    if (remoteSpeaker.name.isNotEmpty) return remoteSpeaker.name;
+    // Fall back to the SIP display name.
+    if (_remoteDisplayName != null && _remoteDisplayName!.isNotEmpty) {
+      return _remoteDisplayName;
+    }
+    // Try a contact lookup by phone.
+    final rid = _remoteIdentity;
+    if (rid != null && rid.isNotEmpty) {
+      final contact = contactService?.lookupByPhone(rid);
+      final name = contact?['display_name'] as String?;
+      if (name != null && name.isNotEmpty && name != rid) return name;
+    }
+    return null;
+  }
+
+  /// True when the current inbound caller matches the configured agent manager
+  /// phone number — this caller should be treated with host-level privileges.
+  bool get _isCallerAgentManager {
+    if (!_agentManagerConfig.isConfigured) return false;
+    if (!_callPhase.isActive || _isOutbound) return false;
+    final remote = _remoteIdentity;
+    if (remote == null || remote.isEmpty) return false;
+    final normalizedRemote = CallHistoryDb.normalizePhone(remote);
+    final normalizedManager =
+        CallHistoryDb.normalizePhone(_agentManagerConfig.phoneNumber);
+    return normalizedRemote == normalizedManager;
+  }
+
   /// Returns null if access is granted, or a rejection message if denied.
   String? _checkReadAccess({
     required dynamic readAccessMode,
@@ -3381,6 +3523,9 @@ class AgentService extends ChangeNotifier {
         readAccessMode == CalendarReadAccess.unrestricted) {
       return null;
     }
+
+    // Agent manager callers are treated as the host for access control.
+    if (_isCallerAgentManager) return null;
 
     final hasInboundCall = _callPhase.isActive && !_isOutbound;
 
@@ -3938,6 +4083,13 @@ class AgentService extends ChangeNotifier {
     // Auto-mute/unmute based on policy
     _applyMutePolicy(phase);
 
+    // Refresh text agent instructions when call state changes so that
+    // context like agent-manager elevation is present during the call.
+    if (phase == CallPhase.initiating || phase == CallPhase.ended ||
+        phase == CallPhase.failed) {
+      _textAgent?.updateInstructions(_buildTextAgentInstructions());
+    }
+
     // Start/end call history records
     if (phase == CallPhase.initiating || phase == CallPhase.ringing) {
       callHistory?.startCallRecord(
@@ -4284,13 +4436,22 @@ class AgentService extends ChangeNotifier {
 
     _whisperPriorTranscriptOnce();
 
-    final prompt = _isOutbound
-        ? '[SYSTEM] The call is connected and the line is quiet. '
-            'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
-            'Otherwise, begin the conversation per your job function instructions.'
-        : '[SYSTEM] An incoming call has connected. The caller is now on the line. '
-            'This is an INBOUND call — someone called you. Do NOT say "calling" or act as if you placed this call. '
-            'Greet the caller warmly and help them per your job function instructions.';
+    String prompt;
+    if (_isOutbound) {
+      prompt = '[SYSTEM] The call is connected and the line is quiet. '
+          'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+          'Otherwise, begin the conversation per your job function instructions.';
+    } else {
+      final callerName = _resolveCallerName();
+      final nameClause = callerName != null
+          ? 'The caller is $callerName. Address them by name.'
+          : 'You do not know the caller\'s name yet — if they provide it, '
+              'use save_contact to remember it for next time.';
+      prompt = '[SYSTEM] An incoming call has connected. The caller is now on the line. '
+          'This is an INBOUND call — someone called you. Do NOT say "calling" or act as if you placed this call. '
+          '$nameClause '
+          'Greet the caller warmly and help them per your job function instructions.';
+    }
     if (_splitPipeline && _textAgent != null) {
       _textAgent!.sendUserMessage(prompt);
     } else if (_active) {
@@ -4429,6 +4590,12 @@ class AgentService extends ChangeNotifier {
       _settleTranscripts.clear();
       debugPrint(
           '[AgentService] Pre-greet: added settle transcripts as context');
+    }
+
+    if (_isDuplicateAgentMessage(text)) {
+      debugPrint('[AgentService] Pre-greeting duplicate suppressed');
+      _textAgent?.clearPendingContext();
+      return;
     }
 
     _recentAgentTexts.add(text);

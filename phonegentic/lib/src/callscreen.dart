@@ -160,7 +160,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       case CallStateEnum.PROGRESS:
         return CallPhase.ringing;
       case CallStateEnum.ACCEPTED:
-        return CallPhase.answered;
       case CallStateEnum.CONFIRMED:
         return CallPhase.settling;
       case CallStateEnum.HOLD:
@@ -192,15 +191,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (s == CallStateEnum.CONFIRMED || s == CallStateEnum.ACCEPTED) {
       _state = s;
       _callConfirmed = true;
-      _enteredCallMode = true;
       _addCallReady = true;
+      _enterCallMode();
       _pushCallPhase(s);
     } else if (s == CallStateEnum.HOLD || s == CallStateEnum.UNHOLD) {
       _state = s;
       _callConfirmed = true;
       _hold = s == CallStateEnum.HOLD;
-      _enteredCallMode = true;
       _addCallReady = true;
+      _enterCallMode();
       _pushCallPhase(s);
     } else if (s != CallStateEnum.NONE) {
       _state = s;
@@ -265,8 +264,25 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   void callStateChanged(Call call, CallState callState) {
-    if (call.id != widget._call?.id) return;
+    if (call.id != widget._call?.id) {
+      debugPrint('[CallScreen] callStateChanged ignored: '
+          'event callId=${call.id} != widget callId=${widget._call?.id} '
+          'state=${callState.state}');
+      return;
+    }
     if (!mounted) return;
+
+    debugPrint('[CallScreen] callStateChanged: ${callState.state}');
+
+    // ACCEPTED and CONFIRMED both map to settling. If we already handled
+    // one, skip the other to avoid re-entering settling and generating a
+    // duplicate greeting.
+    if (_callConfirmed &&
+        (callState.state == CallStateEnum.ACCEPTED ||
+         callState.state == CallStateEnum.CONFIRMED)) {
+      _enterCallMode();
+      return;
+    }
 
     // Capture the call record ID before _pushCallPhase clears it, so
     // _stopRecording can save the recording path after the file is finalized.
@@ -319,6 +335,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         }
         _backToDialPad();
         break;
+      case CallStateEnum.ACCEPTED:
       case CallStateEnum.CONFIRMED:
         _state = callState.state;
         setState(() => _callConfirmed = true);
