@@ -240,7 +240,7 @@ class AgentBootContext {
     buf.writeln(
         '11. NEVER repeat phone numbers aloud. For outbound calls you initiate, say the person\'s name only (e.g. "Calling Zach" not "Calling Zach at 213-555-1234"). For inbound calls (someone calling you), NEVER say "calling" — greet them instead.');
     buf.writeln(
-        '12. The word "Phonegentic" is pronounced "Phone-JENT-ick" (rhymes with "genetic" with "Phone" in front). Never say "fon-AH-jen-tick" or similar.');
+        '12. The product name "Phonegentic" is two syllable groups: PHONE + GENTIC (like "genetic" without the first "e"). Say "Phone-JEN-tick". Never say "fon-AH-jen-tick", "phone-gen-EH-tic", or add extra syllables.');
     buf.writeln(
         '13. Be patient with turn-taking. People often pause mid-sentence to think — a brief silence does NOT mean they are done speaking. Wait for a clear end of thought (a complete sentence, a question, or a trailing-off) before responding. When in doubt, wait a beat longer. Never cut someone off or rush to fill a pause.');
     buf.writeln(
