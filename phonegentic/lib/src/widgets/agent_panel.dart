@@ -1839,6 +1839,7 @@ class _MessageBubble extends StatelessWidget {
             if (rid != null) {
               CallHistoryDb.updateReminderStatus(rid, 'dismissed');
             }
+            agent.removeMessage(message);
           } else if (value == 'snooze_reminder') {
             final rid = message.metadata?['reminder_id'] as int?;
             if (rid != null) {
@@ -1848,6 +1849,7 @@ class _MessageBubble extends StatelessWidget {
                 remindAt: DateTime.now().add(const Duration(minutes: 15)),
               );
             }
+            agent.removeMessage(message);
           } else if (value == 'confirm_missed_reminder') {
             final rid = message.metadata?['reminder_id'] as int?;
             if (rid != null) {
@@ -1859,8 +1861,10 @@ class _MessageBubble extends StatelessWidget {
               '[MISSED REMINDER CONFIRMED] Manager wants to proceed with: $cleanText',
               requireResponse: true,
             );
+            agent.removeMessage(message);
           } else if (value == 'tell_me_more') {
             agent.sendUserMessage('Tell me more about: ${message.text}');
+            agent.removeMessage(message);
           }
         },
       );

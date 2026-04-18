@@ -168,6 +168,7 @@ class MyApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProxyProvider<AgentService, ManagerPresenceService>(
+          lazy: false,
           create: (_) => ManagerPresenceService()..start(),
           update: (_, agent, presence) {
             presence!.agent = agent;

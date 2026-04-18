@@ -556,6 +556,11 @@ class AgentService extends ChangeNotifier {
     return raw;
   }
   List<ChatMessage> get messages => List.unmodifiable(_messages);
+
+  void removeMessage(ChatMessage msg) {
+    _messages.remove(msg);
+    notifyListeners();
+  }
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
 

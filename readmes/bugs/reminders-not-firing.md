@@ -33,11 +33,15 @@ Reminders set by the agent (e.g. "call me at 7:30") never actually trigger at th
 7. **Add `debugPrint` in `_fireReminder`, `_checkReminders`, and `onReminderCreatedOrChanged`** so the fire path is visible in logs.
 8. **Await `_fireReminder` calls** in `_checkReminders` to avoid fire-and-forget races.
 
-### Phase 3 (current)
+### Phase 3
 
-9. **`start()` silent failure**: The `..start()` cascade in `ChangeNotifierProxyProvider` discards the returned `Future`, so any exception during `start()` (e.g. from DB or config loading) silently kills the service with zero log output. This explains why no `[ManagerPresence]` logs appeared at all — the service never finished initializing.
-10. **Fix: Initialize timer before async work**: Restructured `start()` so `_reminderCheckTimer` is created *before* any `await` calls. Even if config/DB loading fails, the periodic check still runs.
-11. **Fix: try-catch everywhere**: Wrapped `start()`, `_checkReminders()`, `onReminderCreatedOrChanged()`, and `_fireReminder()` in try-catch blocks with `debugPrint` so failures are always logged and never silently swallowed.
+9. **`start()` silent failure prevention**: Restructured `start()` so `_reminderCheckTimer` is created *before* any `await` calls, and wrapped async work in try-catch. Even if config/DB loading fails, the periodic check still runs.
+10. **try-catch everywhere**: Wrapped `start()`, `_checkReminders()`, `onReminderCreatedOrChanged()`, and `_fireReminder()` in try-catch blocks with `debugPrint` so failures are always logged.
+
+### Phase 4 (current)
+
+11. **Provider is lazy — service never created**: `ChangeNotifierProxyProvider<AgentService, ManagerPresenceService>` defaults to `lazy: true`. Since no widget in the tree ever calls `context.watch<ManagerPresenceService>()` or `context.read<ManagerPresenceService>()`, the `create` callback never fires. The service is only referenced as a field on `AgentService` (set in the `update` callback), but `update` also never runs because `create` hasn't run. **The service was literally never instantiated.** This is why zero `[ManagerPresence]` logs appeared across multiple debugging sessions.
+12. **Fix: `lazy: false`**: Added `lazy: false` to the provider in `main.dart` so `ManagerPresenceService` is created eagerly at app startup regardless of whether any widget reads it.
 
 ## Files
 
