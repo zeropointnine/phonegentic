@@ -129,13 +129,19 @@ class ComfortNoiseService extends ChangeNotifier {
   }
 
   /// Start looping comfort noise into the call audio stream.
-  /// The brief delay allows the native audio pipeline (enterCallMode /
-  /// WebRTC processor registration) to finish before we push PCM chunks.
-  Future<void> startPlayback(String? jobOverride) async {
+  ///
+  /// When [waitForPipeline] is true (default for the initial settling phase),
+  /// a brief delay is inserted to let the native WebRTC audio processor
+  /// finish registering before we push PCM chunks.  During an established
+  /// call (e.g. between turns) pass `false` to start immediately.
+  Future<void> startPlayback(
+    String? jobOverride, {
+    bool waitForPipeline = true,
+  }) async {
     final path = resolveEffectivePath(jobOverride);
     debugPrint('[ComfortNoise] startPlayback: jobOverride=$jobOverride '
         'globalEnabled=${_config.enabled} globalPath=${_config.selectedPath} '
-        'resolved=$path playing=$_playing');
+        'resolved=$path playing=$_playing wait=$waitForPipeline');
     if (path == null || path.isEmpty) return;
     if (_playing) return;
 
@@ -152,12 +158,12 @@ class ComfortNoiseService extends ChangeNotifier {
         return;
       }
 
-      // Wait for the native audio pipeline to initialise (enterCallMode
-      // registers the WebRTC audio processor asynchronously).
-      await Future.delayed(const Duration(milliseconds: 250));
-      if (_stopRequested || _playing) {
-        debugPrint('[ComfortNoise] Cancelled during pipeline wait');
-        return;
+      if (waitForPipeline) {
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (_stopRequested || _playing) {
+          debugPrint('[ComfortNoise] Cancelled during pipeline wait');
+          return;
+        }
       }
 
       debugPrint('[ComfortNoise] Playing ${pcm.length} bytes '

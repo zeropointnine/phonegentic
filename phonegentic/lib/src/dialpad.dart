@@ -75,6 +75,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
   String? _lastDialedNumber;
 
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
+  bool _safetyCallModeForced = false;
   Timer? _conferenceTimeout;
   String? _conferenceTimeoutCallId;
 
@@ -1959,6 +1960,13 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
         if (_calls.isEmpty) {
           context.read<InboundCallFlowService>().clearActiveFlow();
+          if (_safetyCallModeForced) {
+            _safetyCallModeForced = false;
+            Future.delayed(const Duration(milliseconds: 500), () {
+              _tapChannel.invokeMethod('exitCallMode');
+              debugPrint('[Dialpad] Auto-answer safety: exitCallMode on call end');
+            });
+          }
         }
         _stopRinging();
 
@@ -2112,6 +2120,19 @@ class _MyDialPadWidget extends State<DialPadWidget>
       _inboundRingStart = null;
       _forkGraceTimer = null;
       agent.forkCoalescing = false;
+
+      // The CallScreen's SIP listener missed the ACCEPTED/CONFIRMED
+      // transitions, so enterCallMode was never called. Route TTS audio
+      // through the WebRTC stream so the remote party can hear the agent.
+      _safetyCallModeForced = true;
+      _tapChannel.invokeMethod('enterCallMode').then((_) {
+        _tapChannel.invokeMethod('setRemoteGain', {'gain': 1.5});
+        _tapChannel.invokeMethod('setCompressorStrength', {'strength': 0.6});
+        debugPrint(
+            '[Dialpad] Auto-answer safety: enterCallMode forced');
+      }).catchError((e) {
+        debugPrint('[Dialpad] Auto-answer safety: enterCallMode failed: $e');
+      });
 
       agent.notifyCallPhase(
         CallPhase.settling,

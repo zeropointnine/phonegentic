@@ -2318,7 +2318,11 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    // Only trigger during active agent audio playback.
+    // Remote started speaking — stop comfort noise so it doesn't mix with
+    // their voice. TTS audio will stop it too, but VAD fires sooner.
+    comfortNoiseService?.stopPlayback();
+
+    // Only trigger barge-in during active agent audio playback.
     if (!_speaking && !_whisper.isTtsPlaying) return;
 
     // Don't re-trigger if we already interrupted.
@@ -2693,6 +2697,16 @@ class AgentService extends ChangeNotifier {
     }
 
     _textAgent?.addTranscript(label, text);
+
+    // Fill the silence between the remote finishing and TTS audio arriving
+    // with comfort noise. Playback stops automatically when the first TTS
+    // chunk is emitted (see ElevenLabs / Kokoro / Whisper audio listeners).
+    if (_callPhase.isActive && !_speaking && !_whisper.isTtsPlaying) {
+      comfortNoiseService?.startPlayback(
+        _bootContext.comfortNoisePath,
+        waitForPipeline: false,
+      );
+    }
   }
 
   void _onResponseText(ResponseTextEvent event) {
