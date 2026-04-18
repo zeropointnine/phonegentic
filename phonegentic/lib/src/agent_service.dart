@@ -24,6 +24,7 @@ import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
+import 'manager_presence_service.dart';
 import 'user_config_service.dart';
 import 'elevenlabs_api_service.dart';
 import 'ivr_detector.dart';
@@ -135,6 +136,7 @@ class AgentService extends ChangeNotifier {
   TearSheetService? tearSheetService;
   MessagingService? _messagingService;
   DemoModeService? demoModeService;
+  ManagerPresenceService? managerPresenceService;
 
   MessagingService? get messagingService => _messagingService;
   set messagingService(MessagingService? svc) {
@@ -619,7 +621,8 @@ class AgentService extends ChangeNotifier {
     final gmail = _buildGmailContext();
     final gcal = _buildGoogleCalendarContext();
     final gsearch = _buildGoogleSearchContext();
-    _whisper.updateSessionInstructions('$base$flight$gmail$gcal$gsearch');
+    final awareness = _buildReminderAndAwarenessContext();
+    _whisper.updateSessionInstructions('$base$flight$gmail$gcal$gsearch$awareness');
     _textAgent?.updateInstructions(_buildTextAgentInstructions());
     _applyIntegrationTools();
   }
@@ -1194,9 +1197,34 @@ class AgentService extends ChangeNotifier {
           'they ask for. Do NOT refuse or apply inbound-caller restrictions '
           'to this person.');
     }
+    buf.write(_buildReminderAndAwarenessContext());
     if (prompt.isNotEmpty) {
       buf.write('\n\n## Additional Instructions\n$prompt');
     }
+    return buf.toString();
+  }
+
+  String _buildReminderAndAwarenessContext() {
+    final buf = StringBuffer('\n\n## Reminders and Activity Awareness\n');
+    buf.write(
+        'You can create timed reminders for the manager using `create_reminder`. '
+        'When someone asks to be reminded about something at a specific time, '
+        'use this tool. Always offer to also add important reminders to Google Calendar.\n\n');
+    buf.write(
+        'When the manager returns after being away, or asks about recent activity, '
+        'use `get_call_summary` to catch them up on what happened. Offer to play '
+        'back recordings of specific calls if they exist.\n\n');
+    buf.write(
+        'You can play call recordings inline using `play_call_recording` when '
+        'the manager wants to hear a specific call. Include the call_record_id '
+        'from the call summary results.\n');
+
+    if (managerPresenceService != null) {
+      if (managerPresenceService!.isAway) {
+        buf.write('\nNote: The manager appears to be away from the app.\n');
+      }
+    }
+
     return buf.toString();
   }
 
@@ -1760,10 +1788,77 @@ class AgentService extends ChangeNotifier {
     ),
   ];
 
+  static final _reminderToolsLlm = <LlmTool>[
+    LlmTool(
+      name: 'create_reminder',
+      description:
+          'Create a timed reminder for the manager. The reminder fires at '
+          'the specified time. Offer to also add it to Google Calendar.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'title': {
+            'type': 'string',
+            'description': 'Short title for the reminder.',
+          },
+          'remind_at': {
+            'type': 'string',
+            'description':
+                'ISO 8601 datetime when the reminder should fire '
+                '(e.g. "2026-04-17T15:00:00").',
+          },
+          'description': {
+            'type': 'string',
+            'description': 'Optional longer description.',
+          },
+          'add_to_google_calendar': {
+            'type': 'boolean',
+            'description':
+                'If true, also create a Google Calendar event for this reminder.',
+          },
+        },
+        'required': ['title', 'remind_at'],
+      },
+    ),
+    LlmTool(
+      name: 'get_call_summary',
+      description:
+          'Get a summary of recent call activity. Use when the manager '
+          'asks about calls since they were away or wants a status update.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'since_minutes_ago': {
+            'type': 'integer',
+            'description':
+                'Only include calls from the last N minutes. '
+                'Omit to use time since last briefing.',
+          },
+        },
+      },
+    ),
+    LlmTool(
+      name: 'play_call_recording',
+      description:
+          'Play back a call recording inline in the chat for the manager.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'call_record_id': {
+            'type': 'integer',
+            'description':
+                'The ID of the call record whose recording to play.',
+          },
+        },
+        'required': ['call_record_id'],
+      },
+    ),
+  ];
+
   /// Push integration-specific tools and instructions to both pipelines.
   void _applyIntegrationTools() {
     final oaiExtra = <Map<String, dynamic>>[];
-    final llmExtra = <LlmTool>[];
+    final llmExtra = <LlmTool>[..._reminderToolsLlm];
 
     if (_flightAwareEnabled) {
       oaiExtra.addAll(_flightToolsOpenAi);
@@ -2777,6 +2872,15 @@ class AgentService extends ChangeNotifier {
         case 'merge_conference':
           result = await _handleMergeConference(args);
           break;
+        case 'create_reminder':
+          result = await _handleCreateReminder(args);
+          break;
+        case 'get_call_summary':
+          result = await _handleGetCallSummary(args);
+          break;
+        case 'play_call_recording':
+          result = await _handlePlayCallRecording(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -2884,6 +2988,15 @@ class AgentService extends ChangeNotifier {
           break;
         case 'merge_conference':
           result = await _handleMergeConference(req.arguments);
+          break;
+        case 'create_reminder':
+          result = await _handleCreateReminder(req.arguments);
+          break;
+        case 'get_call_summary':
+          result = await _handleGetCallSummary(req.arguments);
+          break;
+        case 'play_call_recording':
+          result = await _handlePlayCallRecording(req.arguments);
           break;
         default:
           result = 'Unknown tool: ${req.name}';
@@ -3145,6 +3258,182 @@ class AgentService extends ChangeNotifier {
 
     return result;
   }
+
+  // ---------------------------------------------------------------------------
+  // Reminder, Call Summary, and Recording Playback Handlers
+  // ---------------------------------------------------------------------------
+
+  Future<String> _handleCreateReminder(Map<String, dynamic> args) async {
+    final title = args['title'] as String?;
+    if (title == null || title.isEmpty) return 'Reminder title is required.';
+
+    final remindAtRaw = args['remind_at'] as String?;
+    if (remindAtRaw == null) return 'remind_at datetime is required.';
+
+    DateTime remindAt;
+    try {
+      remindAt = DateTime.parse(remindAtRaw);
+    } catch (_) {
+      return 'Invalid remind_at format. Use ISO 8601 (e.g. 2026-04-17T15:00:00).';
+    }
+
+    final description = args['description'] as String?;
+    final addToGcal = args['add_to_google_calendar'] as bool? ?? false;
+
+    String? gcalEventId;
+    if (addToGcal && googleCalendarService != null) {
+      try {
+        final gcalResult = await _handleCreateGoogleCalendarEvent({
+          'title': title,
+          'date':
+              '${remindAt.year}-${remindAt.month.toString().padLeft(2, '0')}-${remindAt.day.toString().padLeft(2, '0')}',
+          'start_time':
+              '${remindAt.hour.toString().padLeft(2, '0')}:${remindAt.minute.toString().padLeft(2, '0')}',
+          'end_time':
+              '${remindAt.add(const Duration(minutes: 15)).hour.toString().padLeft(2, '0')}:${remindAt.add(const Duration(minutes: 15)).minute.toString().padLeft(2, '0')}',
+          if (description != null) 'description': description,
+        });
+        debugPrint('[AgentService] GCal event for reminder: $gcalResult');
+        gcalEventId = 'created';
+      } catch (e) {
+        debugPrint('[AgentService] Failed to create GCal event: $e');
+      }
+    }
+
+    final id = await CallHistoryDb.insertReminder(
+      title: title,
+      description: description,
+      remindAt: remindAt,
+      googleCalendarEventId: gcalEventId,
+    );
+
+    final localTime = remindAt.toLocal();
+    final timeStr =
+        '${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}';
+
+    final buf = StringBuffer('Reminder "$title" set for $timeStr');
+    if (gcalEventId != null) {
+      buf.write(' (also added to Google Calendar)');
+    }
+    buf.write('. [id=$id]');
+    return buf.toString();
+  }
+
+  Future<String> _handleGetCallSummary(Map<String, dynamic> args) async {
+    final sinceMinutes = args['since_minutes_ago'] as int?;
+    DateTime? since;
+    if (sinceMinutes != null) {
+      since = DateTime.now().subtract(Duration(minutes: sinceMinutes));
+    } else if (managerPresenceService?.lastBriefingAt != null) {
+      since = managerPresenceService!.lastBriefingAt;
+    }
+
+    return getCallActivitySummary(since: since);
+  }
+
+  Future<String> getCallActivitySummary({DateTime? since}) async {
+    final calls = await CallHistoryDb.searchCalls(
+      since: since,
+      limit: 50,
+    );
+
+    if (calls.isEmpty) {
+      final qualifier = since != null ? 'since then' : 'recently';
+      return 'No calls $qualifier.';
+    }
+
+    final buf = StringBuffer();
+    buf.writeln('${calls.length} call(s) found:');
+
+    final inbound = calls.where((c) => c['direction'] == 'inbound').toList();
+    final outbound = calls.where((c) => c['direction'] == 'outbound').toList();
+
+    if (inbound.isNotEmpty) buf.write('  ${inbound.length} inbound');
+    if (inbound.isNotEmpty && outbound.isNotEmpty) buf.write(', ');
+    if (outbound.isNotEmpty) buf.write('  ${outbound.length} outbound');
+    buf.writeln();
+
+    final totalDuration = calls.fold<int>(
+        0, (sum, c) => sum + ((c['duration_seconds'] as int?) ?? 0));
+    buf.writeln('Total duration: ${_formatDuration(totalDuration)}');
+
+    buf.writeln('\nCalls:');
+    for (final call in calls.take(10)) {
+      final name = call['remote_display_name'] as String? ??
+          call['remote_identity'] as String? ??
+          'Unknown';
+      final dir = call['direction'] as String? ?? '?';
+      final status = call['status'] as String? ?? '?';
+      final duration = (call['duration_seconds'] as int?) ?? 0;
+      final hasRecording = (call['recording_path'] as String?)?.isNotEmpty ?? false;
+      final callId = call['id'] as int?;
+
+      buf.write('  - [$dir] $name ($status, ${_formatDuration(duration)})');
+      if (hasRecording && callId != null) {
+        buf.write(' [recording available, call_record_id=$callId]');
+      }
+      buf.writeln();
+    }
+    if (calls.length > 10) {
+      buf.writeln('  ... and ${calls.length - 10} more.');
+    }
+
+    managerPresenceService?.markBriefingDone();
+    return buf.toString();
+  }
+
+  String _formatDuration(int seconds) {
+    if (seconds < 60) return '${seconds}s';
+    final mins = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (mins < 60) return '${mins}m ${secs}s';
+    final hours = mins ~/ 60;
+    return '${hours}h ${mins % 60}m';
+  }
+
+  Future<String> _handlePlayCallRecording(Map<String, dynamic> args) async {
+    final callId = args['call_record_id'] as int?;
+    if (callId == null) return 'call_record_id is required.';
+
+    final db = await CallHistoryDb.database;
+    final rows = await db.query(
+      'call_records',
+      where: 'id = ?',
+      whereArgs: [callId],
+    );
+
+    if (rows.isEmpty) return 'No call record found with id=$callId.';
+
+    final recordingPath = rows.first['recording_path'] as String?;
+    if (recordingPath == null || recordingPath.isEmpty) {
+      return 'No recording exists for call $callId.';
+    }
+
+    if (!File(recordingPath).existsSync()) {
+      return 'Recording file not found at $recordingPath.';
+    }
+
+    final remoteName = rows.first['remote_display_name'] as String? ??
+        rows.first['remote_identity'] as String? ??
+        'Unknown';
+
+    _messages.add(ChatMessage(
+      id: 'rec_${DateTime.now().millisecondsSinceEpoch}',
+      role: ChatRole.system,
+      type: MessageType.status,
+      text: 'Recording: $remoteName',
+      metadata: {
+        'recording_playback': true,
+        'filePath': recordingPath,
+        'callId': callId,
+      },
+    ));
+    notifyListeners();
+
+    return 'Playing recording of call with $remoteName (call #$callId).';
+  }
+
+  // ---------------------------------------------------------------------------
 
   String _handleCheckLocale() {
     return describeLocale(_bootContext.defaultCountryCode);
@@ -4275,6 +4564,21 @@ class AgentService extends ChangeNotifier {
         _textAgent!.addSystemContext('[SYSTEM EVENT]: $text');
       }
     }
+  }
+
+  void addReminderMessage(String text, {int? reminderId}) {
+    _messages.add(ChatMessage.reminder(
+      text,
+      reminderId: reminderId,
+      actions: [
+        if (reminderId != null) ...[
+          const MessageAction(label: 'Dismiss', value: 'dismiss_reminder'),
+          const MessageAction(label: 'Snooze 15m', value: 'snooze_reminder'),
+        ],
+        const MessageAction(label: 'Tell me more', value: 'tell_me_more'),
+      ],
+    ));
+    notifyListeners();
   }
 
   void sendWhisperMessage(String text) {

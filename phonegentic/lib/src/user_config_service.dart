@@ -58,6 +58,18 @@ class AgentManagerConfig {
   }
 }
 
+enum AwayReturnMode { quietBadge, proactiveGreeting }
+
+class AwayReturnConfig {
+  final AwayReturnMode mode;
+
+  const AwayReturnConfig({this.mode = AwayReturnMode.quietBadge});
+
+  AwayReturnConfig copyWith({AwayReturnMode? mode}) {
+    return AwayReturnConfig(mode: mode ?? this.mode);
+  }
+}
+
 class UserConfigService {
   static const _prefix = 'user_';
 
@@ -102,6 +114,21 @@ class UserConfigService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         '${_prefix}agent_manager_phone', config.phoneNumber);
+  }
+
+  static Future<AwayReturnConfig> loadAwayReturnConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('${_prefix}away_return_mode') ?? 'quietBadge';
+    final mode = AwayReturnMode.values.firstWhere(
+      (m) => m.name == raw,
+      orElse: () => AwayReturnMode.quietBadge,
+    );
+    return AwayReturnConfig(mode: mode);
+  }
+
+  static Future<void> saveAwayReturnConfig(AwayReturnConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('${_prefix}away_return_mode', config.mode.name);
   }
 
   static Future<FlightAwareConfig> loadFlightAwareConfig() =>

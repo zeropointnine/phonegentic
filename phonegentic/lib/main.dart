@@ -1,6 +1,7 @@
 import 'package:phonegentic/src/agent_config_service.dart';
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/calendar_sync_service.dart';
+import 'package:phonegentic/src/manager_presence_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/chrome/flight_aware_service.dart';
 import 'package:phonegentic/src/chrome/gmail_service.dart';
@@ -159,6 +160,14 @@ class MyApp extends StatelessWidget {
             agent.calendarSyncService = sync;
             agent.messagingService = context.read<MessagingService>();
             return sync;
+          },
+        ),
+        ChangeNotifierProxyProvider<AgentService, ManagerPresenceService>(
+          create: (_) => ManagerPresenceService()..start(),
+          update: (_, agent, presence) {
+            presence!.agent = agent;
+            agent.managerPresenceService = presence;
+            return presence;
           },
         ),
         ChangeNotifierProxyProvider<AgentService, ConferenceService>(

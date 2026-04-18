@@ -8,10 +8,12 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:intl/intl.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../calendar_sync_service.dart';
+import '../db/call_history_db.dart';
 import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
 import '../inbound_call_flow_service.dart';
@@ -1827,6 +1829,32 @@ class _MessageBubble extends StatelessWidget {
       child = _WhisperBubble(message: message);
     } else if (message.type == MessageType.attachment) {
       child = _AttachmentBubble(message: message);
+    } else if (message.type == MessageType.reminder) {
+      child = _ReminderBubble(
+        message: message,
+        onAction: (value) {
+          final agent = context.read<AgentService>();
+          if (value == 'dismiss_reminder') {
+            final rid = message.metadata?['reminder_id'] as int?;
+            if (rid != null) {
+              CallHistoryDb.updateReminderStatus(rid, 'dismissed');
+            }
+          } else if (value == 'snooze_reminder') {
+            final rid = message.metadata?['reminder_id'] as int?;
+            if (rid != null) {
+              CallHistoryDb.updateReminderStatus(rid, 'pending');
+              CallHistoryDb.insertReminder(
+                title: message.text,
+                remindAt: DateTime.now().add(const Duration(minutes: 15)),
+              );
+            }
+          } else if (value == 'tell_me_more') {
+            agent.sendUserMessage('Tell me more about: ${message.text}');
+          }
+        },
+      );
+    } else if (message.metadata?['recording_playback'] == true) {
+      child = _InlineRecordingBubble(message: message);
     } else {
       switch (message.role) {
         case ChatRole.system:
@@ -2823,6 +2851,296 @@ class _InputBarState extends State<_InputBar> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reminder Bubble
+// ---------------------------------------------------------------------------
+
+class _ReminderBubble extends StatelessWidget {
+  final ChatMessage message;
+  final void Function(String)? onAction;
+  const _ReminderBubble({required this.message, this.onAction});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.accent.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: AppColors.accent.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.notifications_active_rounded,
+                  size: 14,
+                  color: AppColors.accent,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textPrimary,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (message.actions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: message.actions.map((action) {
+                  return _ReminderChip(
+                    label: action.label,
+                    onTap: () => onAction?.call(action.value),
+                  );
+                }).toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReminderChip extends StatelessWidget {
+  final String label;
+  final VoidCallback? onTap;
+  const _ReminderChip({required this.label, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.4),
+            width: 0.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: AppColors.accent,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Inline Recording Playback Bubble
+// ---------------------------------------------------------------------------
+
+class _InlineRecordingBubble extends StatefulWidget {
+  final ChatMessage message;
+  const _InlineRecordingBubble({required this.message});
+
+  @override
+  State<_InlineRecordingBubble> createState() => _InlineRecordingBubbleState();
+}
+
+class _InlineRecordingBubbleState extends State<_InlineRecordingBubble> {
+  late AudioPlayer _player;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _playing = false;
+  bool _dragging = false;
+  double _dragValue = 0.0;
+
+  String get _filePath => widget.message.metadata?['filePath'] as String? ?? '';
+
+  @override
+  void initState() {
+    super.initState();
+    _player = AudioPlayer();
+    _initPlayer();
+  }
+
+  Future<void> _initPlayer() async {
+    try {
+      if (_filePath.isNotEmpty && File(_filePath).existsSync()) {
+        await _player.setFilePath(_filePath);
+      }
+    } catch (e) {
+      debugPrint('[InlineRecordingBubble] Failed to load: $e');
+    }
+
+    _player.positionStream.listen((pos) {
+      if (mounted && !_dragging) setState(() => _position = pos);
+    });
+    _player.durationStream.listen((dur) {
+      if (mounted && dur != null) setState(() => _duration = dur);
+    });
+    _player.playerStateStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _playing = state.playing);
+      if (state.processingState == ProcessingState.completed) {
+        _player.seek(Duration.zero);
+        _player.pause();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _duration.inMilliseconds > 0
+        ? _position.inMilliseconds / _duration.inMilliseconds
+        : 0.0;
+    final sliderValue = _dragging ? _dragValue : progress.clamp(0.0, 1.0);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.card.withValues(alpha: 0.8),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.3),
+            width: 0.5,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.mic_rounded,
+                  size: 14,
+                  color: AppColors.accent,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  widget.message.text,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    if (_playing) {
+                      _player.pause();
+                    } else {
+                      _player.play();
+                    }
+                  },
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.accent,
+                    ),
+                    child: Icon(
+                      _playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      size: 16,
+                      color: AppColors.crtBlack,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderThemeData(
+                      trackHeight: 3,
+                      activeTrackColor: AppColors.accent,
+                      inactiveTrackColor:
+                          AppColors.border.withValues(alpha: 0.3),
+                      thumbColor: AppColors.accent,
+                      overlayColor: AppColors.accent.withValues(alpha: 0.12),
+                      thumbShape:
+                          const RoundSliderThumbShape(enabledThumbRadius: 6),
+                      overlayShape:
+                          const RoundSliderOverlayShape(overlayRadius: 12),
+                      trackShape: const RoundedRectSliderTrackShape(),
+                    ),
+                    child: Slider(
+                      value: sliderValue,
+                      onChangeStart: (v) {
+                        setState(() {
+                          _dragging = true;
+                          _dragValue = v;
+                        });
+                      },
+                      onChanged: (v) {
+                        setState(() => _dragValue = v);
+                      },
+                      onChangeEnd: (v) {
+                        final target = Duration(
+                          milliseconds:
+                              (v * _duration.inMilliseconds).round(),
+                        );
+                        _player.seek(target);
+                        setState(() => _dragging = false);
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${_fmt(_position)} / ${_fmt(_duration)}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textTertiary,
+                    fontFamily: AppColors.timerFontFamily,
+                    fontFamilyFallback: AppColors.timerFontFamilyFallback,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

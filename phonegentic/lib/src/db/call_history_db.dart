@@ -32,7 +32,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 13,
+        version: 14,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -125,6 +125,7 @@ class CallHistoryDb {
     await _createCalendarEventsTable(db);
     await _createSmsMessagesTable(db);
     await _createInboundCallFlowsTable(db);
+    await _createAgentRemindersTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -217,6 +218,10 @@ class CallHistoryDb {
 
     if (oldVersion < 13) {
       await _createInboundCallFlowsTable(db);
+    }
+
+    if (oldVersion < 14) {
+      await _createAgentRemindersTable(db);
     }
   }
 
@@ -1125,5 +1130,96 @@ class CallHistoryDb {
   static Future<void> deleteInboundCallFlow(int id) async {
     final db = await database;
     await db.delete('inbound_call_flows', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agent Reminders
+  // ---------------------------------------------------------------------------
+
+  static Future<void> _createAgentRemindersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS agent_reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT,
+        remind_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        google_calendar_event_id TEXT,
+        source TEXT NOT NULL DEFAULT 'agent'
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ar_remind_at ON agent_reminders(remind_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ar_status ON agent_reminders(status)');
+  }
+
+  static Future<int> insertReminder({
+    required String title,
+    String? description,
+    required DateTime remindAt,
+    String? googleCalendarEventId,
+    String source = 'agent',
+  }) async {
+    final db = await database;
+    return db.insert('agent_reminders', {
+      'title': title,
+      'description': description,
+      'remind_at': remindAt.toUtc().toIso8601String(),
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'status': 'pending',
+      'google_calendar_event_id': googleCalendarEventId,
+      'source': source,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getPendingReminders() async {
+    final db = await database;
+    final now = DateTime.now().toUtc().toIso8601String();
+    return db.query(
+      'agent_reminders',
+      where: "status = 'pending' AND remind_at <= ?",
+      whereArgs: [now],
+      orderBy: 'remind_at ASC',
+    );
+  }
+
+  static Future<List<Map<String, dynamic>>> getUpcomingReminders({
+    Duration window = const Duration(minutes: 15),
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toUtc();
+    final cutoff = now.add(window);
+    return db.query(
+      'agent_reminders',
+      where: "status = 'pending' AND remind_at > ? AND remind_at <= ?",
+      whereArgs: [
+        now.toIso8601String(),
+        cutoff.toIso8601String(),
+      ],
+      orderBy: 'remind_at ASC',
+    );
+  }
+
+  static Future<void> updateReminderStatus(int id, String status) async {
+    final db = await database;
+    await db.update(
+      'agent_reminders',
+      {'status': status},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<List<Map<String, dynamic>>> getAllReminders({
+    int limit = 50,
+  }) async {
+    final db = await database;
+    return db.query(
+      'agent_reminders',
+      orderBy: 'remind_at DESC',
+      limit: limit,
+    );
   }
 }

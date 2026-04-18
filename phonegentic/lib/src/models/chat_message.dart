@@ -1,6 +1,6 @@
 enum ChatRole { user, agent, host, remoteParty, system }
 
-enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms }
+enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms, reminder }
 
 class MessageAction {
   final String label;
@@ -129,6 +129,25 @@ class ChatMessage {
           'sms_direction': direction,
           'sms_remote_phone': remotePhone,
           if (contactName != null) 'sms_contact_name': contactName,
+        };
+
+  /// A timed reminder surfaced in the agent chat with action chips.
+  ///
+  /// [metadata] should include `'reminder_id'` (int) for dismiss/snooze actions
+  /// and optionally `'recording_playback'` / `'filePath'` for inline players.
+  ChatMessage.reminder(
+    this.text, {
+    String? id,
+    int? reminderId,
+    this.actions = const [],
+  })  : id = id ?? _uid(),
+        role = ChatRole.system,
+        type = MessageType.reminder,
+        timestamp = DateTime.now(),
+        speakerName = null,
+        isStreaming = false,
+        metadata = {
+          if (reminderId != null) 'reminder_id': reminderId,
         };
 
   static int _counter = 0;
