@@ -5,7 +5,9 @@ import '../agent_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../kokoro_tts_service.dart';
 import '../on_device_config.dart';
+import '../settings_port_service.dart';
 import '../theme_provider.dart';
+import 'settings_export_import_card.dart';
 import 'voice_clone_modal.dart';
 
 class AgentSettingsTab extends StatefulWidget {
@@ -189,6 +191,11 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     const SizedBox(height: 16),
                     _buildSttCard(),
                   ],
+                  const SizedBox(height: 24),
+                  SettingsExportImportCard(
+                    section: SettingsSection.agentSettings,
+                    onImported: _load,
+                  ),
                   const SizedBox(height: 40),
                 ],
               ),

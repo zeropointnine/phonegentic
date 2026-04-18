@@ -12,12 +12,16 @@ import '../chrome/google_calendar_service.dart';
 import '../chrome/google_search_config.dart';
 import '../chrome/google_search_service.dart';
 import '../demo_mode_service.dart';
+import '../inbound_call_flow_service.dart';
+import '../job_function_service.dart';
 import '../messaging/messaging_config.dart';
 import '../messaging/messaging_service.dart';
 import '../messaging/telnyx_messaging_provider.dart';
 import '../messaging/twilio_messaging_provider.dart';
+import '../settings_port_service.dart';
 import '../theme_provider.dart';
 import '../user_config_service.dart';
+import 'settings_export_import_card.dart';
 
 /// Shows a modal dialog prompting the user to start Chrome with remote
 /// debugging. Returns `true` if the connection was established via retry.
@@ -557,6 +561,20 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   _buildAgentManagerCard(),
                   const SizedBox(height: 16),
                   _buildDemoModeCard(),
+                  const SizedBox(height: 24),
+                  SettingsExportImportCard(
+                    section: SettingsSection.jobFunctions,
+                    onImported: () {
+                      context.read<JobFunctionService>().restoreLastUsed();
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  SettingsExportImportCard(
+                    section: SettingsSection.inboundWorkflows,
+                    onImported: () {
+                      context.read<InboundCallFlowService>().loadAll();
+                    },
+                  ),
                   const SizedBox(height: 40),
                 ],
               ),
