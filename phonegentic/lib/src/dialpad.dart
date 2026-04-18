@@ -2076,6 +2076,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
         if (!mounted) return;
         if (call.state == CallStateEnum.CALL_INITIATION ||
             call.state == CallStateEnum.PROGRESS) {
+          debugPrint('[Dialpad] Auto-answer firing for ${call.remote_identity}');
           CallScreenWidget.acceptCall(call, helper!);
           _scheduleAutoAnswerSafetyCheck(call);
         }
@@ -2083,25 +2084,36 @@ class _MyDialPadWidget extends State<DialPadWidget>
     }
   }
 
-  /// Safety net: if the SIP CONFIRMED callback was lost after auto-answer,
-  /// clear the stuck fork-coalescing state so the call isn't treated as a
-  /// pending fork for its entire duration.
+  /// Safety net: if the SIP CONFIRMED/ACCEPTED callback was lost after
+  /// auto-answer, directly push the settling phase so the agent starts
+  /// the greeting flow. Without this, lost SIP callbacks leave the agent
+  /// stuck in ringing with dead silence.
   void _scheduleAutoAnswerSafetyCheck(Call call) {
-    Future.delayed(const Duration(seconds: 3), () {
+    Future.delayed(const Duration(seconds: 2), () {
       if (!mounted) return;
-      if (_inboundRingCaller != null &&
-          (call.state == CallStateEnum.ACCEPTED ||
-           call.state == CallStateEnum.CONFIRMED)) {
-        debugPrint('[Dialpad] Auto-answer safety: clearing stuck fork state');
-        _stopRinging();
-        _forkGraceTimer?.cancel();
-        _inboundRingCaller = null;
-        _inboundRingStart = null;
-        _forkGraceTimer = null;
-        try {
-          context.read<AgentService>().forkCoalescing = false;
-        } catch (_) {}
-      }
+      final agent = context.read<AgentService>();
+      final needsRecovery = agent.callPhase == CallPhase.ringing ||
+          agent.callPhase == CallPhase.connecting;
+      if (!needsRecovery) return;
+
+      debugPrint('[Dialpad] Auto-answer safety: agent stuck in '
+          '${agent.callPhase.name}, forcing settling');
+
+      _stopRinging();
+      _forkGraceTimer?.cancel();
+      _inboundRingCaller = null;
+      _inboundRingStart = null;
+      _forkGraceTimer = null;
+      agent.forkCoalescing = false;
+
+      agent.notifyCallPhase(
+        CallPhase.settling,
+        partyCount: 2,
+        remoteIdentity: call.remote_identity,
+        remoteDisplayName: call.remote_display_name,
+        localIdentity: call.local_identity,
+        outbound: false,
+      );
     });
   }
 

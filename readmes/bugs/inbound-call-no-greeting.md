@@ -47,8 +47,16 @@ Even after enabling the inbound pre-greeting and shortening the settle window, t
 
 **Fix:** Removed the `_isDuplicateAgentMessage` check from `_flushPreGreeting`. The pre-greeting is always the intended first message for the call and should never be considered a duplicate. Instead, `clearPendingContext()` is called BEFORE adding the greeting to `_messages`, preventing the text agent's finally-block from racing with a follow-up LLM call.
 
+### Phase 4 — Safety check not aggressive enough
+
+The Phase 1 safety checks (CallScreen timer + Dialpad fork cleanup) didn't fix repeat occurrences because:
+- CallScreen was never mounted at all, so its 2-second timer never ran.
+- The Dialpad's safety check only cleared fork coalescing state but never pushed the agent into settling/connected, leaving it stuck in `ringing`.
+
+**Fix:** Rewrote `_scheduleAutoAnswerSafetyCheck` to check the agent's actual call phase 2 seconds after auto-answer. If the agent is still stuck in `ringing` or `connecting`, it directly pushes `CallPhase.settling` via `notifyCallPhase()`, which starts the settle timer, fires the pre-greeting, and progresses the call to connected with a greeting — all without depending on any SIP callbacks reaching CallScreen.
+
 ## Files
 
 - `phonegentic/lib/src/callscreen.dart` — added `_callConfirmTimer` with delayed `_syncCallState` re-check
-- `phonegentic/lib/src/dialpad.dart` — added `_scheduleAutoAnswerSafetyCheck` to clear stuck fork coalescing state
+- `phonegentic/lib/src/dialpad.dart` — `_scheduleAutoAnswerSafetyCheck` now directly pushes settling phase when agent is stuck in ringing/connecting
 - `phonegentic/lib/src/agent_service.dart` — shortened inbound settle window, enabled pre-greeting for inbound calls with direction-aware prompt, removed false-positive duplicate suppression of pre-greetings
