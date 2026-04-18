@@ -461,7 +461,7 @@ class AgentService extends ChangeNotifier {
   int _ivrHitsInSettle = 0;
   final List<TranscriptionEvent> _settleTranscripts = [];
   final List<String> _settleAccumulatedTexts = [];
-  static const _settleWindowMs = 4000;
+  static const _settleWindowInboundMs = 1000;
   static const _settleWindowOutboundMs = 2000;
   static const _settleExtendMs = 8000;
   static const _maxSettleMs = 20000;
@@ -1109,9 +1109,12 @@ class AgentService extends ChangeNotifier {
     _kokoroTts?.startGeneration();
   }
 
+  static final _phonegenticRe = RegExp(r'Phonegentic', caseSensitive: false);
+
   void _activeTtsSendText(String text) {
-    _tts?.sendText(text);
-    _kokoroTts?.sendText(text);
+    final fixed = text.replaceAll(_phonegenticRe, 'Phone-Jentic');
+    _tts?.sendText(fixed);
+    _kokoroTts?.sendText(fixed);
   }
 
   void _activeTtsEndGeneration() {
@@ -5252,14 +5255,15 @@ class AgentService extends ChangeNotifier {
     _settleStartTime = DateTime.now();
     _cancelBeepWatch();
     _startCadenceTracking();
-    final windowMs = _isOutbound ? _settleWindowOutboundMs : _settleWindowMs;
+    final windowMs = _isOutbound ? _settleWindowOutboundMs : _settleWindowInboundMs;
     _settleTimer = Timer(Duration(milliseconds: windowMs), () {
       _tryPromoteFromSettle();
     });
 
-    // Outbound split-pipeline: pre-generate the greeting during settle
-    // so LLM + TTS latency is absorbed by the settle window.
-    if (_isOutbound && _splitPipeline && _textAgent != null) {
+    // Pre-generate the greeting during settle so LLM + TTS latency is
+    // absorbed by the settle window. Safe for both directions: inbound
+    // callers are real humans (no IVR risk), outbound may hit voicemail.
+    if (_splitPipeline && _textAgent != null) {
       _firePreGreeting();
     }
   }
@@ -5509,11 +5513,27 @@ class AgentService extends ChangeNotifier {
     _preGreetTextBuffer = StringBuffer();
     _preGreetFinalText = null;
     _preGreetReady = false;
-    const prompt =
-        '[SYSTEM] The call is connected and the line is quiet. '
-        'Begin the conversation per your job function instructions.';
+
+    _whisperPriorTranscriptOnce();
+
+    String prompt;
+    if (_isOutbound) {
+      prompt = '[SYSTEM] The call is connected and the line is quiet. '
+          'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
+          'Otherwise, begin the conversation per your job function instructions.';
+    } else {
+      final callerName = _resolveCallerName();
+      final nameClause = callerName != null
+          ? 'The caller is $callerName. Address them by name.'
+          : 'You do not know the caller\'s name yet — if they provide it, '
+              'use save_contact to remember it for next time.';
+      prompt = '[SYSTEM] An incoming call has connected. The caller is now on the line. '
+          'This is an INBOUND call — someone called you. Do NOT say "calling" or act as if you placed this call. '
+          '$nameClause '
+          'Greet the caller warmly and help them per your job function instructions.';
+    }
     _textAgent!.sendUserMessage(prompt);
-    debugPrint('[AgentService] Pre-greeting fired during settle');
+    debugPrint('[AgentService] Pre-greeting fired during settle (${_isOutbound ? "outbound" : "inbound"})');
   }
 
   /// Play the pre-generated greeting through TTS and add it to chat.

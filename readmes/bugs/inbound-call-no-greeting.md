@@ -2,6 +2,8 @@
 
 ## Problem
 
+### Phase 1 — Missed SIP state callbacks
+
 On an inbound call, the SIP layer auto-answered correctly (200 OK sent, ACK received), but the agent never said hello and sat silent for ~22 seconds until the caller hung up.
 
 **Root cause:** The `CallScreenWidget`'s `callStateChanged` callback never fired for this call. The SIP state transitions (CONNECTING → STREAM → ACCEPTED → CONFIRMED) happened at the protocol level but were never delivered to the CallScreen widget. Without those events:
@@ -17,13 +19,28 @@ Additionally, because the Dialpad never received `CONFIRMED`, `_inboundRingCalle
 
 The existing `_syncCallState()` post-frame callback in `initState` runs too early — the call is still in `CALL_INITIATION` state when it fires (the auto-answer happens 800ms later).
 
+### Phase 2 — Long delay before greeting on successful calls
+
+Even when the SIP callbacks fired correctly, the inbound greeting had ~14 seconds of dead air: 3.7s settle window + 8.9s LLM response time.
+
+**Root cause:** Two compounding issues:
+- The inbound settle window was 4 seconds (`_settleWindowMs`), designed for IVR/voicemail detection — irrelevant for inbound calls where a real human dialed you.
+- The pre-greeting mechanism (which fires the LLM prompt during settle to absorb latency) was only enabled for outbound calls. Inbound calls didn't send the LLM prompt until *after* the settle window expired, stacking LLM latency on top of settle delay.
+
 ## Solution
 
-Added a delayed re-sync safety net in CallScreen: a timer fires 2 seconds after widget creation and checks whether the call was confirmed. If the call is in ACCEPTED or CONFIRMED state but `_callConfirmed` is still false, it force-syncs the state machine. This catches cases where `callStateChanged` callbacks were silently lost.
+### Phase 1 — Safety nets for lost SIP callbacks
 
-Also added a complementary safety check in the Dialpad's auto-answer path: after `acceptCall` fires, a 3-second delayed check verifies the `forkCoalescing` flag has been cleared (which only happens when CONFIRMED is received). If still set, it manually clears the flag and stops ringing to prevent the stuck state from cascading.
+- **CallScreen delayed re-sync:** A `_callConfirmTimer` fires 2 seconds after widget creation. If `_callConfirmed` is still false, it re-runs `_syncCallState()` to force-sync the state machine from the actual SIP call state.
+- **Dialpad auto-answer safety check:** `_scheduleAutoAnswerSafetyCheck` fires 3 seconds after auto-answer. If `_inboundRingCaller` is still set but the call is in ACCEPTED/CONFIRMED state, it clears the stuck fork-coalescing state.
+
+### Phase 2 — Faster inbound greeting
+
+- **Inbound settle window: 4s → 1s.** Renamed `_settleWindowMs` to `_settleWindowInboundMs` and reduced from 4000 to 1000. No IVR risk on inbound.
+- **Pre-greeting enabled for inbound.** Removed the `_isOutbound` guard on `_firePreGreeting()` so the LLM prompt fires immediately when settling starts for both directions. The prompt is now direction-aware (uses the inbound-specific wording with caller name resolution).
 
 ## Files
 
 - `phonegentic/lib/src/callscreen.dart` — added `_callConfirmTimer` with delayed `_syncCallState` re-check
-- `phonegentic/lib/src/dialpad.dart` — added post-auto-answer safety check to clear stuck fork coalescing state
+- `phonegentic/lib/src/dialpad.dart` — added `_scheduleAutoAnswerSafetyCheck` to clear stuck fork coalescing state
+- `phonegentic/lib/src/agent_service.dart` — shortened inbound settle window, enabled pre-greeting for inbound calls with direction-aware prompt
