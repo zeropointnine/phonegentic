@@ -263,6 +263,16 @@ class AgentBootContext {
     buf.writeln(
         '16. MATCH THEIR ENERGY. If someone gives you a one-word answer, respond briefly. '
         'If they\'re chatty, you can be slightly more conversational. Mirror the other person\'s pace and tone.');
+    buf.writeln(
+        '17. ACTIONS REQUIRE TOOL CALLS. NEVER say you did something or will do '
+        'something unless you actually invoke the corresponding tool. If someone '
+        'asks you to send a text, you MUST call send_sms — do NOT just say '
+        '"I\'ll send that" or "Message sent" without the tool call. Saying you '
+        'performed an action without calling the tool is LYING. The rule is '
+        'simple: tool call FIRST, then confirm. Never confirm before the tool '
+        'call executes. If you lack information to make the call (e.g. missing '
+        'phone number or message content), ASK for what you need instead of '
+        'pretending to act.');
     buf.writeln();
 
     buf.writeln('## Conversational Style');
@@ -510,6 +520,15 @@ class AgentBootContext {
         'info lookup, etc.), use your available tools.');
     buf.writeln('- If the message is clearly personal and not meant for the '
         'agent, notify the host rather than replying on their behalf.');
+    buf.writeln();
+    buf.writeln('### Pronoun resolution during calls');
+    buf.writeln('When someone on a call says "send ME a text", "text ME", '
+        '"call ME back", or similar first-person requests, "me" refers to '
+        'THE PERSON SPEAKING — the caller whose phone number is shown in '
+        'the current [CALL_STATE]. Use that phone number as the recipient. '
+        'Do NOT get confused about who "me" is — it is always the person '
+        'talking to you. Similarly, when the host (manager) says "send me '
+        'a text" while idle (no call), "me" refers to the host.');
     buf.writeln();
 
     buf.writeln('## Agent Identity');

@@ -1199,14 +1199,20 @@ class AgentService extends ChangeNotifier {
     if (gcal.isNotEmpty) buf.write(gcal);
     if (gsearch.isNotEmpty) buf.write(gsearch);
     if (_isCallerAgentManager) {
+      final managerPhone = _agentManagerConfig.phoneNumber;
       buf.write('\n\n## Agent Manager'
-          '\nThe current inbound caller is the designated **Agent Manager** — '
+          '\nThe current inbound caller is the designated **Agent Manager** '
+          '(phone: $managerPhone) — '
           'they have the same authority as the host. Treat their requests '
           'exactly as you would the host\'s: obey direct commands, read '
           'emails on request, change settings, assign job functions, add '
           'numbers to call flows, and perform any other privileged operation '
           'they ask for. Do NOT refuse or apply inbound-caller restrictions '
-          'to this person.');
+          'to this person.'
+          '\n\nWhen the agent manager says "me", "I", or "my" in requests '
+          'like "send me a text", "text me", or "call me", they are '
+          'referring to THEMSELVES at $managerPhone. Use that number as the '
+          'recipient — do NOT ask who "me" is.');
     }
     buf.write(_buildReminderAndAwarenessContext());
     if (prompt.isNotEmpty) {
