@@ -41,6 +41,9 @@ class _DialpadAutocompleteDropdownState
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _fadeAnim;
+  final ScrollController _scrollController = ScrollController();
+
+  static const double _estimatedItemHeight = 52.0;
 
   @override
   void initState() {
@@ -68,10 +71,38 @@ class _DialpadAutocompleteDropdownState
     } else if (widget.matches.isEmpty && _controller.value > 0) {
       _controller.reverse();
     }
+    if (widget.highlightedIndex != old.highlightedIndex &&
+        widget.highlightedIndex >= 0) {
+      _scrollToHighlighted();
+    }
+  }
+
+  void _scrollToHighlighted() {
+    if (!_scrollController.hasClients) return;
+    final targetTop = widget.highlightedIndex * _estimatedItemHeight;
+    final targetBottom = targetTop + _estimatedItemHeight;
+    final viewportTop = _scrollController.offset;
+    final viewportBottom =
+        viewportTop + _scrollController.position.viewportDimension;
+
+    if (targetTop < viewportTop) {
+      _scrollController.animateTo(
+        targetTop,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+      );
+    } else if (targetBottom > viewportBottom) {
+      _scrollController.animateTo(
+        targetBottom - _scrollController.position.viewportDimension,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -127,6 +158,7 @@ class _DialpadAutocompleteDropdownState
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 300),
                     child: ListView.builder(
+                      controller: _scrollController,
                       shrinkWrap: true,
                       physics: const ClampingScrollPhysics(),
                       padding: const EdgeInsets.symmetric(
