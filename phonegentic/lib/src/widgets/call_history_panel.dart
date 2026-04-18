@@ -8,6 +8,7 @@ import 'package:sip_ua/sip_ua.dart';
 
 import '../agent_service.dart';
 import '../call_history_service.dart';
+import '../contact_service.dart';
 import '../demo_mode_service.dart';
 import '../messaging/messaging_service.dart';
 import '../messaging/phone_numbers.dart';
@@ -444,6 +445,13 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     messaging.selectConversation(ensureE164(number));
   }
 
+  void _openContact(BuildContext context) {
+    final number = widget.record['remote_identity'] as String?;
+    if (number == null || number.isEmpty) return;
+    context.read<CallHistoryService>().closeHistory();
+    context.read<ContactService>().openContactForPhone(ensureE164(number));
+  }
+
   Widget _buildExpandedHeader(BuildContext context) {
     final rawNumber = widget.record['remote_identity'] as String? ?? '';
     final number = context.read<DemoModeService>().maskPhone(rawNumber);
@@ -521,6 +529,22 @@ class _CallRecordTileState extends State<_CallRecordTile> {
               ),
               child: Icon(Icons.chat_bubble_outline_rounded,
                   size: 15, color: AppColors.accent),
+            ),
+          ),
+          const SizedBox(width: 6),
+          HoverButton(
+            onTap: () => _openContact(context),
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.accent.withValues(alpha: 0.12),
+                border: Border.all(
+                    color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
+              ),
+              child: Icon(Icons.person_outline_rounded,
+                  size: 16, color: AppColors.accent),
             ),
           ),
         ],

@@ -157,9 +157,14 @@ final class WebRTCAudioProcessor: NSObject {
     private let confCrossGain: Float = 0.7
 
 
+    /// Logarithmic waveshaping compressor applied to remote audio in the
+    /// render path. Levels out volume differences between speakers so quiet
+    /// voices come through clearly without clipping loud ones.
+    let compressor = SimpleCompressor(strength: 0.6)
+
     /// Linear gain applied to the remote party's audio in the render path.
     /// Values > 1.0 boost volume; 1.0 = passthrough. Applied after whisper
-    /// tap / tone detection so those see the original signal.
+    /// tap / tone detection and compression so those see the original signal.
     var remoteGain: Float = 1.5
 
     /// Fired (on main thread) when a sustained beep tone is first confirmed.
@@ -661,6 +666,8 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
         }
 
         writeToWhisper(src: buf, srcFrames: frames, srcRate: rate, owner: owner)
+
+        owner.compressor.process(buf, frames: frames)
 
         let gain = owner.remoteGain
         if gain != 1.0 {

@@ -57,7 +57,8 @@ class AudioTapChannel: NSObject {
              "stopCallRecording",
              "startVoiceSample",
              "stopVoiceSample",
-             "setRemoteGain":
+             "setRemoteGain",
+             "setCompressorStrength":
             NSLog("[AudioTapChannel-iOS] %@ not yet implemented", call.method)
             result(nil)
         default:

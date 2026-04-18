@@ -149,6 +149,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             WebRTCAudioProcessor.shared.remoteGain = Float(gain)
             NSLog("[AudioTap] setRemoteGain=%.2f", gain)
             result(nil)
+        case "setCompressorStrength":
+            let strength = (call.arguments as? [String: Any])?["strength"] as? Double ?? 0.6
+            WebRTCAudioProcessor.shared.compressor.strength = Float(strength)
+            NSLog("[AudioTap] setCompressorStrength=%.2f", strength)
+            result(nil)
         case "getDominantSpeaker":
             let info = SpeakerIdentifier.shared.speakerInfo(dominantSource: dominantSpeaker)
             result(info)

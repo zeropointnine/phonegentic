@@ -431,6 +431,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     try {
       await _tapChannel.invokeMethod('enterCallMode');
       await _tapChannel.invokeMethod('setRemoteGain', {'gain': 1.5});
+      await _tapChannel.invokeMethod(
+          'setCompressorStrength', {'strength': 0.6});
       debugPrint(
           '[CallScreen] enterCallMode — AI audio routed through WebRTC pipeline');
     } catch (e) {
