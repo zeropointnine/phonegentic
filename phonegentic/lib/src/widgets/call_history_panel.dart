@@ -867,6 +867,22 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                         size: 12, color: AppColors.accent),
                   ),
                 ),
+                const SizedBox(width: 4),
+                HoverButton(
+                  onTap: () => _openContact(context),
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      border: Border.all(
+                          color: AppColors.accent.withValues(alpha: 0.3), width: 0.5),
+                    ),
+                    child: Icon(Icons.person_outline_rounded,
+                        size: 13, color: AppColors.accent),
+                  ),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   _timeLabel,

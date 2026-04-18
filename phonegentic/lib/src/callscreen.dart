@@ -826,7 +826,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   void _handleSendMessage() {
     final messaging = context.read<MessagingService>();
-    if (!messaging.isOpen) {
+    if (remoteIdentity != null && remoteIdentity!.isNotEmpty) {
+      messaging.openToConversation(remoteIdentity!);
+    } else if (!messaging.isOpen) {
       messaging.toggleOpen();
     }
   }
@@ -1522,11 +1524,16 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             onPressed: _addCallReady ? _handleAddCall : null,
           ),
         ]);
-        // Row 2: Add Contact - Keypad - [Hangup] - Clone - Message
+        // Row 2: Contact - Keypad - [Hangup] - Clone - Message
+        final hasExistingContact = remoteIdentity != null &&
+            context.read<ContactService>().lookupByPhone(remoteIdentity!) !=
+                null;
         bottomRow.addAll([
           ActionButton(
             title: 'Contact',
-            icon: Icons.person_add_outlined,
+            icon: hasExistingContact
+                ? Icons.person_outline_rounded
+                : Icons.person_add_outlined,
             onPressed: _handleAddContact,
           ),
           if (voiceOnly)

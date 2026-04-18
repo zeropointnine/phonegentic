@@ -17,6 +17,7 @@ class DialpadAutocompleteDropdown extends StatefulWidget {
   final void Function(Map<String, dynamic> contact) onSelect;
   final void Function(Map<String, dynamic> contact) onCall;
   final void Function(Map<String, dynamic> contact) onMessage;
+  final void Function(Map<String, dynamic> contact)? onContact;
   final VoidCallback onDismiss;
 
   const DialpadAutocompleteDropdown({
@@ -26,6 +27,7 @@ class DialpadAutocompleteDropdown extends StatefulWidget {
     required this.onSelect,
     required this.onCall,
     required this.onMessage,
+    this.onContact,
     required this.onDismiss,
   });
 
@@ -140,6 +142,9 @@ class _DialpadAutocompleteDropdownState
                           onTap: () => widget.onSelect(contact),
                           onCall: () => widget.onCall(contact),
                           onMessage: () => widget.onMessage(contact),
+                          onContact: widget.onContact != null
+                              ? () => widget.onContact!(contact)
+                              : null,
                         );
                       },
                     ),
@@ -163,6 +168,7 @@ class _AutocompleteRow extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onCall;
   final VoidCallback onMessage;
+  final VoidCallback? onContact;
 
   const _AutocompleteRow({
     super.key,
@@ -172,6 +178,7 @@ class _AutocompleteRow extends StatefulWidget {
     required this.onTap,
     required this.onCall,
     required this.onMessage,
+    this.onContact,
   });
 
   @override
@@ -307,6 +314,15 @@ class _AutocompleteRowState extends State<_AutocompleteRow>
                   onTap: widget.onMessage,
                   tooltip: 'Message',
                 ),
+                if (widget.onContact != null) ...[
+                  const SizedBox(width: 2),
+                  _ActionIcon(
+                    icon: Icons.person_outline_rounded,
+                    color: AppColors.accent,
+                    onTap: widget.onContact!,
+                    tooltip: 'Contact',
+                  ),
+                ],
               ],
             ),
           ),

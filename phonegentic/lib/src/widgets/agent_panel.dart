@@ -21,6 +21,7 @@ import '../models/chat_message.dart';
 import '../tear_sheet_service.dart';
 import '../theme_provider.dart';
 import '../transcript_exporter.dart';
+import 'sms_thread_bubble.dart';
 import 'streaming_typing_text.dart';
 import 'waveform_bars.dart';
 
@@ -1815,7 +1816,9 @@ class _MessageBubble extends StatelessWidget {
         message.metadata?['isPreviousCallFooter'] == true;
 
     Widget child;
-    if (message.type == MessageType.callState) {
+    if (message.type == MessageType.sms) {
+      child = SmsThreadBubble(message: message);
+    } else if (message.type == MessageType.callState) {
       child = _CallStatePill(text: message.text);
     } else if (message.type == MessageType.whisper) {
       child = _WhisperBubble(message: message);

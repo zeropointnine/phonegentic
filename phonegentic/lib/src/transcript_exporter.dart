@@ -148,7 +148,7 @@ class TranscriptExporter {
           label = msg.speakerName ?? 'Remote';
           break;
         case ChatRole.system:
-          label = 'System';
+          label = msg.type == MessageType.sms ? 'SMS' : 'System';
           break;
       }
 

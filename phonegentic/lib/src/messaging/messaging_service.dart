@@ -211,6 +211,21 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Opens the panel directly to a specific conversation.
+  ///
+  /// Sets both [_isOpen] and [_selectedRemotePhone] before the first
+  /// [notifyListeners] so the panel renders straight into the conversation
+  /// view without flashing the list.
+  Future<void> openToConversation(String remotePhone) async {
+    _selectedRemotePhone = ensureE164(remotePhone);
+    _isOpen = true;
+    notifyListeners();
+    _refreshConversations();
+    await _loadMessages(_selectedRemotePhone!);
+    await markConversationRead(_selectedRemotePhone!);
+    notifyListeners();
+  }
+
   // ---------------------------------------------------------------------------
   // Conversation selection
   // ---------------------------------------------------------------------------

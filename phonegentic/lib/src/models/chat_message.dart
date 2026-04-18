@@ -1,6 +1,6 @@
 enum ChatRole { user, agent, host, remoteParty, system }
 
-enum MessageType { text, transcript, action, status, callState, whisper, attachment }
+enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms }
 
 class MessageAction {
   final String label;
@@ -106,6 +106,30 @@ class ChatMessage {
         isStreaming = false,
         actions = const [],
         metadata = {'fileName': fileName};
+
+  /// An SMS message rendered inline as a threaded conversation bubble.
+  ///
+  /// [direction] is `'inbound'` or `'outbound'`.
+  /// [remotePhone] is the other party's number.
+  /// [contactName] is the display name if known.
+  ChatMessage.sms(
+    this.text, {
+    String? id,
+    required String direction,
+    required String remotePhone,
+    String? contactName,
+  })  : id = id ?? _uid(),
+        role = ChatRole.system,
+        type = MessageType.sms,
+        timestamp = DateTime.now(),
+        speakerName = contactName,
+        isStreaming = false,
+        actions = const [],
+        metadata = {
+          'sms_direction': direction,
+          'sms_remote_phone': remotePhone,
+          if (contactName != null) 'sms_contact_name': contactName,
+        };
 
   static int _counter = 0;
   static String _uid() => 'msg_${DateTime.now().millisecondsSinceEpoch}_${_counter++}';

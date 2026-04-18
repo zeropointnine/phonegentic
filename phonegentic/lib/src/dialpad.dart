@@ -1484,8 +1484,14 @@ class _MyDialPadWidget extends State<DialPadWidget>
     if (phone.isEmpty) return;
     setState(() => _dropdownOpen = false);
     final messaging = context.read<MessagingService>();
-    if (!messaging.isOpen) messaging.toggleOpen();
-    messaging.selectConversation(phone);
+    messaging.openToConversation(phone);
+  }
+
+  void _onAutocompleteContact(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    setState(() => _dropdownOpen = false);
+    context.read<ContactService>().openContactForPhone(phone);
   }
 
   Widget _buildPhoneContent() {
@@ -1537,6 +1543,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                         onSelect: _onAutocompleteSelect,
                         onCall: _onAutocompleteCall,
                         onMessage: _onAutocompleteMessage,
+                        onContact: _onAutocompleteContact,
                         onDismiss: _dismissAutocomplete,
                       ),
                     ),

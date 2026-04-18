@@ -2779,9 +2779,18 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] Inbound SMS from $senderLabel: ${preview.length > 80 ? '${preview.substring(0, 80)}...' : preview}');
 
-    _messages.add(ChatMessage.system(
+    String? contactName;
+    if (contactService != null) {
+      final contact = contactService!.lookupByPhone(msg.from);
+      if (contact != null) {
+        contactName = contact['display_name'] as String?;
+      }
+    }
+    _messages.add(ChatMessage.sms(
       'Inbound SMS from $senderLabel: "$preview"',
-      metadata: {'type': 'sms_received', 'from': msg.from},
+      direction: 'inbound',
+      remotePhone: msg.from,
+      contactName: contactName,
     ));
     notifyListeners();
 
@@ -2840,9 +2849,18 @@ class AgentService extends ChangeNotifier {
       final displayTo = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(to)
           : to;
-      _messages.add(ChatMessage.system(
+      String? contactName;
+      if (contactService != null) {
+        final contact = contactService!.lookupByPhone(to);
+        if (contact != null) {
+          contactName = contact['display_name'] as String?;
+        }
+      }
+      _messages.add(ChatMessage.sms(
         'SMS sent to $displayTo: "$text"',
-        metadata: {'type': 'sms_sent', 'to': to},
+        direction: 'outbound',
+        remotePhone: to,
+        contactName: contactName,
       ));
       notifyListeners();
       return 'Message sent to $displayTo. Do NOT send another message to this '
@@ -2874,9 +2892,18 @@ class AgentService extends ChangeNotifier {
       final displayTo = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(selected)
           : selected;
-      _messages.add(ChatMessage.system(
+      String? contactName;
+      if (contactService != null) {
+        final contact = contactService!.lookupByPhone(selected);
+        if (contact != null) {
+          contactName = contact['display_name'] as String?;
+        }
+      }
+      _messages.add(ChatMessage.sms(
         'SMS reply to $displayTo: "$text"',
-        metadata: {'type': 'sms_reply', 'to': selected},
+        direction: 'outbound',
+        remotePhone: selected,
+        contactName: contactName,
       ));
       notifyListeners();
       return 'Reply sent to $displayTo. Do NOT send another message — wait '
