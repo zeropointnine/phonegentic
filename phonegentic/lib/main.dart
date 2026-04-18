@@ -15,6 +15,7 @@ import 'package:phonegentic/src/inbound_call_flow_service.dart';
 import 'package:phonegentic/src/transfer_rule_service.dart';
 import 'package:phonegentic/src/job_function_service.dart';
 import 'package:phonegentic/src/messaging/messaging_service.dart';
+import 'package:phonegentic/src/comfort_noise_service.dart';
 import 'package:phonegentic/src/ringtone_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
@@ -104,6 +105,9 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<RingtoneService>(
           create: (_) => RingtoneService()..load(),
         ),
+        ChangeNotifierProvider<ComfortNoiseService>(
+          create: (_) => ComfortNoiseService()..load(),
+        ),
         ChangeNotifierProvider<InboundCallFlowService>(
           create: (_) => InboundCallFlowService()..loadAll(),
         ),
@@ -136,7 +140,8 @@ class MyApp extends StatelessWidget {
                 ..gmailService = gmail
                 ..googleCalendarService = gcal
                 ..googleSearchService = context.read<GoogleSearchService>()
-                ..demoModeService = context.read<DemoModeService>(),
+                ..demoModeService = context.read<DemoModeService>()
+                ..comfortNoiseService = context.read<ComfortNoiseService>(),
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
           create: (_) => MessagingService()..start(),

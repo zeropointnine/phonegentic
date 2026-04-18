@@ -160,6 +160,7 @@ class AgentBootContext {
   final String? elevenLabsVoiceId;
   final String? kokoroVoiceStyle;
   final String defaultCountryCode;
+  final String? comfortNoisePath;
 
   const AgentBootContext({
     this.name,
@@ -171,6 +172,7 @@ class AgentBootContext {
     this.elevenLabsVoiceId,
     this.kokoroVoiceStyle,
     this.defaultCountryCode = '1',
+    this.comfortNoisePath,
   });
 
   factory AgentBootContext.trivia() {

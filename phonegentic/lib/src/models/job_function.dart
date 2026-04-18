@@ -38,6 +38,8 @@ class JobFunction {
   /// Per-job mute policy override. null = use global setting.
   /// 0 = autoToggle, 1 = stayMuted, 2 = stayUnmuted (matches AgentMutePolicy.index).
   final int? mutePolicyOverride;
+  /// Per-job comfort noise override. null = use global, non-empty path = use file.
+  final String? comfortNoisePath;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -53,6 +55,7 @@ class JobFunction {
     this.elevenLabsVoiceId,
     this.kokoroVoiceStyle,
     this.mutePolicyOverride,
+    this.comfortNoisePath,
     DateTime? createdAt,
     DateTime? updatedAt,
   })  : speakers = speakers ?? List.of(SpeakerDef.defaultSpeakers),
@@ -75,6 +78,8 @@ class JobFunction {
     bool clearKokoroVoice = false,
     int? mutePolicyOverride,
     bool clearMutePolicy = false,
+    String? comfortNoisePath,
+    bool clearComfortNoise = false,
     DateTime? updatedAt,
   }) =>
       JobFunction(
@@ -89,6 +94,7 @@ class JobFunction {
         elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
         kokoroVoiceStyle: clearKokoroVoice ? null : (kokoroVoiceStyle ?? this.kokoroVoiceStyle),
         mutePolicyOverride: clearMutePolicy ? null : (mutePolicyOverride ?? this.mutePolicyOverride),
+        comfortNoisePath: clearComfortNoise ? null : (comfortNoisePath ?? this.comfortNoisePath),
         createdAt: createdAt,
         updatedAt: updatedAt ?? DateTime.now(),
       );
@@ -105,6 +111,7 @@ class JobFunction {
         'elevenlabs_voice_id': elevenLabsVoiceId,
         'kokoro_voice_style': kokoroVoiceStyle,
         'mute_policy_override': mutePolicyOverride,
+        'comfort_noise_path': comfortNoisePath,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
       };
@@ -128,6 +135,7 @@ class JobFunction {
       elevenLabsVoiceId: map['elevenlabs_voice_id'] as String?,
       kokoroVoiceStyle: map['kokoro_voice_style'] as String?,
       mutePolicyOverride: map['mute_policy_override'] as int?,
+      comfortNoisePath: map['comfort_noise_path'] as String?,
       createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(map['updated_at'] as String? ?? '') ??

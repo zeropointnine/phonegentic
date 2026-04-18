@@ -228,6 +228,31 @@ class CallRecordingConfig {
   }
 }
 
+class ComfortNoiseConfig {
+  final bool enabled;
+  final double volume;
+  final String? selectedPath;
+
+  const ComfortNoiseConfig({
+    this.enabled = false,
+    this.volume = 0.3,
+    this.selectedPath,
+  });
+
+  ComfortNoiseConfig copyWith({
+    bool? enabled,
+    double? volume,
+    String? selectedPath,
+    bool clearPath = false,
+  }) {
+    return ComfortNoiseConfig(
+      enabled: enabled ?? this.enabled,
+      volume: volume ?? this.volume,
+      selectedPath: clearPath ? null : (selectedPath ?? this.selectedPath),
+    );
+  }
+}
+
 class AgentConfigService {
   static const _prefix = 'agent_';
 
@@ -416,6 +441,29 @@ class AgentConfigService {
   static Future<void> saveMutePolicy(AgentMutePolicy policy) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('${_prefix}mute_policy', policy.index);
+  }
+
+  // -- Comfort noise config ---------------------------------------------------
+
+  static Future<ComfortNoiseConfig> loadComfortNoiseConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    return ComfortNoiseConfig(
+      enabled: prefs.getBool('${_prefix}comfort_noise_enabled') ?? false,
+      volume: prefs.getDouble('${_prefix}comfort_noise_volume') ?? 0.3,
+      selectedPath: prefs.getString('${_prefix}comfort_noise_path'),
+    );
+  }
+
+  static Future<void> saveComfortNoiseConfig(ComfortNoiseConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('${_prefix}comfort_noise_enabled', config.enabled);
+    await prefs.setDouble('${_prefix}comfort_noise_volume', config.volume);
+    if (config.selectedPath != null) {
+      await prefs.setString(
+          '${_prefix}comfort_noise_path', config.selectedPath!);
+    } else {
+      await prefs.remove('${_prefix}comfort_noise_path');
+    }
   }
 
   // -- Conference config ------------------------------------------------------

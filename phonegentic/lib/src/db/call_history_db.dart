@@ -33,7 +33,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 15,
+        version: 16,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -229,6 +229,12 @@ class CallHistoryDb {
     if (oldVersion < 15) {
       await _createTransferRulesTable(db);
     }
+
+    if (oldVersion < 16) {
+      await db.execute(
+        'ALTER TABLE job_functions ADD COLUMN comfort_noise_path TEXT',
+      );
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -245,6 +251,7 @@ class CallHistoryDb {
         elevenlabs_voice_id TEXT,
         kokoro_voice_style TEXT,
         mute_policy_override INTEGER,
+        comfort_noise_path TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )

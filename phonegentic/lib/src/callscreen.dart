@@ -126,6 +126,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (display != null && display.isNotEmpty) return display;
     return null;
   }
+
   Direction? get direction => call!.direction;
   Call? get call => widget._call;
 
@@ -217,8 +218,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void didUpdateWidget(covariant CallScreenWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget._call?.id != widget._call?.id) {
-      debugPrint(
-          '[CallScreen] Call object swapped (fork replacement): '
+      debugPrint('[CallScreen] Call object swapped (fork replacement): '
           '${oldWidget._call?.id} → ${widget._call?.id}');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _syncCallState();
@@ -287,7 +287,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     // duplicate greeting.
     if (_callConfirmed &&
         (callState.state == CallStateEnum.ACCEPTED ||
-         callState.state == CallStateEnum.CONFIRMED)) {
+            callState.state == CallStateEnum.CONFIRMED)) {
       _enterCallMode();
       return;
     }
@@ -329,8 +329,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         // During fork coalescing, individual forks fail but the logical
         // call is still alive — don't update _state or tear down.
         if (_agent.forkCoalescing) {
-          debugPrint(
-              '[CallScreen] Suppressed teardown during fork coalescing');
+          debugPrint('[CallScreen] Suppressed teardown during fork coalescing');
           break;
         }
         _state = callState.state;
@@ -440,8 +439,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     try {
       await _tapChannel.invokeMethod('enterCallMode');
       await _tapChannel.invokeMethod('setRemoteGain', {'gain': 1.5});
-      await _tapChannel.invokeMethod(
-          'setCompressorStrength', {'strength': 0.6});
+      await _tapChannel
+          .invokeMethod('setCompressorStrength', {'strength': 0.6});
       debugPrint(
           '[CallScreen] enterCallMode — AI audio routed through WebRTC pipeline');
     } catch (e) {
@@ -471,8 +470,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _recSeconds++;
       final m = _recSeconds ~/ 60;
       final s = _recSeconds % 60;
-      if (mounted)
+      if (mounted) {
         setState(() => _recLabel = '$m:${s.toString().padLeft(2, '0')}');
+      }
     });
     if (mounted) setState(() {});
 
@@ -554,8 +554,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       _sampleSeconds++;
       final m = _sampleSeconds ~/ 60;
       final s = _sampleSeconds % 60;
-      if (mounted)
+      if (mounted) {
         setState(() => _sampleLabel = '$m:${s.toString().padLeft(2, '0')}');
+      }
     });
     if (mounted) setState(() {});
 

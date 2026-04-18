@@ -3,11 +3,13 @@ import 'package:provider/provider.dart';
 
 import '../agent_config_service.dart';
 import '../agent_service.dart';
+import '../comfort_noise_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../job_function_service.dart';
 import '../kokoro_tts_service.dart';
 import '../models/job_function.dart';
 import '../theme_provider.dart';
+import 'comfort_noise_picker.dart';
 
 class JobFunctionEditor extends StatefulWidget {
   const JobFunctionEditor({super.key});
@@ -45,6 +47,9 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   // Mute policy override (null = use global, 0 = autoToggle, 1 = stayMuted)
   int? _mutePolicyOverride;
 
+  // Comfort noise override (null = use global, '' = disabled, path = custom)
+  String? _comfortNoisePath;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +67,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       _selectedVoiceId = _existing!.elevenLabsVoiceId;
       _selectedKokoroVoice = _existing!.kokoroVoiceStyle;
       _mutePolicyOverride = _existing!.mutePolicyOverride;
+      _comfortNoisePath = _existing!.comfortNoisePath;
       _speakers = _existing!.speakers
           .map((s) => _SpeakerRow(
                 role: TextEditingController(text: s.role),
@@ -167,6 +173,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       elevenLabsVoiceId: _selectedVoiceId,
       kokoroVoiceStyle: _selectedKokoroVoice,
       mutePolicyOverride: _mutePolicyOverride,
+      comfortNoisePath: _comfortNoisePath,
       createdAt: _existing?.createdAt,
     );
 
@@ -336,6 +343,8 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                         _buildWhisperToggle(),
                         const SizedBox(height: 14),
                         _buildMutePolicyOverride(),
+                        const SizedBox(height: 14),
+                        _buildComfortNoiseOverride(),
                         if (_ttsConfig != null &&
                             _ttsConfig!.provider == TtsProvider.elevenlabs &&
                             _ttsConfig!.elevenLabsApiKey.isNotEmpty) ...[
@@ -616,6 +625,101 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
 
   Widget _thinDivider() => Divider(
       height: 0.5, indent: 12, color: AppColors.border.withValues(alpha: 0.3));
+
+  // ───── Comfort Noise Override ─────
+
+  bool get _hasCustomComfortNoise =>
+      _comfortNoisePath != null && _comfortNoisePath!.isNotEmpty;
+
+  Widget _buildComfortNoiseOverride() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Comfort Noise'),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+          ),
+          child: Column(
+            children: [
+              _comfortNoiseTile(false, 'Use global setting'),
+              _thinDivider(),
+              _comfortNoiseTile(true, 'Custom file'),
+            ],
+          ),
+        ),
+        if (_hasCustomComfortNoise) ...[
+          const SizedBox(height: 8),
+          ComfortNoisePicker(
+            selectedPath: _comfortNoisePath,
+            showGlobalOption: false,
+            onSelected: (path) => setState(
+                () => _comfortNoisePath = path ?? _comfortNoisePath),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _comfortNoiseTile(bool custom, String label) {
+    final selected = custom == _hasCustomComfortNoise;
+    return HoverButton(
+      onTap: () {
+        setState(() {
+          if (custom) {
+            _comfortNoisePath =
+                context.read<ComfortNoiseService>().config.selectedPath ?? '';
+          } else {
+            _comfortNoisePath = null;
+          }
+        });
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.accent : AppColors.border,
+                  width: selected ? 4.5 : 1.5,
+                ),
+                color: selected ? AppColors.accent : Colors.transparent,
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.onAccent,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color:
+                    selected ? AppColors.textPrimary : AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildVoiceSelector() {
     return Column(

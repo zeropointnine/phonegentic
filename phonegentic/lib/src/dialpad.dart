@@ -173,6 +173,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     }
 
     if (!_listEquals(matches, _autocompleteMatches)) {
+      final wasOpen = _dropdownOpen;
       setState(() {
         _autocompleteMatches = matches;
         _highlightedIndex = -1;
@@ -182,8 +183,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
           _dropdownOpen = true;
         }
       });
+      if (!wasOpen && _dropdownOpen) _focusNode.requestFocus();
     } else if (hasLetters && matches.isNotEmpty && !_dropdownOpen) {
       setState(() => _dropdownOpen = true);
+      _focusNode.requestFocus();
     }
   }
 
@@ -1565,7 +1568,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
   }
 
   void _toggleSearchDropdown() {
-    setState(() => _dropdownOpen = !_dropdownOpen);
+    final opening = !_dropdownOpen;
+    setState(() => _dropdownOpen = opening);
+    if (opening) _focusNode.requestFocus();
   }
 
   void _handleSlashSearch() {
@@ -1578,6 +1583,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     }
     if (_autocompleteMatches.isNotEmpty) {
       setState(() => _dropdownOpen = true);
+      _focusNode.requestFocus();
       return;
     }
     final text = _textController?.text ?? '';
@@ -1590,6 +1596,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
         _autocompleteMatches = matches;
         _dropdownOpen = true;
       });
+      _focusNode.requestFocus();
     }
   }
 

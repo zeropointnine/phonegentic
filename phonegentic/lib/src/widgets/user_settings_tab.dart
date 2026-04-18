@@ -241,6 +241,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   final _twilioFromCtrl = TextEditingController();
 
   final _agentManagerPhoneCtrl = TextEditingController();
+  final _agentManagerNameCtrl = TextEditingController();
 
   final _flightNumberCtrl = TextEditingController();
   final _originCtrl = TextEditingController();
@@ -257,6 +258,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _calendlyKeyCtrl.dispose();
     _fakeNumberCtrl.dispose();
     _agentManagerPhoneCtrl.dispose();
+    _agentManagerNameCtrl.dispose();
     _telnyxMsgKeyCtrl.dispose();
     _telnyxMsgFromCtrl.dispose();
     _telnyxMsgProfileCtrl.dispose();
@@ -300,6 +302,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
       _agentManagerPhoneCtrl.text = am.phoneNumber;
+      _agentManagerNameCtrl.text = am.name;
       _telnyxMsgKeyCtrl.text = t.apiKey;
       _telnyxMsgFromCtrl.text = t.fromNumber;
       _telnyxMsgProfileCtrl.text = t.messagingProfileId;
@@ -1184,6 +1187,45 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                                 fontSize: 11, color: AppColors.textTertiary),
                           ),
                         ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 100,
+                      child: Text('Name',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _agentManagerNameCtrl,
+                        autocorrect: false,
+                        textCapitalization: TextCapitalization.words,
+                        style: TextStyle(
+                            fontSize: 14, color: AppColors.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: 'Your name',
+                          hintStyle: TextStyle(
+                              fontSize: 13, color: AppColors.textTertiary),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onChanged: (val) => _updateAgentManager(
+                            _agentManager.copyWith(name: val)),
                       ),
                     ),
                   ],

@@ -43,6 +43,7 @@ import 'on_device_config.dart';
 import 'llm/llm_interfaces.dart';
 import 'text_agent_service.dart';
 import 'vocal_expressions.dart';
+import 'comfort_noise_service.dart';
 import 'whisper_realtime_service.dart';
 import 'whisperkit_stt_service.dart';
 
@@ -158,6 +159,7 @@ class AgentService extends ChangeNotifier {
   ConferenceService? conferenceService;
   TransferRuleService? _transferRuleService;
   SIPUAHelper? sipHelper;
+  ComfortNoiseService? comfortNoiseService;
 
   TransferRuleService? get transferRuleService => _transferRuleService;
   set transferRuleService(TransferRuleService? svc) {
@@ -635,8 +637,9 @@ class AgentService extends ChangeNotifier {
     final gmail = _buildGmailContext();
     final gcal = _buildGoogleCalendarContext();
     final gsearch = _buildGoogleSearchContext();
+    final manager = _buildManagerContext();
     final awareness = _buildReminderAndAwarenessContext();
-    _whisper.updateSessionInstructions('$base$flight$gmail$gcal$gsearch$awareness');
+    _whisper.updateSessionInstructions('$base$flight$gmail$gcal$gsearch$manager$awareness');
     _textAgent?.updateInstructions(_buildTextAgentInstructions());
     _applyIntegrationTools();
   }
@@ -803,6 +806,7 @@ class AgentService extends ChangeNotifier {
         if (_whisperMode) return;
         if (!_callPhase.isActive && _callPhase != CallPhase.idle) return;
         if (event.pcm16Data.isNotEmpty) {
+          comfortNoiseService?.stopPlayback();
           audioChunkCount++;
           if (audioChunkCount <= 3 || audioChunkCount % 50 == 0) {
             debugPrint(
@@ -1024,6 +1028,7 @@ class AgentService extends ChangeNotifier {
     int elChunkCount = 0;
     _ttsAudioSub = _tts!.audioChunks.listen((pcm) {
       if (_ttsMuted || _ttsInterrupted) return;
+      comfortNoiseService?.stopPlayback();
       _releaseVoiceUiIfWaitingForTts(pcm);
       _pushTtsAudioLevel(pcm);
       elChunkCount++;
@@ -1072,6 +1077,7 @@ class AgentService extends ChangeNotifier {
     int chunkCount = 0;
     _ttsAudioSub = kokoro.audioChunks.listen((pcm) {
       if (_ttsMuted || _ttsInterrupted) return;
+      comfortNoiseService?.stopPlayback();
       _releaseVoiceUiIfWaitingForTts(pcm);
       _pushTtsAudioLevel(pcm);
       chunkCount++;
@@ -1206,11 +1212,34 @@ class AgentService extends ChangeNotifier {
     if (gmail.isNotEmpty) buf.write(gmail);
     if (gcal.isNotEmpty) buf.write(gcal);
     if (gsearch.isNotEmpty) buf.write(gsearch);
+    buf.write(_buildManagerContext());
+    buf.write(_buildReminderAndAwarenessContext());
+    if (prompt.isNotEmpty) {
+      buf.write('\n\n## Additional Instructions\n$prompt');
+    }
+    return buf.toString();
+  }
+
+  String _buildManagerContext() {
+    if (!_agentManagerConfig.isConfigured) return '';
+    final phone = _agentManagerConfig.phoneNumber;
+    final name = _agentManagerConfig.name;
+    final hasName = name.isNotEmpty;
+    final buf = StringBuffer('\n\n## Manager / Host Identity');
+    buf.write('\nYour manager (the person who owns and operates this device) '
+        'is ${hasName ? '**$name**' : 'the host'}');
+    buf.write(' — reachable at $phone.');
+    if (hasName) {
+      buf.write(' Address them as "$name" when speaking to them.');
+    }
+    buf.write('\n\nWhen the host or manager says "call me", "text me", '
+        '"send me", or uses "me" / "my" in a request while idle (no active '
+        'call), they mean THEMSELVES at $phone'
+        '${hasName ? ' ($name)' : ''}. Use that number — do NOT ask who '
+        '"me" is.');
     if (_isCallerAgentManager) {
-      final managerPhone = _agentManagerConfig.phoneNumber;
-      buf.write('\n\n## Agent Manager'
-          '\nThe current inbound caller is the designated **Agent Manager** '
-          '(phone: $managerPhone) — '
+      buf.write('\n\nThe current inbound caller IS the manager'
+          '${hasName ? ' ($name)' : ''} at $phone — '
           'they have the same authority as the host. Treat their requests '
           'exactly as you would the host\'s.'
           '\n\nThe manager has UNRESTRICTED access to every tool and action '
@@ -1222,15 +1251,7 @@ class AgentService extends ChangeNotifier {
           'to you. If the manager asks you to do something and you have a '
           'tool for it, execute it immediately. NEVER refuse a manager '
           'request or say you cannot do something — if the tool exists, use it.'
-          '\n\nDo NOT apply inbound-caller restrictions to this person.'
-          '\n\nWhen the agent manager says "me", "I", or "my" in requests '
-          'like "send me a text", "text me", or "call me", they are '
-          'referring to THEMSELVES at $managerPhone. Use that number as the '
-          'recipient — do NOT ask who "me" is.');
-    }
-    buf.write(_buildReminderAndAwarenessContext());
-    if (prompt.isNotEmpty) {
-      buf.write('\n\n## Additional Instructions\n$prompt');
+          '\n\nDo NOT apply inbound-caller restrictions to this person.');
     }
     return buf.toString();
   }
@@ -5453,8 +5474,13 @@ class AgentService extends ChangeNotifier {
       _whisper.inCallMode = true;
       _startSettleTimer();
       _activeTtsWarmUp();
+      comfortNoiseService?.startPlayback(_bootContext.comfortNoisePath);
     } else if (_callPhase != CallPhase.settling) {
       _cancelSettleTimer();
+    }
+
+    if (phase == CallPhase.ended || phase == CallPhase.failed) {
+      comfortNoiseService?.stopPlayback();
     }
 
     if (!phaseChanged) {

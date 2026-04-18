@@ -34,6 +34,7 @@
 		D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */; };
 		E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */; };
 		F0A1B2C300000002SCM00002 /* SimpleCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */; };
+		A0B1C2D300000002NAC00002 /* NativeActionsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */; };
 		E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E5F6A7B800000004FLA00002 /* FluidAudio */; };
 		E8C4A047BF41B4A2D0635957 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */; };
 		F1A2B3C400000002KTC00001 /* KokoroTtsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */; };
@@ -103,6 +104,7 @@
 		D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCAudioProcessor.swift; sourceTree = "<group>"; };
 		E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerIdentifier.swift; sourceTree = "<group>"; };
 		F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCompressor.swift; sourceTree = "<group>"; };
+		A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeActionsChannel.swift; sourceTree = "<group>"; };
 		E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC906358CFE0C48974F10E54 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		ECBD98B4B52730466C82DC36 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
@@ -208,6 +210,7 @@
 				D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */,
 				E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */,
 				F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */,
+				A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */,
 				C3D4E5F600000001BRH00001 /* Runner-Bridging-Header.h */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
 				33E51914231749380026EE4D /* Release.entitlements */,
@@ -489,6 +492,7 @@
 				D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */,
 				E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */,
 				F0A1B2C300000002SCM00002 /* SimpleCompressor.swift in Sources */,
+				A0B1C2D300000002NAC00002 /* NativeActionsChannel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

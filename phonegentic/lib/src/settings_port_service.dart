@@ -13,6 +13,7 @@ import 'conference/conference_config.dart';
 import 'db/call_history_db.dart';
 import 'models/inbound_call_flow.dart';
 import 'models/job_function.dart';
+import 'user_config_service.dart';
 
 enum ExportFormat { json, zip, tar }
 
@@ -549,6 +550,8 @@ class SettingsPortService {
     final stt = await AgentConfigService.loadSttConfig();
     final rec = await AgentConfigService.loadCallRecordingConfig();
     final mute = await AgentConfigService.loadMutePolicy();
+    final cn = await AgentConfigService.loadComfortNoiseConfig();
+    final mgr = await UserConfigService.loadAgentManagerConfig();
     return {
       'voice': {
         'enabled': voice.enabled,
@@ -587,6 +590,15 @@ class SettingsPortService {
         'auto_record': rec.autoRecord,
       },
       'mute_policy': mute.index,
+      'comfort_noise': {
+        'enabled': cn.enabled,
+        'volume': cn.volume,
+        'selected_path': cn.selectedPath,
+      },
+      'manager': {
+        'phone_number': mgr.phoneNumber,
+        'name': mgr.name,
+      },
     };
   }
 
@@ -736,6 +748,23 @@ class SettingsPortService {
     await AgentConfigService.saveMutePolicy(
       AgentMutePolicy.values[muteIdx.clamp(0, AgentMutePolicy.values.length - 1)],
     );
+
+    final cn = data['comfort_noise'] as Map<String, dynamic>?;
+    if (cn != null) {
+      await AgentConfigService.saveComfortNoiseConfig(ComfortNoiseConfig(
+        enabled: cn['enabled'] as bool? ?? false,
+        volume: (cn['volume'] as num?)?.toDouble() ?? 0.3,
+        selectedPath: cn['selected_path'] as String?,
+      ));
+    }
+
+    final mgr = data['manager'] as Map<String, dynamic>?;
+    if (mgr != null) {
+      await UserConfigService.saveAgentManagerConfig(AgentManagerConfig(
+        phoneNumber: mgr['phone_number'] as String? ?? '',
+        name: mgr['name'] as String? ?? '',
+      ));
+    }
   }
 
   static Future<void> _applyJobFunctions(Map<String, dynamic> data) async {

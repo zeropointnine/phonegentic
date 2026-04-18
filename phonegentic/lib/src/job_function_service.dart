@@ -104,6 +104,7 @@ class JobFunctionService extends ChangeNotifier {
       textOnly: jf.whisperByDefault,
       elevenLabsVoiceId: jf.elevenLabsVoiceId,
       kokoroVoiceStyle: jf.kokoroVoiceStyle,
+      comfortNoisePath: jf.comfortNoisePath,
     );
   }
 

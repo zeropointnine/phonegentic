@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
+import '../comfort_noise_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../kokoro_tts_service.dart';
 import '../on_device_config.dart';
 import '../settings_port_service.dart';
 import '../theme_provider.dart';
+import 'comfort_noise_picker.dart';
 import 'settings_export_import_card.dart';
 import 'voice_clone_modal.dart';
 
@@ -24,6 +26,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   TtsConfig _tts = const TtsConfig();
   SttConfig _stt = const SttConfig();
   AgentMutePolicy _mutePolicy = AgentMutePolicy.autoToggle;
+  ComfortNoiseConfig _comfortNoise = const ComfortNoiseConfig();
   bool _loaded = false;
   bool _dirty = false;
   AgentService? _agent;
@@ -81,6 +84,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final tts = await AgentConfigService.loadTtsConfig();
     final stt = await AgentConfigService.loadSttConfig();
     final mp = await AgentConfigService.loadMutePolicy();
+    final cn = await AgentConfigService.loadComfortNoiseConfig();
     if (!mounted) return;
     setState(() {
       _voice = v;
@@ -89,6 +93,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _tts = tts;
       _stt = stt;
       _mutePolicy = mp;
+      _comfortNoise = cn;
       _voiceKeyCtrl.text = v.apiKey;
       _voiceInstructionsCtrl.text = v.instructions;
       _textOpenaiKeyCtrl.text = t.openaiApiKey;
@@ -180,6 +185,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   _buildCallRecordingCard(),
                   const SizedBox(height: 16),
                   _buildMutePolicyCard(),
+                  const SizedBox(height: 16),
+                  _buildComfortNoiseCard(),
                   const SizedBox(height: 16),
                   _buildTextAgentCard(),
                   if (_text.enabled &&
@@ -442,6 +449,147 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           ],
         ),
       ),
+    );
+  }
+
+  // ───── Comfort Noise ─────
+
+  void _updateComfortNoise(ComfortNoiseConfig cn) {
+    setState(() => _comfortNoise = cn);
+    context.read<ComfortNoiseService>().updateConfig(cn);
+  }
+
+  Widget _buildComfortNoiseCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'COMFORT NOISE',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: _comfortNoise.enabled
+                            ? AppColors.accent.withValues(alpha: 0.12)
+                            : AppColors.card,
+                      ),
+                      child: Icon(Icons.spatial_audio_off_rounded,
+                          size: 17,
+                          color: _comfortNoise.enabled
+                              ? AppColors.accent
+                              : AppColors.textTertiary),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Play comfort noise',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Loop audio into the call before the agent speaks',
+                            style: TextStyle(
+                                fontSize: 11, color: AppColors.textTertiary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      height: 28,
+                      child: Switch.adaptive(
+                        value: _comfortNoise.enabled,
+                        onChanged: (v) => _updateComfortNoise(
+                            _comfortNoise.copyWith(enabled: v)),
+                        activeTrackColor: AppColors.accent,
+                      ),
+                    ),
+                  ],
+                ),
+                if (_comfortNoise.enabled) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Icon(Icons.volume_down,
+                          size: 16, color: AppColors.textTertiary),
+                      Expanded(
+                        child: Slider(
+                          value: _comfortNoise.volume,
+                          min: 0.0,
+                          max: 1.0,
+                          divisions: 20,
+                          activeColor: AppColors.accent,
+                          inactiveColor:
+                              AppColors.textTertiary.withValues(alpha: 0.2),
+                          onChanged: (v) => _updateComfortNoise(
+                              _comfortNoise.copyWith(volume: v)),
+                        ),
+                      ),
+                      Icon(Icons.volume_up,
+                          size: 16, color: AppColors.textTertiary),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 36,
+                        child: Text(
+                          '${(_comfortNoise.volume * 100).round()}%',
+                          style: TextStyle(
+                              fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ComfortNoisePicker(
+                    selectedPath: _comfortNoise.selectedPath,
+                    onSelected: (path) => _updateComfortNoise(
+                      path != null
+                          ? _comfortNoise.copyWith(selectedPath: path)
+                          : _comfortNoise.copyWith(clearPath: true),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 2),
+          child: Text(
+            'Can be overridden per job function.',
+            style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+          ),
+        ),
+      ],
     );
   }
 
