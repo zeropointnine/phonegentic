@@ -15,6 +15,7 @@ class MainFlutterWindow: NSWindow {
     self.minSize = NSSize(width: 1232, height: 693)
     self.setFrame(NSRect(x: self.frame.origin.x, y: self.frame.origin.y,
                          width: 1488, height: 837), display: true)
+    self.center()
 
     self.titlebarAppearsTransparent = true
     self.titleVisibility = .hidden
