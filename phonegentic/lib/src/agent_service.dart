@@ -2638,6 +2638,14 @@ class AgentService extends ChangeNotifier {
   static final _hallucinatedCallStateRe =
       RegExp(r'\[CALL_STATE:\s*[^\]]*\]', caseSensitive: false);
 
+  /// Matches LLM responses that are purely parenthesized stage directions
+  /// like "(Silent)", "(Pause)", "(Listening)", etc. These should never be
+  /// spoken aloud or shown as agent messages.
+  static final _stageDirectionRe = RegExp(
+    r'^\s*\((?:silent|silence|pause|pauses|pausing|quiet|listening|waits?|waiting|nods?|nodding|no\s*response|…|\.\.\.)\)\s*$',
+    caseSensitive: false,
+  );
+
   /// Shared handler for streaming agent responses from either OpenAI
   /// Realtime or the external text agent (Claude, etc.).
   void _appendStreamingResponse(ResponseTextEvent event) {
@@ -2654,6 +2662,26 @@ class AgentService extends ChangeNotifier {
         return;
       }
       _appendStreamingResponse(ResponseTextEvent(text: cleaned, isFinal: true));
+      return;
+    }
+
+    // Discard parenthesized stage directions the LLM emits as responses,
+    // e.g. "(Silent)", "(Pause)". Cancel any TTS already buffered and
+    // remove the in-progress chat bubble.
+    if (event.isFinal && _stageDirectionRe.hasMatch(event.text)) {
+      debugPrint('[AgentService] Stage direction suppressed: "${event.text.trim()}"');
+      _ttsInterrupted = true;
+      _activeTtsEndGeneration();
+      _whisper.stopResponseAudio();
+      _whisper.clearTTSQueue();
+      _whisper.isTtsPlaying = false;
+      if (_streamingMessageId != null) {
+        final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+        if (idx >= 0) _messages.removeAt(idx);
+        _streamingMessageId = null;
+      }
+      _resetVoiceUiSyncState();
+      notifyListeners();
       return;
     }
 
