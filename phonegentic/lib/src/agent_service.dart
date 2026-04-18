@@ -1118,7 +1118,8 @@ class AgentService extends ChangeNotifier {
     final buf = StringBuffer();
     buf.writeln('\n## Calendar Schedule');
     buf.writeln('You have make_call, end_call, and (when configured) SMS tools '
-        '(send_sms, reply_sms, search_messages).');
+        '(send_sms, reply_sms, search_messages). SMS messages are sent and '
+        'received on the manager\'s phone — you are texting on their behalf.');
     buf.writeln('When a calendar event starts, follow the job function '
         'instructions. If the event involves a call, use make_call to dial; '
         'if it involves texting, use the SMS tools as appropriate.');
@@ -2774,8 +2775,10 @@ class AgentService extends ChangeNotifier {
         ? '${msg.text.substring(0, 500)}…'
         : msg.text;
     final contextLine =
-        'SYSTEM EVENT — New inbound SMS received from $senderLabel: '
-        '"$preview" — Use send_sms to reply to ${msg.from} if appropriate.';
+        'SYSTEM EVENT — New inbound SMS received on the manager\'s phone '
+        'from $senderLabel: "$preview" — This text was sent to the manager. '
+        'Use send_sms to reply to ${msg.from} on the manager\'s behalf if '
+        'appropriate.';
 
     debugPrint('[AgentService] Inbound SMS from $senderLabel: ${preview.length > 80 ? '${preview.substring(0, 80)}...' : preview}');
 
@@ -2863,8 +2866,8 @@ class AgentService extends ChangeNotifier {
         contactName: contactName,
       ));
       notifyListeners();
-      return 'Message sent to $displayTo. Do NOT send another message to this '
-          'number — wait for their reply.';
+      return 'Message sent from the manager\'s phone to $displayTo. Do NOT '
+          'send another message to this number — wait for their reply.';
     }
     return 'Failed to send message.';
   }
@@ -2906,8 +2909,8 @@ class AgentService extends ChangeNotifier {
         contactName: contactName,
       ));
       notifyListeners();
-      return 'Reply sent to $displayTo. Do NOT send another message — wait '
-          'for their reply.';
+      return 'Reply sent from the manager\'s phone to $displayTo. Do NOT '
+          'send another message — wait for their reply.';
     }
     return 'Failed to send reply.';
   }

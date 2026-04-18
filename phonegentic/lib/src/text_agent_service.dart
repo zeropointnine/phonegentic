@@ -377,7 +377,8 @@ class TextAgentService {
     ),
     LlmTool(
       name: 'send_sms',
-      description: 'Send an SMS or MMS to a phone number. Use when the job or host '
+      description: 'Send an SMS or MMS from the manager\'s phone number to a recipient. '
+          'The message is sent on behalf of the manager. Use when the job or host '
           'asks you to text someone, send a message, or follow up via SMS.',
       inputSchema: {
         'type': 'object',
@@ -401,8 +402,9 @@ class TextAgentService {
     ),
     LlmTool(
       name: 'reply_sms',
-      description: 'Reply in the currently selected SMS conversation. Use when the host '
-          'asks to respond or reply to the open text thread.',
+      description: 'Reply in the currently selected SMS conversation on behalf of the '
+          'manager. The reply is sent from the manager\'s phone number. Use when '
+          'the host asks to respond or reply to the open text thread.',
       inputSchema: {
         'type': 'object',
         'properties': {

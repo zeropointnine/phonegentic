@@ -481,7 +481,8 @@ class WhisperRealtimeService {
         'type': 'function',
         'name': 'send_sms',
         'description':
-            'Send an SMS or MMS message to a phone number. Use when the user or caller asks '
+            'Send an SMS or MMS from the manager\'s phone number to a recipient. '
+                'The message is sent on behalf of the manager. Use when the user or caller asks '
                 'you to text someone, send a message, or follow up via text.',
         'parameters': {
           'type': 'object',
@@ -506,7 +507,8 @@ class WhisperRealtimeService {
         'type': 'function',
         'name': 'reply_sms',
         'description':
-            'Reply to the currently selected SMS conversation. Use when '
+            'Reply in the currently selected SMS conversation on behalf of the '
+                'manager. The reply is sent from the manager\'s phone number. Use when '
                 'the user asks to respond to or reply to a text message.',
         'parameters': {
           'type': 'object',

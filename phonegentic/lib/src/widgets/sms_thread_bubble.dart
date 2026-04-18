@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../contact_service.dart';
 import '../models/chat_message.dart';
+import '../phone_formatter.dart';
 import '../theme_provider.dart';
 import 'dialpad_contact_preview.dart';
 
@@ -40,7 +41,7 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
       final name = contact['display_name'] as String?;
       if (name != null && name.isNotEmpty) return name;
     }
-    return _remotePhone;
+    return PhoneFormatter.format(_remotePhone);
   }
 
   String get _messageText {
@@ -142,13 +143,13 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+                  color: AppColors.burntAmber,
                   letterSpacing: 0.2,
                 ),
               ),
               if (_contactName != null && _contactName!.isNotEmpty)
                 Text(
-                  _remotePhone,
+                  PhoneFormatter.format(_remotePhone),
                   style: TextStyle(
                     fontSize: 9,
                     color: AppColors.textTertiary,
