@@ -5584,11 +5584,11 @@ class AgentService extends ChangeNotifier {
           '[AgentService] Pre-greet: added settle transcripts as context');
     }
 
-    if (_isDuplicateAgentMessage(text)) {
-      debugPrint('[AgentService] Pre-greeting duplicate suppressed');
-      _textAgent?.clearPendingContext();
-      return;
-    }
+    // Clear any context that accumulated during the pre-greeting LLM call
+    // (e.g. transfer rules, call state) BEFORE adding the greeting to
+    // _messages. Without this, the text agent's finally-block _scheduleFlush
+    // races to produce a duplicate response.
+    _textAgent?.clearPendingContext();
 
     final displayText = VocalExpressionRegistry.stripForDisplay(text);
 
@@ -5614,11 +5614,6 @@ class AgentService extends ChangeNotifier {
       _activeTtsEndGeneration();
     }
 
-    // Discard any phase-transition context (settling / connected) that
-    // accumulated in the text agent while the pre-greeting was streaming.
-    // Without this, the text agent's _respond() finally block sees non-empty
-    // _pendingContext and auto-fires another LLM call → duplicate greeting.
-    _textAgent?.clearPendingContext();
   }
 
   void _discardPreGreeting() {
