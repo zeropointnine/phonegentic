@@ -13,6 +13,7 @@ import 'package:just_audio/just_audio.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../calendar_sync_service.dart';
+import '../manager_presence_service.dart';
 import '../db/call_history_db.dart';
 import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
@@ -202,6 +203,7 @@ class _AgentPanelState extends State<AgentPanel> {
                         onDismiss: agent.clearPipelineError,
                       ),
                     const _CalendarEventBanner(),
+                    const _AwayCallSummaryBanner(),
                     Consumer<TearSheetService>(
                       builder: (context, tearSheet, _) {
                         if (!tearSheet.isActive) {
@@ -852,6 +854,174 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Away-return call summary banner
+// ---------------------------------------------------------------------------
+
+class _AwayCallSummaryBanner extends StatelessWidget {
+  const _AwayCallSummaryBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final presence = context.watch<ManagerPresenceService>();
+    if (!presence.hasAwayCallSummary) return const SizedBox.shrink();
+
+    final calls = presence.awayCallRecords;
+    final mins = presence.awayMinutes;
+    final inbound = calls.where((c) => c['direction'] == 'inbound').length;
+    final outbound = calls.length - inbound;
+    final timeFmt = DateFormat.jm();
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.06),
+        border: Border(
+          bottom: BorderSide(
+            color: AppColors.accent.withValues(alpha: 0.18),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 0),
+            child: Row(
+              children: [
+                Icon(Icons.summarize_rounded,
+                    size: 14, color: AppColors.accent),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'While you were away ($mins min) — '
+                    '${calls.length} call${calls.length == 1 ? '' : 's'}'
+                    '${inbound > 0 && outbound > 0 ? ' ($inbound in, $outbound out)' : inbound > 0 ? ' (inbound)' : ' (outbound)'}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: presence.dismissAwayCallSummary,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.close_rounded,
+                          size: 14,
+                          color: AppColors.accent.withValues(alpha: 0.5)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          ...calls.take(5).map((call) {
+            final direction = call['direction'] as String? ?? 'inbound';
+            final isInbound = direction == 'inbound';
+            final name = call['remote_display_name'] as String? ??
+                call['remote_identity'] as String? ??
+                'Unknown';
+            final status = call['status'] as String? ?? '';
+            final durationSec = call['duration_seconds'] as int? ?? 0;
+            final startedAt = call['started_at'] as String?;
+
+            String timeStr = '';
+            if (startedAt != null) {
+              try {
+                timeStr = timeFmt.format(DateTime.parse(startedAt).toLocal());
+              } catch (_) {}
+            }
+
+            String durationStr;
+            if (status == 'missed') {
+              durationStr = 'Missed';
+            } else if (durationSec >= 3600) {
+              durationStr =
+                  '${durationSec ~/ 3600}h ${(durationSec % 3600) ~/ 60}m';
+            } else if (durationSec >= 60) {
+              durationStr =
+                  '${durationSec ~/ 60}m ${durationSec % 60}s';
+            } else {
+              durationStr = '${durationSec}s';
+            }
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+              child: Row(
+                children: [
+                  Icon(
+                    isInbound
+                        ? Icons.call_received_rounded
+                        : Icons.call_made_rounded,
+                    size: 12,
+                    color: status == 'missed'
+                        ? AppColors.red
+                        : isInbound
+                            ? AppColors.green
+                            : AppColors.textTertiary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      name,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    durationStr,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: status == 'missed'
+                          ? FontWeight.w600
+                          : FontWeight.w400,
+                      color: status == 'missed'
+                          ? AppColors.red
+                          : AppColors.textTertiary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    timeStr,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          if (calls.length > 5)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              child: Text(
+                '+${calls.length - 5} more call${calls.length - 5 == 1 ? '' : 's'}',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontStyle: FontStyle.italic,
+                  color: AppColors.textTertiary,
+                ),
+              ),
+            ),
+          const SizedBox(height: 6),
         ],
       ),
     );

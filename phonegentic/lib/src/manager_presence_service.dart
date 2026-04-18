@@ -26,6 +26,11 @@ class ManagerPresenceService extends ChangeNotifier
   List<Map<String, dynamic>> _cachedPendingReminders = [];
   List<Map<String, dynamic>> _cachedUpcomingReminders = [];
 
+  /// Structured call records from the most recent away period, shown in the
+  /// agent panel banner until dismissed.
+  List<Map<String, dynamic>> _awayCallRecords = [];
+  int _awayMinutes = 0;
+
   bool get windowFocused => _windowFocused;
   bool get isAway => _isAway;
   DateTime? get lastFocusedAt => _lastFocusedAt;
@@ -36,6 +41,17 @@ class ManagerPresenceService extends ChangeNotifier
   /// Pending reminders cached from the last periodic check (synchronous access).
   List<Map<String, dynamic>> get pendingReminders => _cachedPendingReminders;
   List<Map<String, dynamic>> get upcomingReminders => _cachedUpcomingReminders;
+
+  /// Calls that occurred during the most recent away period.
+  List<Map<String, dynamic>> get awayCallRecords => _awayCallRecords;
+  int get awayMinutes => _awayMinutes;
+  bool get hasAwayCallSummary => _awayCallRecords.isNotEmpty;
+
+  void dismissAwayCallSummary() {
+    _awayCallRecords = [];
+    _awayMinutes = 0;
+    notifyListeners();
+  }
 
   Duration? get awayDuration {
     if (!_isAway || _lastUnfocusedAt == null) return null;
@@ -137,7 +153,17 @@ class ManagerPresenceService extends ChangeNotifier
     debugPrint(
         '[ManagerPresence] Manager returned after $awayMins min, mode: ${_awayReturnMode.name}');
 
-    final summary = await _buildAwayBriefing(awayMins);
+    final since = _lastUnfocusedAt ?? DateTime.now();
+    final calls = await CallHistoryDb.searchCalls(since: since);
+
+    // Populate structured summary for the agent panel banner
+    if (calls.isNotEmpty) {
+      _awayCallRecords = calls;
+      _awayMinutes = awayMins;
+      notifyListeners();
+    }
+
+    final summary = await _buildAwayBriefing(awayMins, prefetchedCalls: calls);
     if (summary == null) return;
 
     _lastBriefingAt = DateTime.now();
@@ -155,9 +181,13 @@ class ManagerPresenceService extends ChangeNotifier
     }
   }
 
-  Future<String?> _buildAwayBriefing(int awayMinutes) async {
-    final since = _lastUnfocusedAt ?? DateTime.now();
-    final calls = await CallHistoryDb.searchCalls(since: since);
+  Future<String?> _buildAwayBriefing(
+    int awayMinutes, {
+    List<Map<String, dynamic>>? prefetchedCalls,
+  }) async {
+    final calls = prefetchedCalls ??
+        await CallHistoryDb.searchCalls(
+            since: _lastUnfocusedAt ?? DateTime.now());
     final firedReminders = await CallHistoryDb.getPendingReminders();
 
     if (calls.isEmpty && firedReminders.isEmpty) return null;

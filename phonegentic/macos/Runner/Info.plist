@@ -32,6 +32,10 @@
 	<string>MainMenu</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>$(PRODUCT_NAME) Microphone Usage!</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>$(PRODUCT_NAME) needs access to Reminders to create follow-up reminders during calls.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>$(PRODUCT_NAME) needs automation access to create notes in Apple Notes.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

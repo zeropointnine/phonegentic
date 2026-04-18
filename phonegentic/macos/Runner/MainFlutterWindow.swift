@@ -6,6 +6,7 @@ class MainFlutterWindow: NSWindow {
   private var audioTapChannel: AudioTapChannel?
   private var kokoroTtsChannel: KokoroTtsChannel?
   private var whisperKitChannel: WhisperKitChannel?
+  private var nativeActionsChannel: NativeActionsChannel?
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -28,6 +29,7 @@ class MainFlutterWindow: NSWindow {
     audioTapChannel = AudioTapChannel(messenger: messenger)
     kokoroTtsChannel = KokoroTtsChannel(messenger: messenger)
     whisperKitChannel = WhisperKitChannel(messenger: messenger)
+    nativeActionsChannel = NativeActionsChannel(messenger: messenger)
 
     super.awakeFromNib()
   }
