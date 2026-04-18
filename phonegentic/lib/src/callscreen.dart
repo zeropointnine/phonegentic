@@ -91,6 +91,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   Originator? _holdOriginator;
   bool _callConfirmed = false;
   bool _enteredCallMode = false;
+  Timer? _callConfirmTimer;
   bool _addCallReady = false;
   Timer? _addCallGraceTimer;
   CallStateEnum _state = CallStateEnum.NONE;
@@ -183,6 +184,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _startTimer();
     _loadTtsConfig();
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncCallState());
+    _callConfirmTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted && !_callConfirmed) {
+        debugPrint('[CallScreen] Delayed re-sync — _callConfirmed still false');
+        _syncCallState();
+      }
+    });
   }
 
   void _syncCallState() {
@@ -228,6 +235,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void deactivate() {
     super.deactivate();
     _addCallGraceTimer?.cancel();
+    _callConfirmTimer?.cancel();
     helper!.removeSipUaHelperListener(this);
     _deferDisposeRenderers();
   }
@@ -338,6 +346,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       case CallStateEnum.ACCEPTED:
       case CallStateEnum.CONFIRMED:
         _state = callState.state;
+        _callConfirmTimer?.cancel();
         setState(() => _callConfirmed = true);
         _enterCallMode();
         _maybeAutoRecord();

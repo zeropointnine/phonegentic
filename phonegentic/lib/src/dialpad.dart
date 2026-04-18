@@ -2077,9 +2077,32 @@ class _MyDialPadWidget extends State<DialPadWidget>
         if (call.state == CallStateEnum.CALL_INITIATION ||
             call.state == CallStateEnum.PROGRESS) {
           CallScreenWidget.acceptCall(call, helper!);
+          _scheduleAutoAnswerSafetyCheck(call);
         }
       });
     }
+  }
+
+  /// Safety net: if the SIP CONFIRMED callback was lost after auto-answer,
+  /// clear the stuck fork-coalescing state so the call isn't treated as a
+  /// pending fork for its entire duration.
+  void _scheduleAutoAnswerSafetyCheck(Call call) {
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      if (_inboundRingCaller != null &&
+          (call.state == CallStateEnum.ACCEPTED ||
+           call.state == CallStateEnum.CONFIRMED)) {
+        debugPrint('[Dialpad] Auto-answer safety: clearing stuck fork state');
+        _stopRinging();
+        _forkGraceTimer?.cancel();
+        _inboundRingCaller = null;
+        _inboundRingStart = null;
+        _forkGraceTimer = null;
+        try {
+          context.read<AgentService>().forkCoalescing = false;
+        } catch (_) {}
+      }
+    });
   }
 
   Future<void> _applyInboundJobFunction(
