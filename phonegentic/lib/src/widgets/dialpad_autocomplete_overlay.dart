@@ -13,6 +13,7 @@ import 'dialpad_contact_preview.dart';
 /// the normal layout flow is displaced.
 class DialpadAutocompleteDropdown extends StatefulWidget {
   final List<Map<String, dynamic>> matches;
+  final int highlightedIndex;
   final void Function(Map<String, dynamic> contact) onSelect;
   final void Function(Map<String, dynamic> contact) onCall;
   final void Function(Map<String, dynamic> contact) onMessage;
@@ -21,6 +22,7 @@ class DialpadAutocompleteDropdown extends StatefulWidget {
   const DialpadAutocompleteDropdown({
     super.key,
     required this.matches,
+    this.highlightedIndex = -1,
     required this.onSelect,
     required this.onCall,
     required this.onMessage,
@@ -134,6 +136,7 @@ class _DialpadAutocompleteDropdownState
                           key: ValueKey(contact['id']),
                           contact: contact,
                           index: index,
+                          highlighted: index == widget.highlightedIndex,
                           onTap: () => widget.onSelect(contact),
                           onCall: () => widget.onCall(contact),
                           onMessage: () => widget.onMessage(contact),
@@ -156,6 +159,7 @@ class _DialpadAutocompleteDropdownState
 class _AutocompleteRow extends StatefulWidget {
   final Map<String, dynamic> contact;
   final int index;
+  final bool highlighted;
   final VoidCallback onTap;
   final VoidCallback onCall;
   final VoidCallback onMessage;
@@ -164,6 +168,7 @@ class _AutocompleteRow extends StatefulWidget {
     super.key,
     required this.contact,
     required this.index,
+    this.highlighted = false,
     required this.onTap,
     required this.onCall,
     required this.onMessage,
@@ -225,14 +230,23 @@ class _AutocompleteRowState extends State<_AutocompleteRow>
       opacity: _rowFade,
       child: SlideTransition(
         position: _rowSlide,
-        child: InkWell(
-          onTap: widget.onTap,
-          borderRadius: BorderRadius.circular(10),
-          hoverColor: AppColors.accent.withValues(alpha: 0.06),
-          splashColor: AppColors.accent.withValues(alpha: 0.10),
-          child: Padding(
-            padding:
-                const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: widget.highlighted
+                ? AppColors.burntAmber.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: InkWell(
+            onTap: widget.onTap,
+            borderRadius: BorderRadius.circular(10),
+            hoverColor: AppColors.accent.withValues(alpha: 0.06),
+            splashColor: AppColors.accent.withValues(alpha: 0.10),
+            child: Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -296,6 +310,7 @@ class _AutocompleteRowState extends State<_AutocompleteRow>
               ],
             ),
           ),
+        ),
         ),
       ),
     );

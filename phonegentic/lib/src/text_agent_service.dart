@@ -50,6 +50,13 @@ class TextAgentService {
   static const _debounceMs = 1500;
   static const _maxHistory = 60;
 
+  /// Matches fabricated transcript lines the LLM may hallucinate, e.g.
+  /// `[Remote Party 1]: Hello?` or `[Host]: Sure`.  Only the SYSTEM
+  /// delivers these — the agent must never produce them.
+  static final _fabricatedTranscriptRe = RegExp(
+    r'(?:^|\n)\s*\[[\w\s]+\d*\]\s*:',
+  );
+
   TextAgentService({
     required TextAgentConfig config,
     required String systemInstructions,
@@ -301,6 +308,40 @@ class TextAgentService {
       },
     ),
     LlmTool(
+      name: 'save_contact',
+      description: 'Save or update a contact in the local contacts database. '
+          'Use when a caller provides their name, email, or company and you want '
+          'to remember it. If a contact already exists for the phone number, the '
+          'existing record is updated; otherwise a new contact is created.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'phone_number': {
+            'type': 'string',
+            'description':
+                'Phone number (E.164 preferred). Uses the current caller\'s '
+                'number if omitted during an active call.',
+          },
+          'display_name': {
+            'type': 'string',
+            'description': 'Contact display name (e.g. "John Smith").',
+          },
+          'email': {
+            'type': 'string',
+            'description': 'Email address (optional).',
+          },
+          'company': {
+            'type': 'string',
+            'description': 'Company or organization (optional).',
+          },
+          'notes': {
+            'type': 'string',
+            'description': 'Free-form notes about the contact (optional).',
+          },
+        },
+      },
+    ),
+    LlmTool(
       name: 'create_tear_sheet',
       description: 'Create a tear sheet (sequential outbound call queue) from contacts. '
           'Search contacts first, then pass each chosen row as an entry with '
@@ -462,6 +503,8 @@ class TextAgentService {
     final toolCallEvents = <LlmToolCallEvent>[];
     bool cancelled = false;
 
+    bool fabricationDetected = false;
+
     final stopwatch = Stopwatch()..start();
     await for (final event in _caller.call(req)) {
       if (_cancelRequested || _disposed) {
@@ -470,6 +513,20 @@ class TextAgentService {
       }
       if (event is LlmTextDeltaEvent) {
         fullText += event.text;
+
+        // Detect fabricated transcript lines mid-stream and truncate.
+        final match = _fabricatedTranscriptRe.firstMatch(fullText);
+        if (match != null) {
+          final cleanEnd = match.start;
+          final fabricated = fullText.substring(match.start).split('\n').first;
+          debugPrint(
+              '[TextAgent] Fabricated transcript detected — truncating: '
+              '"$fabricated"');
+          fullText = fullText.substring(0, cleanEnd).trimRight();
+          fabricationDetected = true;
+          break;
+        }
+
         if (!_disposed) {
           _responseController.add(ResponseTextEvent(text: event.text, isFinal: false));
         }
@@ -484,8 +541,13 @@ class TextAgentService {
     if (_disposed) return;
     _cancelRequested = false;
 
-    if (cancelled) {
-      debugPrint('[TextAgentService] Response cancelled — ${fullText.length} chars emitted');
+    if (cancelled || fabricationDetected) {
+      if (fabricationDetected) {
+        debugPrint('[TextAgentService] Response truncated (fabrication) — '
+            '${fullText.length} clean chars');
+      } else {
+        debugPrint('[TextAgentService] Response cancelled — ${fullText.length} chars emitted');
+      }
       if (fullText.isNotEmpty) {
         _history.add(LlmMessage(
           role: LlmRole.assistant,

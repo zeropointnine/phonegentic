@@ -218,7 +218,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> selectConversation(String remotePhone) async {
     _selectedRemotePhone = ensureE164(remotePhone);
     await _loadMessages(_selectedRemotePhone!);
-    _startReadTimer();
+    await markConversationRead(_selectedRemotePhone!);
     notifyListeners();
   }
 
