@@ -2480,6 +2480,9 @@ class AgentService extends ChangeNotifier {
 
           if (_isDuplicateAgentMessage(finalText)) {
             debugPrint('[AgentService] Streaming duplicate suppressed');
+            _ttsInterrupted = true;
+            _whisper.stopResponseAudio();
+            _whisper.clearTTSQueue();
             _messages.removeAt(idx);
             _streamingMessageId = null;
             _resetVoiceUiSyncState();
@@ -4641,7 +4644,7 @@ class AgentService extends ChangeNotifier {
         'but do NOT recite or summarize it unprompted.\n\n'
         '$_priorCallTranscript';
     if (_splitPipeline && _textAgent != null) {
-      _textAgent!.sendUserMessage(historyPrompt);
+      _textAgent!.addSystemContext(historyPrompt);
     } else if (_active) {
       _whisper.sendSystemDirective(historyPrompt);
     }
