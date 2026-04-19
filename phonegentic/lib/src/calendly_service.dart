@@ -82,8 +82,7 @@ class CalendlyService {
   /// Fetch the current user URI (needed for event queries).
   Future<String?> getCurrentUserUri() async {
     try {
-      debugPrint('[CalendlyService] GET /users/me  (key ${_apiKey.length} chars, '
-          'starts "${_apiKey.substring(0, _apiKey.length.clamp(0, 8))}...")');
+      debugPrint('[CalendlyService] GET /users/me  (key ${_apiKey.length} chars)');
       final resp = await http.get(
         Uri.parse('$_baseUrl/users/me'),
         headers: _headers,

@@ -449,42 +449,31 @@ class _MyDialPadWidget extends State<DialPadWidget>
                                             _autocompleteMatches.isEmpty) {
                                           return KeyEventResult.ignored;
                                         }
-                                        final len =
-                                            _autocompleteMatches.length;
+                                        final len = _autocompleteMatches.length;
                                         final key = event.logicalKey;
                                         if (key ==
-                                                LogicalKeyboardKey
-                                                    .arrowDown ||
-                                            (key ==
-                                                    LogicalKeyboardKey
-                                                        .tab &&
-                                                !HardwareKeyboard.instance
-                                                    .isShiftPressed)) {
+                                                LogicalKeyboardKey.arrowDown ||
+                                            (key == LogicalKeyboardKey.tab &&
+                                                !HardwareKeyboard
+                                                    .instance.isShiftPressed)) {
                                           setState(() {
                                             _highlightedIndex =
-                                                (_highlightedIndex + 1) %
+                                                (_highlightedIndex + 1) % len;
+                                          });
+                                          return KeyEventResult.handled;
+                                        }
+                                        if (key == LogicalKeyboardKey.arrowUp ||
+                                            (key == LogicalKeyboardKey.tab &&
+                                                HardwareKeyboard
+                                                    .instance.isShiftPressed)) {
+                                          setState(() {
+                                            _highlightedIndex =
+                                                (_highlightedIndex - 1 + len) %
                                                     len;
                                           });
                                           return KeyEventResult.handled;
                                         }
-                                        if (key ==
-                                                LogicalKeyboardKey
-                                                    .arrowUp ||
-                                            (key ==
-                                                    LogicalKeyboardKey
-                                                        .tab &&
-                                                HardwareKeyboard.instance
-                                                    .isShiftPressed)) {
-                                          setState(() {
-                                            _highlightedIndex =
-                                                (_highlightedIndex - 1 +
-                                                        len) %
-                                                    len;
-                                          });
-                                          return KeyEventResult.handled;
-                                        }
-                                        if (key ==
-                                                LogicalKeyboardKey.enter &&
+                                        if (key == LogicalKeyboardKey.enter &&
                                             _highlightedIndex >= 0) {
                                           _onAutocompleteSelect(
                                               _autocompleteMatches[
@@ -1027,7 +1016,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
                     height: 24,
                     child: Switch(
                       value: ringtone.agentAutoAnswer,
-                      activeColor: AppColors.accent,
+                      activeThumbColor: AppColors.accent,
                       onChanged: (v) {
                         ringtone.toggleAutoAnswer();
                         setMenuState(() {});
@@ -1660,12 +1649,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
                           children: [
                             ContactIdenticon(
                               seed: (_selectedContact!['display_name']
-                                          as String? ??
-                                      '')
-                                  .isEmpty
+                                              as String? ??
+                                          '')
+                                      .isEmpty
                                   ? display
-                                  : _selectedContact!['display_name']
-                                      as String,
+                                  : _selectedContact!['display_name'] as String,
                               size: 36,
                             ),
                             const SizedBox(width: 10),
@@ -1710,8 +1698,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
                             display,
                             style: TextStyle(
                               fontSize: hasLetters ? 28 : 34,
-                              fontWeight:
-                                  hasLetters ? FontWeight.w400 : FontWeight.w300,
+                              fontWeight: hasLetters
+                                  ? FontWeight.w400
+                                  : FontWeight.w300,
                               color: AppColors.textPrimary,
                               letterSpacing: hasLetters ? -0.3 : 2,
                               shadows: hasLetters
@@ -1972,7 +1961,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
             _safetyCallModeForced = false;
             Future.delayed(const Duration(milliseconds: 500), () {
               _tapChannel.invokeMethod('exitCallMode');
-              debugPrint('[Dialpad] Auto-answer safety: exitCallMode on call end');
+              debugPrint(
+                  '[Dialpad] Auto-answer safety: exitCallMode on call end');
             });
           }
         }
@@ -2094,8 +2084,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
       _applyInboundJobFunction(matchedId, jf, agent);
     }
 
-    if ((matchedId != null || ringtone.agentAutoAnswer) &&
-        _calls.length <= 1) {
+    if ((matchedId != null || ringtone.agentAutoAnswer) && _calls.length <= 1) {
       _pendingAutoAnswer = true;
       _attemptAutoAnswer();
     }
@@ -2113,12 +2102,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
       if (call == null || helper == null) return;
       if (call.state != CallStateEnum.CALL_INITIATION &&
           call.state != CallStateEnum.PROGRESS) {
-        debugPrint(
-            '[Dialpad] Auto-answer skipped — state=${call.state}');
+        debugPrint('[Dialpad] Auto-answer skipped — state=${call.state}');
         return;
       }
-      debugPrint(
-          '[Dialpad] Auto-answer firing for ${call.remote_identity}');
+      debugPrint('[Dialpad] Auto-answer firing for ${call.remote_identity}');
       CallScreenWidget.acceptCall(call, helper!);
       _scheduleAutoAnswerSafetyCheck(call);
     });
@@ -2153,8 +2140,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
       _tapChannel.invokeMethod('enterCallMode').then((_) {
         _tapChannel.invokeMethod('setRemoteGain', {'gain': 1.5});
         _tapChannel.invokeMethod('setCompressorStrength', {'strength': 0.6});
-        debugPrint(
-            '[Dialpad] Auto-answer safety: enterCallMode forced');
+        debugPrint('[Dialpad] Auto-answer safety: enterCallMode forced');
       }).catchError((e) {
         debugPrint('[Dialpad] Auto-answer safety: enterCallMode failed: $e');
       });

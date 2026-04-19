@@ -366,18 +366,42 @@ sequenceDiagram
 - A **SIP account** with WebSocket (WSS) transport ([see below](#sip-credentials))
 - An **OpenAI API key** with Realtime API access ([see below](#ai-voice-agent-setup))
 
-### Build configurations
+### Build configuration
 
-Phonegentic has two build modes. Choose based on whether you want on-device ML:
+Feature flags are managed through a `build.env` file using Flutter's `--dart-define-from-file` mechanism. All flags are compile-time constants — disabled features are dead-code-eliminated from the binary.
+
+#### Setup
+
+If you don't have a `build.env`, `make run` (or any `make` target) creates one automatically with `ENABLE_ON_DEVICE_MODELS=true` and everything else off. You can also create it manually:
+
+```bash
+cd phonegentic
+cp build.env.example build.env   # create your local config
+```
+
+Edit `build.env` to enable the features you need:
+
+```env
+ENABLE_ON_DEVICE_MODELS=false    # Kokoro TTS + WhisperKit STT (requires model download + Xcode setup)
+ENABLE_GITHUB_ISSUES=false       # Agent can file GitHub issues directly via PAT
+MAC_APP_STORE_BUILD=false        # Disable features incompatible with App Store sandboxing
+```
+
+The `build.env` file is gitignored — each developer maintains their own. `make run` reads it automatically; `make run-lite` ignores it (all flags default to `false`).
+
+All flags are read from a single `BuildConfig` class in [`phonegentic/lib/src/build_config.dart`](phonegentic/lib/src/build_config.dart).
+
+#### Build modes
 
 | | `make build` | `make build-lite` |
 |---|---|---|
 | **Cloud STT** (OpenAI Realtime) | Yes | Yes |
 | **Cloud TTS** (ElevenLabs) | Yes | Yes |
-| **On-device STT** (WhisperKit) | Yes | No |
-| **On-device TTS** (Kokoro) | Yes | No |
-| **Feature flag** | `ENABLE_ON_DEVICE_MODELS=true` | (none) |
-| **App size** | ~680 MB | ~200 MB |
+| **On-device STT** (WhisperKit) | Per `build.env` | No |
+| **On-device TTS** (Kokoro) | Per `build.env` | No |
+| **GitHub issue filing** | Per `build.env` | No |
+| **Config source** | `build.env` | All defaults (`false`) |
+| **App size** | ~680 MB (with models) | ~200 MB |
 | **Extra setup** | Models + Xcode config | None |
 
 ### Quick start (cloud-only, no on-device models)
@@ -424,6 +448,10 @@ No special setup beyond Flutter and Xcode command line tools.
 
 ```bash
 flutter run -d macos
+```
+
+```bash
+flutter build macos --dart-define-from-file build.env
 ```
 
 ### macOS (with on-device models)
@@ -810,14 +838,9 @@ Users can mix and match cloud and on-device providers in **Settings > Agents**:
 | **STT** | OpenAI Realtime | WhisperKit (CoreML, Whisper base/small/tiny) |
 | **TTS** | ElevenLabs WebSocket | Kokoro (MLX, ~3.3x real-time on M-series) |
 
-On-device providers run entirely on-device with zero API calls. They require **macOS 15.0+** on Apple Silicon and are controlled by a compile-time feature flag:
+On-device providers run entirely on-device with zero API calls. They require **macOS 15.0+** on Apple Silicon and are controlled by the `ENABLE_ON_DEVICE_MODELS` flag in `build.env` (see [Build configuration](#build-configuration)).
 
-```
---dart-define=ENABLE_ON_DEVICE_MODELS=true     ← make build (ON)
-                                                ← make build-lite (OFF)
-```
-
-When the flag is OFF, on-device options are hidden from the UI and native MethodChannels return "not available." The flag is also set in `launch.json` for Cursor/VS Code debugging.
+When the flag is `false`, on-device options are hidden from the UI and native MethodChannels return "not available." The flag is also set in `launch.json` for Cursor/VS Code debugging.
 
 ### Licensing
 

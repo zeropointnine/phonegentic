@@ -5,7 +5,7 @@ import '../agent_service.dart';
 import '../comfort_noise_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../kokoro_tts_service.dart';
-import '../on_device_config.dart';
+import '../build_config.dart';
 import '../settings_port_service.dart';
 import '../theme_provider.dart';
 import 'comfort_noise_picker.dart';
@@ -194,7 +194,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     const SizedBox(height: 16),
                     _buildTtsCard(),
                   ],
-                  if (OnDeviceConfig.isSupported) ...[
+                  if (BuildConfig.onDeviceModelsSupported) ...[
                     const SizedBox(height: 16),
                     _buildSttCard(),
                   ],
@@ -896,7 +896,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final providers = <TtsProvider, String>{
       TtsProvider.elevenlabs: 'ElevenLabs',
     };
-    if (OnDeviceConfig.isSupported) {
+    if (BuildConfig.onDeviceModelsSupported) {
       providers[TtsProvider.kokoro] = 'Kokoro (On-Device)';
     }
 
@@ -1002,7 +1002,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                         width: 0.5,
                       ),
                     ),
-                    if (OnDeviceConfig.isSupported)
+                    if (BuildConfig.onDeviceModelsSupported)
                       ChoiceChip(
                         label: const Text('WhisperKit (On-Device)', style: TextStyle(fontSize: 12)),
                         selected: _stt.provider == SttProvider.whisperKit,

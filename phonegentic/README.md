@@ -11,13 +11,16 @@ Three built-in themes — see the [Theme Guide](docs/THEMES.md) for color swatch
 ## Quick reference
 
 ```bash
+cp build.env.example build.env  # one-time: create local build config
+                                # edit build.env to enable features
+
 make preflight         # verify environment (python, Metal Toolchain, etc.)
 make download-models   # download ML models (~480 MB, git-ignored)
 make model-status      # check model download status
 
-make run               # run with on-device models enabled
-make run-lite          # run without on-device models (cloud-only)
-make build             # release build with on-device models
-make build-lite        # release build without on-device models
+make run               # run with build.env flags applied
+make run-lite          # run without build.env (all flags off, cloud-only)
+make build             # release build with build.env flags
+make build-lite        # release build without build.env
 make clean             # flutter clean
 ```

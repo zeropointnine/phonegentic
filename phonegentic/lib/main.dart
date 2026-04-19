@@ -1,4 +1,7 @@
+// ignore: unnecessary_import
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:phonegentic/src/agent_config_service.dart';
+import 'package:phonegentic/src/log_service.dart';
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/calendar_sync_service.dart';
 import 'package:phonegentic/src/manager_presence_service.dart';
@@ -46,6 +49,13 @@ void main() async {
   };
 
   Logger.level = Level.warning;
+
+  final originalDebugPrint = debugPrint;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    originalDebugPrint(message, wrapWidth: wrapWidth);
+    if (message != null) LogService.instance.add(message);
+  };
+
   await CallHistoryDb.initialize();
   final confConfig = await AgentConfigService.loadConferenceConfig();
   runApp(
@@ -67,7 +77,8 @@ class ConferenceConfigSeed {
   const ConferenceConfigSeed(this.config);
 }
 
-typedef PageContentBuilder = Widget Function([SIPUAHelper? helper, Object? arguments]);
+typedef PageContentBuilder = Widget Function(
+    [SIPUAHelper? helper, Object? arguments]);
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -76,7 +87,8 @@ class MyApp extends StatelessWidget {
 
   static final Map<String, PageContentBuilder> routes = {
     '/': ([SIPUAHelper? helper, Object? arguments]) => DialPadWidget(helper),
-    '/register': ([SIPUAHelper? helper, Object? arguments]) => RegisterWidget(helper),
+    '/register': ([SIPUAHelper? helper, Object? arguments]) =>
+        RegisterWidget(helper),
   };
 
   Route<dynamic>? _onGenerateRoute(RouteSettings settings) {
@@ -84,7 +96,9 @@ class MyApp extends StatelessWidget {
     final builder = routes[name];
     if (builder == null) return null;
     return MaterialPageRoute<Widget>(
-      builder: (_) => settings.arguments != null ? builder(_helper, settings.arguments) : builder(_helper),
+      builder: (_) => settings.arguments != null
+          ? builder(_helper, settings.arguments)
+          : builder(_helper),
     );
   }
 
@@ -93,8 +107,10 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         Provider<SIPUAHelper>.value(value: _helper),
-        Provider<SipUserCubit>(create: (context) => SipUserCubit(sipHelper: _helper)),
-        ChangeNotifierProvider<CallHistoryService>(create: (_) => CallHistoryService()),
+        Provider<SipUserCubit>(
+            create: (context) => SipUserCubit(sipHelper: _helper)),
+        ChangeNotifierProvider<CallHistoryService>(
+            create: (_) => CallHistoryService()),
         ChangeNotifierProvider<ContactService>(create: (_) => ContactService()),
         ChangeNotifierProvider<JobFunctionService>(
           create: (_) => JobFunctionService()..restoreLastUsed(),
@@ -126,24 +142,29 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider<GoogleSearchService>(
           create: (_) => GoogleSearchService()..loadConfig(),
         ),
-        ChangeNotifierProxyProvider6<CallHistoryService, ContactService,
-            JobFunctionService, FlightAwareService, GmailService,
-            GoogleCalendarService, AgentService>(
+        ChangeNotifierProxyProvider6<
+            CallHistoryService,
+            ContactService,
+            JobFunctionService,
+            FlightAwareService,
+            GmailService,
+            GoogleCalendarService,
+            AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
           update: (context, history, contacts, jobFunctions, flight, gmail,
-                  gcal, agent) {
-              history.onAgentSearch = (query) =>
-                  agent!.sendUserMessage('Search my call history: $query');
-              return agent!
-                ..callHistory = history
-                ..contactService = contacts
-                ..jobFunctionService = jobFunctions
-                ..flightAwareService = flight
-                ..gmailService = gmail
-                ..googleCalendarService = gcal
-                ..googleSearchService = context.read<GoogleSearchService>()
-                ..demoModeService = context.read<DemoModeService>()
-                ..comfortNoiseService = context.read<ComfortNoiseService>();
+              gcal, agent) {
+            history.onAgentSearch = (query) =>
+                agent!.sendUserMessage('Search my call history: $query');
+            return agent!
+              ..callHistory = history
+              ..contactService = contacts
+              ..jobFunctionService = jobFunctions
+              ..flightAwareService = flight
+              ..gmailService = gmail
+              ..googleCalendarService = gcal
+              ..googleSearchService = context.read<GoogleSearchService>()
+              ..demoModeService = context.read<DemoModeService>()
+              ..comfortNoiseService = context.read<ComfortNoiseService>();
           },
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(

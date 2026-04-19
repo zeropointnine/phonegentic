@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../agent_config_service.dart';
+import '../build_config.dart';
 import '../calendar_sync_service.dart';
 import '../calendly_service.dart';
 import '../chrome/flight_aware_config.dart';
@@ -231,6 +233,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   bool _googleSearchExpanded = false;
   final _googleSearchCtrl = TextEditingController();
 
+  String _gitHubToken = '';
+  bool _gitHubExpanded = false;
+  final _gitHubTokenCtrl = TextEditingController();
+
   final _calendlyKeyCtrl = TextEditingController();
   final _fakeNumberCtrl = TextEditingController();
   final _telnyxMsgKeyCtrl = TextEditingController();
@@ -273,6 +279,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _gcalDateCtrl.dispose();
     _gcalAllowPhoneCtrl.dispose();
     _googleSearchCtrl.dispose();
+    _gitHubTokenCtrl.dispose();
     super.dispose();
   }
 
@@ -287,6 +294,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final gc = await GoogleCalendarConfig.load();
     final gs = await GoogleSearchConfig.load();
     final am = await UserConfigService.loadAgentManagerConfig();
+    final ghToken = await AgentConfigService.loadGitHubToken();
     if (!mounted) return;
     setState(() {
       _calendly = c;
@@ -309,6 +317,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _twilioSidCtrl.text = tw.accountSid;
       _twilioTokenCtrl.text = tw.authToken;
       _twilioFromCtrl.text = tw.fromNumber;
+      _gitHubToken = ghToken;
+      _gitHubTokenCtrl.text = ghToken;
       _loaded = true;
     });
   }
@@ -949,6 +959,18 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   _divider(),
                   _buildGoogleSearchTestRow(),
                   _buildGoogleSearchResultsArea(),
+                ],
+              ],
+              if (BuildConfig.enableGitHubIssues) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withValues(alpha: 0.5)),
+                _buildGitHubHeader(),
+                if (_gitHubExpanded) ...[
+                  Divider(
+                      height: 0.5,
+                      color: AppColors.border.withValues(alpha: 0.5)),
+                  _buildGitHubTokenRow(),
                 ],
               ],
             ],
@@ -3155,4 +3177,130 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
 
   Widget _divider() => Divider(
       height: 0.5, indent: 16, color: AppColors.border.withValues(alpha: 0.5));
+
+  // ───── GitHub ─────
+
+  Widget _buildGitHubHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _gitHubExpanded = !_gitHubExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _gitHubToken.isNotEmpty
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.bug_report_rounded,
+                  size: 17,
+                  color: _gitHubToken.isNotEmpty
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Row(
+                children: [
+                  Text(
+                    'GitHub Issues',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: _gitHubToken.isNotEmpty
+                          ? AppColors.green.withValues(alpha: 0.12)
+                          : AppColors.card,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      _gitHubToken.isNotEmpty ? 'Configured' : 'No Token',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: _gitHubToken.isNotEmpty
+                            ? AppColors.green
+                            : AppColors.textTertiary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _gitHubExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGitHubTokenRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Personal Access Token (repo scope)',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _gitHubTokenCtrl,
+            obscureText: true,
+            style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+            decoration: InputDecoration(
+              hintText: 'ghp_...',
+              hintStyle:
+                  TextStyle(fontSize: 13, color: AppColors.textTertiary),
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide:
+                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide:
+                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: AppColors.accent),
+              ),
+            ),
+            onChanged: (val) {
+              setState(() => _gitHubToken = val);
+              AgentConfigService.saveGitHubToken(val);
+            },
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Repo: ${AgentConfigService.gitHubRepo}',
+            style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
+          ),
+        ],
+      ),
+    );
+  }
 }

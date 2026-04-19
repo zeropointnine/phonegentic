@@ -13,6 +13,7 @@ import 'conference/conference_config.dart';
 import 'db/call_history_db.dart';
 import 'models/inbound_call_flow.dart';
 import 'models/job_function.dart';
+import 'settings_crypto.dart';
 import 'user_config_service.dart';
 
 enum ExportFormat { json, zip, tar }
@@ -72,8 +73,12 @@ class SettingsPortService {
       'exported_at': DateTime.now().toUtc().toIso8601String(),
       'data': data,
     };
-    final jsonBytes =
+    final rawJsonBytes =
         utf8.encode(const JsonEncoder.withIndent('  ').convert(envelope));
+
+    final outputBytes = await _maybeEncrypt(rawJsonBytes, context);
+    if (outputBytes == null) return null;
+
     final timestamp = DateTime.now()
         .toIso8601String()
         .replaceAll(':', '-')
@@ -98,20 +103,20 @@ class SettingsPortService {
     switch (format) {
       case ExportFormat.json:
         outputFile = File('${downloadsDir.path}/$baseName.json');
-        await outputFile.writeAsBytes(jsonBytes);
+        await outputFile.writeAsBytes(outputBytes);
         break;
       case ExportFormat.zip:
         final archive = Archive();
-        archive.addFile(ArchiveFile('$baseName.json', jsonBytes.length,
-            Uint8List.fromList(jsonBytes)));
+        archive.addFile(ArchiveFile('$baseName.json', outputBytes.length,
+            Uint8List.fromList(outputBytes)));
         final encoded = ZipEncoder().encode(archive);
         outputFile = File('${downloadsDir.path}/$baseName.zip');
         await outputFile.writeAsBytes(encoded);
         break;
       case ExportFormat.tar:
         final archive = Archive();
-        archive.addFile(ArchiveFile('$baseName.json', jsonBytes.length,
-            Uint8List.fromList(jsonBytes)));
+        archive.addFile(ArchiveFile('$baseName.json', outputBytes.length,
+            Uint8List.fromList(outputBytes)));
         final tarBytes = TarEncoder().encode(archive);
         final gzBytes = GZipEncoder().encode(tarBytes);
         outputFile = File('${downloadsDir.path}/$baseName.tar.gz');
@@ -160,7 +165,10 @@ class SettingsPortService {
       return null;
     }
 
-    // Gather all sections into individual JSON files
+    // Ask once whether to encrypt the entire backup
+    if (!context.mounted) return null;
+    final password = await _askExportPassword(context);
+
     final archive = Archive();
     for (final section in SettingsSection.values) {
       final data = await _gatherData(section);
@@ -171,12 +179,25 @@ class SettingsPortService {
         'exported_at': DateTime.now().toUtc().toIso8601String(),
         'data': data,
       };
-      final jsonBytes = utf8
+      final rawJsonBytes = utf8
           .encode(const JsonEncoder.withIndent('  ').convert(envelope));
+
+      List<int> fileBytes;
+      if (password != null) {
+        final encrypted = await SettingsCrypto.encrypt(
+          Uint8List.fromList(rawJsonBytes),
+          password,
+        );
+        fileBytes = utf8
+            .encode(const JsonEncoder.withIndent('  ').convert(encrypted));
+      } else {
+        fileBytes = rawJsonBytes;
+      }
+
       archive.addFile(ArchiveFile(
         '${section.label}.json',
-        jsonBytes.length,
-        Uint8List.fromList(jsonBytes),
+        fileBytes.length,
+        Uint8List.fromList(fileBytes),
       ));
     }
 
@@ -260,14 +281,45 @@ class SettingsPortService {
       return false;
     }
 
-    // Parse each JSON inside the archive
+    // Parse each JSON inside the archive, handling encrypted entries
     final sectionData = <String, Map<String, dynamic>>{};
+    String? cachedPassword;
+    bool passwordPrompted = false;
+
     for (final entry in arch) {
       if (!entry.name.endsWith('.json')) continue;
       try {
-        final envelope =
+        var envelope =
             jsonDecode(utf8.decode(entry.content as List<int>))
                 as Map<String, dynamic>;
+
+        if (SettingsCrypto.isEncrypted(envelope)) {
+          if (!passwordPrompted) {
+            if (!context.mounted) return false;
+            cachedPassword = await _askImportPassword(context);
+            passwordPrompted = true;
+            if (cachedPassword == null || cachedPassword.isEmpty) return false;
+          }
+          try {
+            final plainBytes =
+                await SettingsCrypto.decrypt(envelope, cachedPassword!);
+            envelope =
+                jsonDecode(utf8.decode(plainBytes)) as Map<String, dynamic>;
+          } catch (_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Decryption failed — wrong password or corrupted file',
+                  ),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+            return false;
+          }
+        }
+
         if (envelope['app'] != 'phonegentic') continue;
         final section = envelope['section'] as String?;
         if (section != null) {
@@ -393,6 +445,13 @@ class SettingsPortService {
       return false;
     }
 
+    // Handle encrypted single-section files
+    if (SettingsCrypto.isEncrypted(envelope)) {
+      final decrypted = await _maybeDecrypt(envelope, context);
+      if (decrypted == null) return false;
+      envelope = decrypted;
+    }
+
     if (envelope['app'] != 'phonegentic') {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -478,6 +537,172 @@ class SettingsPortService {
 
     // Try parsing as raw JSON as fallback
     return jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Password dialogs for encryption
+  // ---------------------------------------------------------------------------
+
+  /// Shows a password dialog for export. Returns the password, or `null` to
+  /// skip encryption (plaintext export).
+  static Future<String?> _askExportPassword(BuildContext context) async {
+    final controller = TextEditingController();
+    final confirmController = TextEditingController();
+    String? error;
+
+    final password = await showDialog<String?>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Encrypt export?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Enter a password to encrypt sensitive data. '
+                'You will need this password to import the file later.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: confirmController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Confirm password',
+                  border: const OutlineInputBorder(),
+                  errorText: error,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('Skip (no encryption)'),
+            ),
+            TextButton(
+              onPressed: () {
+                final pw = controller.text;
+                if (pw.isEmpty) {
+                  setState(() => error = 'Password cannot be empty');
+                  return;
+                }
+                if (pw != confirmController.text) {
+                  setState(() => error = 'Passwords do not match');
+                  return;
+                }
+                Navigator.of(ctx).pop(pw);
+              },
+              child: const Text('Encrypt'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    controller.dispose();
+    confirmController.dispose();
+    return password;
+  }
+
+  /// Shows a password dialog for importing encrypted files.
+  /// Returns the password, or `null` if the user cancels.
+  static Future<String?> _askImportPassword(BuildContext context) async {
+    final controller = TextEditingController();
+
+    final password = await showDialog<String?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Encrypted file'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'This settings file is encrypted. '
+              'Enter the password that was used during export.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text('Decrypt'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+    return password;
+  }
+
+  /// Optionally encrypt [jsonBytes] based on user choice.
+  /// Returns the bytes to write to disk (either encrypted envelope or original).
+  static Future<List<int>?> _maybeEncrypt(
+    List<int> jsonBytes,
+    BuildContext context,
+  ) async {
+    if (!context.mounted) return jsonBytes;
+    final password = await _askExportPassword(context);
+    if (password == null) return jsonBytes; // plaintext
+
+    final envelope = await SettingsCrypto.encrypt(
+      Uint8List.fromList(jsonBytes),
+      password,
+    );
+    return utf8.encode(const JsonEncoder.withIndent('  ').convert(envelope));
+  }
+
+  /// If [envelope] is encrypted, prompt for password and decrypt.
+  /// Returns the decrypted envelope, or `null` on cancel / failure.
+  static Future<Map<String, dynamic>?> _maybeDecrypt(
+    Map<String, dynamic> envelope,
+    BuildContext context,
+  ) async {
+    if (!SettingsCrypto.isEncrypted(envelope)) return envelope;
+
+    if (!context.mounted) return null;
+    final password = await _askImportPassword(context);
+    if (password == null || password.isEmpty) return null;
+
+    try {
+      final plainBytes = await SettingsCrypto.decrypt(envelope, password);
+      return jsonDecode(utf8.decode(plainBytes)) as Map<String, dynamic>;
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Decryption failed — wrong password or corrupted file',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -1,3 +1,5 @@
+// ignore_for_file: unnecessary_import
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -325,14 +327,11 @@ class ComfortNoiseService extends ChangeNotifier {
       final int idx = srcPos.floor();
       final double frac = srcPos - idx;
 
-      final int s0 =
-          idx < srcCount ? bd.getInt16(idx * 2, Endian.little) : 0;
-      final int s1 = (idx + 1) < srcCount
-          ? bd.getInt16((idx + 1) * 2, Endian.little)
-          : s0;
+      final int s0 = idx < srcCount ? bd.getInt16(idx * 2, Endian.little) : 0;
+      final int s1 =
+          (idx + 1) < srcCount ? bd.getInt16((idx + 1) * 2, Endian.little) : s0;
 
-      final int sample =
-          (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767);
+      final int sample = (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767);
       obd.setInt16(i * 2, sample, Endian.little);
     }
     return out;

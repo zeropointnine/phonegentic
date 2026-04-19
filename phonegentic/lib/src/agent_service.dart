@@ -27,6 +27,7 @@ import 'db/call_history_db.dart';
 import 'manager_presence_service.dart';
 import 'user_config_service.dart';
 import 'elevenlabs_api_service.dart';
+import 'log_service.dart';
 import 'ivr_detector.dart';
 import 'job_function_service.dart';
 import 'messaging/messaging_service.dart';
@@ -39,7 +40,7 @@ import 'transfer_rule_service.dart';
 import 'tear_sheet_service.dart';
 import 'elevenlabs_tts_service.dart';
 import 'kokoro_tts_service.dart';
-import 'on_device_config.dart';
+import 'build_config.dart';
 import 'llm/llm_interfaces.dart';
 import 'text_agent_service.dart';
 import 'vocal_expressions.dart';
@@ -580,6 +581,12 @@ class AgentService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   void _addMsg(ChatMessage msg) {
+    if (_messages.isNotEmpty) {
+      final last = _messages.last;
+      if (last.text == msg.text && last.role == msg.role && last.type == msg.type) {
+        return;
+      }
+    }
     _messages.add(msg);
     if (_persistEnabled) {
       CallHistoryDb.insertSessionMessage(msg.toDbMap()).catchError((e) {
@@ -613,7 +620,14 @@ class AgentService extends ChangeNotifier {
           rows.length >= CallHistoryDb.sessionPageSize;
 
       for (final row in rows) {
-        _messages.add(ChatMessage.fromDbMap(row));
+        final msg = ChatMessage.fromDbMap(row);
+        if (_messages.isNotEmpty) {
+          final last = _messages.last;
+          if (last.text == msg.text && last.role == msg.role && last.type == msg.type) {
+            continue;
+          }
+        }
+        _messages.add(msg);
       }
       return true;
     } catch (e) {
@@ -638,8 +652,25 @@ class AgentService extends ChangeNotifier {
       _hasMoreSessionHistory =
           rows.length >= CallHistoryDb.sessionPageSize;
 
-      _messages.insertAll(
-          0, rows.map((r) => ChatMessage.fromDbMap(r)));
+      final older = <ChatMessage>[];
+      for (final r in rows) {
+        final msg = ChatMessage.fromDbMap(r);
+        if (older.isNotEmpty) {
+          final prev = older.last;
+          if (prev.text == msg.text && prev.role == msg.role && prev.type == msg.type) {
+            continue;
+          }
+        }
+        older.add(msg);
+      }
+      if (older.isNotEmpty && _messages.isNotEmpty) {
+        final bridge = older.last;
+        final first = _messages.first;
+        if (bridge.text == first.text && bridge.role == first.role && bridge.type == first.type) {
+          older.removeLast();
+        }
+      }
+      _messages.insertAll(0, older);
       notifyListeners();
       return true;
     } catch (e) {
@@ -772,8 +803,8 @@ class AgentService extends ChangeNotifier {
       _agentManagerConfig = await UserConfigService.loadAgentManagerConfig();
 
       // ── Kokoro TTS diagnostic ──
-      debugPrint('[KokoroTTS-DIAG] OnDeviceConfig.enabled=${OnDeviceConfig.enabled}');
-      debugPrint('[KokoroTTS-DIAG] OnDeviceConfig.isSupported=${OnDeviceConfig.isSupported}');
+      debugPrint('[KokoroTTS-DIAG] BuildConfig.enableOnDeviceModels=${BuildConfig.enableOnDeviceModels}');
+      debugPrint('[KokoroTTS-DIAG] BuildConfig.onDeviceModelsSupported=${BuildConfig.onDeviceModelsSupported}');
       debugPrint('[KokoroTTS-DIAG] TTS config loaded: provider=${_ttsConfig?.provider.name} '
           'configured=${_ttsConfig?.isConfigured} '
           'kokoroVoice=${_ttsConfig?.kokoroVoiceStyle}');
@@ -786,7 +817,7 @@ class AgentService extends ChangeNotifier {
 
       // ── Local STT branch (whisper.cpp / WhisperKit) ──────────────────────
       if (_sttConfig?.provider == SttProvider.whisperKit &&
-          OnDeviceConfig.isSupported) {
+          BuildConfig.onDeviceModelsSupported) {
         await _initLocalSttPath();
         return;
       }
@@ -2159,10 +2190,165 @@ class AgentService extends ChangeNotifier {
     ),
   ];
 
+  // -- Log tools (always-on) ---------------------------------------------------
+
+  static final _readLogsToolLlm = <LlmTool>[
+    LlmTool(
+      name: 'read_logs',
+      description:
+          'Read recent application debug logs from the in-memory ring buffer. '
+          'Use to investigate issues, diagnose SIP/call failures, or gather '
+          'context before filing a GitHub issue.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'count': {
+            'type': 'integer',
+            'description':
+                'Number of recent log lines to return (default 200, max 500).',
+          },
+          'query': {
+            'type': 'string',
+            'description':
+                'Case-insensitive substring filter. Only lines containing '
+                'this text are returned.',
+          },
+          'since_minutes_ago': {
+            'type': 'integer',
+            'description':
+                'Only return logs from the last N minutes.',
+          },
+        },
+      },
+    ),
+  ];
+
+  static final _readLogsToolOpenAi = <Map<String, dynamic>>[
+    {
+      'type': 'function',
+      'name': 'read_logs',
+      'description':
+          'Read recent application debug logs from the in-memory ring buffer. '
+          'Use to investigate issues, diagnose SIP/call failures, or gather '
+          'context before filing a GitHub issue.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'count': {
+            'type': 'integer',
+            'description':
+                'Number of recent log lines to return (default 200, max 500).',
+          },
+          'query': {
+            'type': 'string',
+            'description':
+                'Case-insensitive substring filter. Only lines containing '
+                'this text are returned.',
+          },
+          'since_minutes_ago': {
+            'type': 'integer',
+            'description':
+                'Only return logs from the last N minutes.',
+          },
+        },
+      },
+    },
+  ];
+
+  // -- GitHub issue tool (gated by BuildConfig.enableGitHubIssues) ------------
+
+  static final _gitHubToolLlm = <LlmTool>[
+    LlmTool(
+      name: 'file_github_issue',
+      description:
+          'Create a GitHub issue on the project repository. Use when you '
+          'identify a bug or want to track a task. You write the title and '
+          'markdown body; optionally attach recent log excerpts.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'title': {
+            'type': 'string',
+            'description': 'Concise issue title.',
+          },
+          'body': {
+            'type': 'string',
+            'description': 'Markdown body describing the issue.',
+          },
+          'labels': {
+            'type': 'array',
+            'items': {'type': 'string'},
+            'description': 'Labels to apply, e.g. ["bug"].',
+          },
+          'include_recent_logs': {
+            'type': 'boolean',
+            'description':
+                'If true, append the last 100 log lines in a collapsible '
+                '<details> block.',
+          },
+          'log_query': {
+            'type': 'string',
+            'description':
+                'If set, filter the attached logs to lines matching this '
+                'substring instead of the full tail.',
+          },
+        },
+        'required': ['title', 'body'],
+      },
+    ),
+  ];
+
+  static final _gitHubToolOpenAi = <Map<String, dynamic>>[
+    {
+      'type': 'function',
+      'name': 'file_github_issue',
+      'description':
+          'Create a GitHub issue on the project repository. Use when you '
+          'identify a bug or want to track a task. You write the title and '
+          'markdown body; optionally attach recent log excerpts.',
+      'parameters': {
+        'type': 'object',
+        'properties': {
+          'title': {
+            'type': 'string',
+            'description': 'Concise issue title.',
+          },
+          'body': {
+            'type': 'string',
+            'description': 'Markdown body describing the issue.',
+          },
+          'labels': {
+            'type': 'array',
+            'items': {'type': 'string'},
+            'description': 'Labels to apply, e.g. ["bug"].',
+          },
+          'include_recent_logs': {
+            'type': 'boolean',
+            'description':
+                'If true, append the last 100 log lines in a collapsible '
+                '<details> block.',
+          },
+          'log_query': {
+            'type': 'string',
+            'description':
+                'If set, filter the attached logs to lines matching this '
+                'substring instead of the full tail.',
+          },
+        },
+        'required': ['title', 'body'],
+      },
+    },
+  ];
+
   /// Push integration-specific tools and instructions to both pipelines.
   void _applyIntegrationTools() {
-    final oaiExtra = <Map<String, dynamic>>[];
-    final llmExtra = <LlmTool>[..._reminderToolsLlm];
+    final oaiExtra = <Map<String, dynamic>>[..._readLogsToolOpenAi];
+    final llmExtra = <LlmTool>[..._reminderToolsLlm, ..._readLogsToolLlm];
+
+    if (BuildConfig.enableGitHubIssues) {
+      oaiExtra.addAll(_gitHubToolOpenAi);
+      llmExtra.addAll(_gitHubToolLlm);
+    }
 
     if (_flightAwareEnabled) {
       oaiExtra.addAll(_flightToolsOpenAi);
@@ -3277,6 +3463,12 @@ class AgentService extends ChangeNotifier {
         case 'request_transfer_approval':
           result = await _handleRequestTransferApproval(args);
           break;
+        case 'read_logs':
+          result = _handleReadLogs(args);
+          break;
+        case 'file_github_issue':
+          result = await _handleFileGithubIssue(args);
+          break;
         default:
           result = 'Unknown function: ${event.name}';
       }
@@ -3418,6 +3610,12 @@ class AgentService extends ChangeNotifier {
         case 'request_transfer_approval':
           result = await _handleRequestTransferApproval(req.arguments);
           break;
+        case 'read_logs':
+          result = _handleReadLogs(req.arguments);
+          break;
+        case 'file_github_issue':
+          result = await _handleFileGithubIssue(req.arguments);
+          break;
         default:
           result = 'Unknown tool: ${req.name}';
       }
@@ -3428,6 +3626,96 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] Text-agent tool result: $result');
     _textAgent?.addToolResult(req.id, result);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Log + GitHub handlers
+  // ---------------------------------------------------------------------------
+
+  String _handleReadLogs(Map<String, dynamic> args) {
+    final count = (args['count'] as int?)?.clamp(1, 500) ?? 200;
+    final query = args['query'] as String?;
+    final sinceMinutes = args['since_minutes_ago'] as int?;
+
+    List<LogEntry> entries;
+    if (query != null && query.isNotEmpty) {
+      entries = LogService.instance.search(query, count: count);
+    } else if (sinceMinutes != null) {
+      final cutoff = DateTime.now().subtract(Duration(minutes: sinceMinutes));
+      entries = LogService.instance.since(cutoff);
+      if (entries.length > count) {
+        entries = entries.sublist(entries.length - count);
+      }
+    } else {
+      entries = LogService.instance.recent(count: count);
+    }
+
+    return '${entries.length} log entries:\n${LogService.formatted(entries)}';
+  }
+
+  Future<String> _handleFileGithubIssue(Map<String, dynamic> args) async {
+    final title = args['title'] as String? ?? '';
+    var body = args['body'] as String? ?? '';
+    final labels = (args['labels'] as List?)?.cast<String>() ?? <String>[];
+    final includeLogs = args['include_recent_logs'] as bool? ?? false;
+    final logQuery = args['log_query'] as String?;
+
+    if (title.isEmpty) return 'Error: title is required.';
+
+    final token = await AgentConfigService.loadGitHubToken();
+    if (token.isEmpty) {
+      return 'Error: no GitHub token configured. '
+          'Ask the manager to add one in Settings.';
+    }
+
+    if (includeLogs || (logQuery != null && logQuery.isNotEmpty)) {
+      List<LogEntry> logEntries;
+      if (logQuery != null && logQuery.isNotEmpty) {
+        logEntries = LogService.instance.search(logQuery, count: 100);
+      } else {
+        logEntries = LogService.instance.recent(count: 100);
+      }
+      if (logEntries.isNotEmpty) {
+        body += '\n\n<details><summary>Application logs '
+            '(${logEntries.length} lines)</summary>\n\n'
+            '```\n${LogService.formatted(logEntries)}\n```\n\n</details>';
+      }
+    }
+
+    try {
+      const repo = AgentConfigService.gitHubRepo;
+      final uri = Uri.parse('https://api.github.com/repos/$repo/issues');
+      final client = HttpClient();
+      final request = await client.postUrl(uri);
+      request.headers.set('Authorization', 'Bearer $token');
+      request.headers.set('Accept', 'application/vnd.github+json');
+      request.headers.contentType = ContentType.json;
+
+      final payload = <String, dynamic>{
+        'title': title,
+        'body': body,
+      };
+      if (labels.isNotEmpty) payload['labels'] = labels;
+
+      request.write(jsonEncode(payload));
+      final response = await request.close();
+      final responseBody =
+          await response.transform(utf8.decoder).join();
+
+      if (response.statusCode == 201) {
+        final json = jsonDecode(responseBody) as Map<String, dynamic>;
+        final url = json['html_url'] as String? ?? '';
+        debugPrint('[AgentService] GitHub issue created: $url');
+        return 'Issue created: $url';
+      } else {
+        debugPrint('[AgentService] GitHub issue failed '
+            '(${response.statusCode}): $responseBody');
+        return 'Error ${response.statusCode}: $responseBody';
+      }
+    } catch (e) {
+      debugPrint('[AgentService] GitHub issue error: $e');
+      return 'Error creating issue: $e';
+    }
   }
 
   // ---------------------------------------------------------------------------

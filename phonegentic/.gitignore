@@ -75,6 +75,9 @@
 .flutter-plugins-dependencies
 lib/src/test_credentials_local.dart
 
+# Build config (local overrides — copy from build.env.example)
+build.env
+
 # On-device ML models (downloaded via scripts/download_models.sh)
 models/
 *.safetensors

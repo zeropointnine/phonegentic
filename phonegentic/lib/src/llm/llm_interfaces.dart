@@ -91,7 +91,8 @@ final class LlmToolCallEvent extends LlmResponseEvent {
   final String id;
   final String name;
   final Map<String, dynamic> arguments;
-  LlmToolCallEvent({required this.id, required this.name, required this.arguments});
+  LlmToolCallEvent(
+      {required this.id, required this.name, required this.arguments});
 }
 
 final class LlmDoneEvent extends LlmResponseEvent {
@@ -113,8 +114,7 @@ final class LlmTransientException extends LlmException {
 
 final class LlmBadRequestException extends LlmException {
   final String responseBody;
-  LlmBadRequestException(String message, {required this.responseBody})
-      : super(message);
+  LlmBadRequestException(super.message, {required this.responseBody});
   bool get hasToolUseError => responseBody.contains('tool_use');
 }
 

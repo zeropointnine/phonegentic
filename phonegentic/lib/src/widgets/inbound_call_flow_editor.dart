@@ -124,8 +124,8 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Cancel',
-                style: TextStyle(color: AppColors.textTertiary)),
+            child:
+                Text('Cancel', style: TextStyle(color: AppColors.textTertiary)),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -236,13 +236,11 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
       decoration: BoxDecoration(
-        border:
-            Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
       ),
       child: Row(
         children: [
-          Icon(Icons.call_received_rounded,
-              size: 18, color: AppColors.accent),
+          Icon(Icons.call_received_rounded, size: 18, color: AppColors.accent),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -264,8 +262,7 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
               ),
             ),
           HoverButton(
-            onTap: () =>
-                context.read<InboundCallFlowService>().closeEditor(),
+            onTap: () => context.read<InboundCallFlowService>().closeEditor(),
             child: Padding(
               padding: const EdgeInsets.all(6),
               child: Icon(Icons.close_rounded,
@@ -321,7 +318,7 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
           height: 28,
           child: Switch(
             value: _enabled,
-            activeColor: AppColors.accent,
+            activeThumbColor: AppColors.accent,
             onChanged: (v) => setState(() => _enabled = v),
           ),
         ),
@@ -408,8 +405,7 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: rule.phoneController,
-                  style:
-                      TextStyle(fontSize: 12, color: AppColors.textPrimary),
+                  style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
                   decoration: InputDecoration(
                     hintText: '* (all) or +1555..., +1666...',
                     hintStyle:
@@ -429,11 +425,10 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide:
-                          BorderSide(color: AppColors.accent, width: 1),
+                      borderSide: BorderSide(color: AppColors.accent, width: 1),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 8),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                     prefixIcon: Padding(
                       padding: const EdgeInsets.only(left: 8, right: 4),
                       child: Icon(Icons.phone_rounded,
@@ -463,7 +458,7 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
   Widget _buildJobFunctionPicker(
       _RuleEntry rule, List<JobFunction> jobFunctions) {
     return DropdownButtonFormField<int>(
-      value: rule.jobFunctionId,
+      initialValue: rule.jobFunctionId,
       isExpanded: true,
       decoration: InputDecoration(
         filled: true,
@@ -481,8 +476,7 @@ class _InboundCallFlowEditorState extends State<InboundCallFlowEditor> {
           borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(color: AppColors.accent, width: 1),
         ),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       ),
       dropdownColor: AppColors.surface,
       style: TextStyle(fontSize: 12, color: AppColors.textPrimary),

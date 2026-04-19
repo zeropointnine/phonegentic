@@ -991,6 +991,35 @@ class WhisperRealtimeService {
           'required': ['reason'],
         },
       },
+      {
+        'type': 'function',
+        'name': 'read_logs',
+        'description':
+            'Read recent application debug logs from the in-memory ring buffer. '
+                'Use to investigate issues, diagnose SIP/call failures, or gather '
+                'context before filing a GitHub issue.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'count': {
+              'type': 'integer',
+              'description':
+                  'Number of recent log lines to return (default 200, max 500).',
+            },
+            'query': {
+              'type': 'string',
+              'description':
+                  'Case-insensitive substring filter. Only lines containing '
+                  'this text are returned.',
+            },
+            'since_minutes_ago': {
+              'type': 'integer',
+              'description':
+                  'Only return logs from the last N minutes.',
+            },
+          },
+        },
+      },
       ..._extraTools,
     ];
 

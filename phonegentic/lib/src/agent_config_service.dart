@@ -489,4 +489,18 @@ class AgentConfigService {
     await prefs.setBool('${_prefix}conf_basic_renegotiate_media',
         config.basicRenegotiateMedia);
   }
+
+  // -- GitHub config -----------------------------------------------------------
+
+  static const gitHubRepo = 'reduxdj/phonegentic';
+
+  static Future<String> loadGitHubToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('${_prefix}github_token') ?? '';
+  }
+
+  static Future<void> saveGitHubToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('${_prefix}github_token', token);
+  }
 }

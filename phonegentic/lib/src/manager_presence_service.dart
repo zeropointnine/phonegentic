@@ -1,5 +1,6 @@
 import 'dart:async';
 
+// ignore: unnecessary_import
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
@@ -196,8 +197,7 @@ class ManagerPresenceService extends ChangeNotifier
     buf.write('You were away for $awayMinutes min.');
 
     if (calls.isNotEmpty) {
-      final inbound =
-          calls.where((c) => c['direction'] == 'inbound').length;
+      final inbound = calls.where((c) => c['direction'] == 'inbound').length;
       final outbound = calls.length - inbound;
       buf.write(' ${calls.length} call(s)');
       if (inbound > 0 && outbound > 0) {
@@ -219,11 +219,10 @@ class ManagerPresenceService extends ChangeNotifier
       if (calls.length > 3) buf.write(' and others');
       buf.write('.');
 
-      final withRecordings =
-          calls.where((c) {
-            final p = c['recording_path'] as String?;
-            return p != null && p.isNotEmpty;
-          }).length;
+      final withRecordings = calls.where((c) {
+        final p = c['recording_path'] as String?;
+        return p != null && p.isNotEmpty;
+      }).length;
       if (withRecordings > 0) {
         buf.write(' $withRecordings recording(s) available.');
       }
@@ -280,9 +279,8 @@ class ManagerPresenceService extends ChangeNotifier
 
   Future<void> _refreshReminderCache() async {
     _cachedPendingReminders = await CallHistoryDb.getAllReminders(limit: 50);
-    _cachedPendingReminders = _cachedPendingReminders
-        .where((r) => r['status'] == 'pending')
-        .toList();
+    _cachedPendingReminders =
+        _cachedPendingReminders.where((r) => r['status'] == 'pending').toList();
     _cachedUpcomingReminders = await CallHistoryDb.getUpcomingReminders();
   }
 
@@ -393,8 +391,7 @@ class ManagerPresenceService extends ChangeNotifier
       await _scheduleUpcomingTimers();
       notifyListeners();
     } catch (e, st) {
-      debugPrint(
-          '[ManagerPresence] onReminderCreatedOrChanged error: $e\n$st');
+      debugPrint('[ManagerPresence] onReminderCreatedOrChanged error: $e\n$st');
     }
   }
 
