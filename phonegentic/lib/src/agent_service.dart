@@ -1951,7 +1951,8 @@ class AgentService extends ChangeNotifier {
       name: 'get_call_summary',
       description:
           'Get a summary of recent call activity. Use when the manager '
-          'asks about calls since they were away or wants a status update.',
+          'asks about calls since they were away or wants a status update. '
+          'Can filter by phone number and/or time window.',
       inputSchema: {
         'type': 'object',
         'properties': {
@@ -1960,6 +1961,12 @@ class AgentService extends ChangeNotifier {
             'description':
                 'Only include calls from the last N minutes. '
                 'Omit to use time since last briefing.',
+          },
+          'phone_number': {
+            'type': 'string',
+            'description':
+                'Filter calls by phone number (partial match). '
+                'Use when the manager asks about calls with a specific person.',
           },
         },
       },
@@ -3726,18 +3733,26 @@ class AgentService extends ChangeNotifier {
       since = managerPresenceService!.lastBriefingAt;
     }
 
-    return getCallActivitySummary(since: since);
+    final phoneNumber = args['phone_number'] as String?;
+
+    return getCallActivitySummary(since: since, phoneNumber: phoneNumber);
   }
 
-  Future<String> getCallActivitySummary({DateTime? since}) async {
+  Future<String> getCallActivitySummary({
+    DateTime? since,
+    String? phoneNumber,
+  }) async {
     final calls = await CallHistoryDb.searchCalls(
       since: since,
+      contactName: phoneNumber,
       limit: 50,
     );
 
     if (calls.isEmpty) {
       final qualifier = since != null ? 'since then' : 'recently';
-      return 'No calls $qualifier.';
+      final phoneQualifier =
+          phoneNumber != null ? ' matching "$phoneNumber"' : '';
+      return 'No calls $qualifier$phoneQualifier.';
     }
 
     final buf = StringBuffer();
@@ -3757,16 +3772,42 @@ class AgentService extends ChangeNotifier {
 
     buf.writeln('\nCalls:');
     for (final call in calls.take(10)) {
-      final name = call['remote_display_name'] as String? ??
-          call['remote_identity'] as String? ??
-          'Unknown';
+      final displayName = call['remote_display_name'] as String?;
+      final remoteId = call['remote_identity'] as String?;
+      final name = displayName ?? remoteId ?? 'Unknown';
+      final phone = (remoteId != null && remoteId != name) ? ' ($remoteId)' : '';
       final dir = call['direction'] as String? ?? '?';
       final status = call['status'] as String? ?? '?';
       final duration = (call['duration_seconds'] as int?) ?? 0;
-      final hasRecording = (call['recording_path'] as String?)?.isNotEmpty ?? false;
+      final hasRecording =
+          (call['recording_path'] as String?)?.isNotEmpty ?? false;
       final callId = call['id'] as int?;
 
-      buf.write('  - [$dir] $name ($status, ${_formatDuration(duration)})');
+      String timeLabel = '';
+      final startedAt = call['started_at'] as String?;
+      if (startedAt != null) {
+        final dt = DateTime.tryParse(startedAt)?.toLocal();
+        if (dt != null) {
+          final now = DateTime.now();
+          final diff = now.difference(dt);
+          if (diff.inMinutes < 2) {
+            timeLabel = 'just now';
+          } else if (diff.inMinutes < 60) {
+            timeLabel = '${diff.inMinutes}m ago';
+          } else if (diff.inHours < 24) {
+            timeLabel =
+                '${diff.inHours}h ${diff.inMinutes % 60}m ago';
+          } else {
+            timeLabel =
+                '${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+          }
+        }
+      }
+
+      buf.write('  - [$dir] $name$phone ($status, '
+          '${_formatDuration(duration)}');
+      if (timeLabel.isNotEmpty) buf.write(', $timeLabel');
+      buf.write(')');
       if (hasRecording && callId != null) {
         buf.write(' [recording available, call_record_id=$callId]');
       }
@@ -3826,8 +3867,6 @@ class AgentService extends ChangeNotifier {
 
     if (playOverStream && _callPhase.isActive) {
       _playRecordingOverStream(recordingPath);
-      return 'Streaming recording of call with $remoteName (call #$callId) '
-          'over the active call. The caller will hear it through the phone.';
     }
 
     _messages.add(ChatMessage(
@@ -3843,26 +3882,57 @@ class AgentService extends ChangeNotifier {
     ));
     notifyListeners();
 
+    if (playOverStream && _callPhase.isActive) {
+      return 'Streaming recording of call with $remoteName (call #$callId) '
+          'over the active call and showing it inline in the chat.';
+    }
     return 'Playing recording of call with $remoteName (call #$callId) '
         'inline in the chat.';
   }
 
   /// Loads a WAV recording, converts to PCM16 24 kHz mono, and streams it
   /// through the native audio tap so it plays over the active phone call.
+  /// Notifies the agent when playback completes (or is interrupted).
   void _playRecordingOverStream(String wavPath) {
     () async {
       try {
         final bytes = await File(wavPath).readAsBytes();
         final pcm = _wavToPcm24k(bytes);
+        final durationSecs = pcm.length / (24000 * 2);
         debugPrint('[AgentService] Streaming recording over call: '
-            '${pcm.length} bytes from $wavPath');
+            '${pcm.length} bytes (${durationSecs.toStringAsFixed(1)}s) '
+            'from $wavPath');
 
         const int chunkBytes = 48000; // ~1 s at 24 kHz mono 16-bit
+        bool interrupted = false;
         for (int i = 0; i < pcm.length; i += chunkBytes) {
-          if (!_callPhase.isActive) break;
+          if (!_callPhase.isActive) {
+            interrupted = true;
+            break;
+          }
           final end = (i + chunkBytes).clamp(0, pcm.length);
           await _whisper.playResponseAudio(pcm.sublist(i, end));
         }
+
+        // Wait for the native audio buffer to drain before notifying.
+        final drainMs = (durationSecs * 1000).round();
+        await Future.delayed(Duration(milliseconds: drainMs));
+
+        final msg = interrupted
+            ? '[SYSTEM EVENT]: Recording playback was interrupted '
+                '(call ended). The recording was '
+                '${durationSecs.toStringAsFixed(0)} seconds long.'
+            : '[SYSTEM EVENT]: Recording playback finished. '
+                'The recording was '
+                '${durationSecs.toStringAsFixed(0)} seconds long.';
+
+        if (_splitPipeline && _textAgent != null) {
+          _textAgent!.addSystemContext(msg);
+        } else if (_active) {
+          _whisper.sendSystemContext(msg);
+        }
+        debugPrint('[AgentService] Recording stream done '
+            '(interrupted=$interrupted)');
       } catch (e) {
         debugPrint('[AgentService] Recording stream playback failed: $e');
       }

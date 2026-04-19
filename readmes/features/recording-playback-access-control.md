@@ -15,8 +15,10 @@ The `play_call_recording` tool has no access control — any caller interacting 
    - Asks whether to play over the stream when the manager is on a call
    - Never plays recordings for non-manager/non-host callers
 
+4. **Richer call summaries**: The `get_call_summary` tool now accepts a `phone_number` filter (partial match via `searchCalls`'s `contactName` param). Summary output lines include relative timestamps (e.g. "5m ago", "2h 15m ago") so the agent can match requests like "play the call from 10 minutes ago". Display names and phone numbers are both shown when available.
+
 ## Files
 
-- `phonegentic/lib/src/agent_service.dart` — handler, tool schema, manager context, instructions
-- `phonegentic/lib/src/whisper_realtime_service.dart` — realtime tool schema
+- `phonegentic/lib/src/agent_service.dart` — handler, tool schema, manager context, instructions, summary output
+- `phonegentic/lib/src/whisper_realtime_service.dart` — realtime tool schemas
 - `readmes/features/recording-playback-access-control.md` — this file

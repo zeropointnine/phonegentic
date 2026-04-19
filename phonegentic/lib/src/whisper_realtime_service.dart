@@ -775,7 +775,8 @@ class WhisperRealtimeService {
         'name': 'get_call_summary',
         'description':
             'Get a summary of recent call activity. Use when the manager '
-                'asks about calls since they were away or wants a status update.',
+                'asks about calls since they were away or wants a status update. '
+                'Can filter by phone number and/or time window.',
         'parameters': {
           'type': 'object',
           'properties': {
@@ -784,6 +785,12 @@ class WhisperRealtimeService {
               'description':
                   'Only include calls from the last N minutes. '
                       'Omit to use time since last briefing.',
+            },
+            'phone_number': {
+              'type': 'string',
+              'description':
+                  'Filter calls by phone number (partial match). '
+                      'Use when the manager asks about calls with a specific person.',
             },
           },
         },
