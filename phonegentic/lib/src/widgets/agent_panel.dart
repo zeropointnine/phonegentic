@@ -217,6 +217,8 @@ class _AgentPanelState extends State<AgentPanel> {
                         child: _MessageList(
                       messages: agent.messages,
                       scrollController: _scrollController,
+                      hasMore: agent.hasMoreSessionHistory,
+                      onLoadMore: () => agent.loadMoreHistory(),
                       onAction: (action) {
                         _controller.text = action.value;
                         _send(agent);
@@ -1926,20 +1928,44 @@ class _HeaderButton extends StatelessWidget {
 // Message List
 // ---------------------------------------------------------------------------
 
-class _MessageList extends StatelessWidget {
+class _MessageList extends StatefulWidget {
   final List<ChatMessage> messages;
   final ScrollController scrollController;
+  final bool hasMore;
+  final Future<bool> Function() onLoadMore;
   final ValueChanged<MessageAction> onAction;
 
   const _MessageList({
     required this.messages,
     required this.scrollController,
+    required this.hasMore,
+    required this.onLoadMore,
     required this.onAction,
   });
 
   @override
+  State<_MessageList> createState() => _MessageListState();
+}
+
+class _MessageListState extends State<_MessageList> {
+  bool _loadingMore = false;
+  static const _loadMoreThreshold = 300.0;
+
+  bool _onScrollNotification(ScrollNotification notification) {
+    if (!widget.hasMore || _loadingMore) return false;
+    // In a reversed ListView, extentAfter is toward older messages (visual top).
+    if (notification.metrics.extentAfter < _loadMoreThreshold) {
+      _loadingMore = true;
+      widget.onLoadMore().then((hasMore) {
+        if (mounted) setState(() => _loadingMore = false);
+      });
+    }
+    return false;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (messages.isEmpty) {
+    if (widget.messages.isEmpty) {
       return Center(
         child: Text(
           'No messages yet',
@@ -1948,21 +1974,39 @@ class _MessageList extends StatelessWidget {
       );
     }
 
-    return ListView.builder(
-      controller: scrollController,
-      reverse: true,
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-      itemCount: messages.length,
-      itemBuilder: (context, index) {
-        final msgIdx = messages.length - 1 - index;
-        final msg = messages[msgIdx];
-        final isLast = msgIdx == messages.length - 1;
-        return _MessageBubble(
-          message: msg,
-          showActions: isLast && msg.actions.isNotEmpty,
-          onAction: onAction,
-        );
-      },
+    final extraItem = (widget.hasMore || _loadingMore) ? 1 : 0;
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScrollNotification,
+      child: ListView.builder(
+        controller: widget.scrollController,
+        reverse: true,
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+        itemCount: widget.messages.length + extraItem,
+        itemBuilder: (context, index) {
+          // Extra item at the end of the reversed list = visual top = loading indicator.
+          if (index == widget.messages.length) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            );
+          }
+          final msgIdx = widget.messages.length - 1 - index;
+          final msg = widget.messages[msgIdx];
+          final isLast = msgIdx == widget.messages.length - 1;
+          return _MessageBubble(
+            message: msg,
+            showActions: isLast && msg.actions.isNotEmpty,
+            onAction: widget.onAction,
+          );
+        },
+      ),
     );
   }
 }

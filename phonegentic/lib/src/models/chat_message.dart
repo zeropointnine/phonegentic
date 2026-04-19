@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 enum ChatRole { user, agent, host, remoteParty, system }
 
 enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms, reminder }
@@ -6,6 +8,11 @@ class MessageAction {
   final String label;
   final String value;
   const MessageAction({required this.label, required this.value});
+
+  Map<String, String> toMap() => {'label': label, 'value': value};
+
+  factory MessageAction.fromMap(Map<String, dynamic> map) =>
+      MessageAction(label: map['label'] as String, value: map['value'] as String);
 }
 
 class ChatMessage {
@@ -149,6 +156,57 @@ class ChatMessage {
         metadata = {
           if (reminderId != null) 'reminder_id': reminderId,
         };
+
+  // ---------------------------------------------------------------------------
+  // Serialization
+  // ---------------------------------------------------------------------------
+
+  Map<String, dynamic> toDbMap() => {
+        'message_id': id,
+        'role': role.name,
+        'type': type.name,
+        'text': text,
+        'timestamp': timestamp.toIso8601String(),
+        'speaker_name': speakerName,
+        'actions_json': actions.isEmpty
+            ? null
+            : jsonEncode(actions.map((a) => a.toMap()).toList()),
+        'metadata_json':
+            metadata != null && metadata!.isNotEmpty ? jsonEncode(metadata) : null,
+      };
+
+  factory ChatMessage.fromDbMap(Map<String, dynamic> map) {
+    final roleStr = map['role'] as String;
+    final typeStr = map['type'] as String;
+
+    List<MessageAction> actions = const [];
+    final actionsJson = map['actions_json'] as String?;
+    if (actionsJson != null && actionsJson.isNotEmpty) {
+      final decoded = jsonDecode(actionsJson) as List;
+      actions = decoded
+          .map((e) => MessageAction.fromMap(e as Map<String, dynamic>))
+          .toList();
+    }
+
+    Map<String, dynamic>? metadata;
+    final metaJson = map['metadata_json'] as String?;
+    if (metaJson != null && metaJson.isNotEmpty) {
+      metadata = jsonDecode(metaJson) as Map<String, dynamic>;
+    }
+
+    return ChatMessage(
+      id: map['message_id'] as String,
+      role: ChatRole.values.firstWhere((r) => r.name == roleStr,
+          orElse: () => ChatRole.system),
+      type: MessageType.values.firstWhere((t) => t.name == typeStr,
+          orElse: () => MessageType.text),
+      text: map['text'] as String? ?? '',
+      timestamp: DateTime.tryParse(map['timestamp'] as String? ?? ''),
+      speakerName: map['speaker_name'] as String?,
+      actions: actions,
+      metadata: metadata,
+    );
+  }
 
   static int _counter = 0;
   static String _uid() => 'msg_${DateTime.now().millisecondsSinceEpoch}_${_counter++}';

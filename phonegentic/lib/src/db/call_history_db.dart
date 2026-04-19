@@ -33,7 +33,7 @@ class CallHistoryDb {
     return databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 16,
+        version: 17,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -128,6 +128,7 @@ class CallHistoryDb {
     await _createInboundCallFlowsTable(db);
     await _createAgentRemindersTable(db);
     await _createTransferRulesTable(db);
+    await _createSessionMessagesTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -234,6 +235,10 @@ class CallHistoryDb {
       await db.execute(
         'ALTER TABLE job_functions ADD COLUMN comfort_noise_path TEXT',
       );
+    }
+
+    if (oldVersion < 17) {
+      await _createSessionMessagesTable(db);
     }
   }
 
@@ -1301,4 +1306,111 @@ class CallHistoryDb {
     final db = await database;
     await db.delete('transfer_rules', where: 'id = ?', whereArgs: [id]);
   }
+
+  // ---------------------------------------------------------------------------
+  // Session Messages (agent panel transcript persistence)
+  // ---------------------------------------------------------------------------
+
+  static const int _sessionMessageMaxRows = 50000;
+  static const int _sessionMessagePageSize = 200;
+
+  static Future<void> _createSessionMessagesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS session_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        type TEXT NOT NULL,
+        text TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        speaker_name TEXT,
+        actions_json TEXT,
+        metadata_json TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sm_ts ON session_messages(timestamp)');
+  }
+
+  static Future<void> insertSessionMessage(Map<String, dynamic> row) async {
+    final db = await database;
+    await db.insert('session_messages', row);
+
+    // Prune oldest rows if over the cap. Uses a subquery on rowid which is
+    // extremely fast (B-tree seek, no full scan).
+    final countResult =
+        await db.rawQuery('SELECT COUNT(*) AS cnt FROM session_messages');
+    final count = countResult.first['cnt'] as int? ?? 0;
+    if (count > _sessionMessageMaxRows) {
+      final excess = count - _sessionMessageMaxRows;
+      await db.rawDelete('''
+        DELETE FROM session_messages WHERE id IN (
+          SELECT id FROM session_messages ORDER BY id ASC LIMIT ?
+        )
+      ''', [excess]);
+    }
+  }
+
+  /// Load the most recent [limit] messages. Returns rows in chronological
+  /// order (oldest first) so they can be appended directly to the message list.
+  static Future<List<Map<String, dynamic>>> loadRecentSessionMessages({
+    int limit = _sessionMessagePageSize,
+  }) async {
+    final db = await database;
+    // Grab newest N by descending id, then reverse for chronological order.
+    final rows = await db.query(
+      'session_messages',
+      orderBy: 'id DESC',
+      limit: limit,
+    );
+    return rows.reversed.toList();
+  }
+
+  /// Load a page of older messages whose rowid is less than [beforeId].
+  /// Returns rows in chronological order (oldest first).
+  static Future<List<Map<String, dynamic>>> loadSessionMessagesBefore({
+    required int beforeId,
+    int limit = _sessionMessagePageSize,
+  }) async {
+    final db = await database;
+    final rows = await db.query(
+      'session_messages',
+      where: 'id < ?',
+      whereArgs: [beforeId],
+      orderBy: 'id DESC',
+      limit: limit,
+    );
+    return rows.reversed.toList();
+  }
+
+  static Future<void> clearSessionMessages() async {
+    final db = await database;
+    await db.delete('session_messages');
+  }
+
+  static Future<int> sessionMessageCount() async {
+    final db = await database;
+    final result =
+        await db.rawQuery('SELECT COUNT(*) AS cnt FROM session_messages');
+    return result.first['cnt'] as int? ?? 0;
+  }
+
+  static Future<void> deleteSessionMessageByMsgId(String messageId) async {
+    final db = await database;
+    await db.delete('session_messages',
+        where: 'message_id = ?', whereArgs: [messageId]);
+  }
+
+  static Future<void> updateSessionMessageText(
+      String messageId, String text) async {
+    final db = await database;
+    await db.update(
+      'session_messages',
+      {'text': text},
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  static int get sessionPageSize => _sessionMessagePageSize;
 }

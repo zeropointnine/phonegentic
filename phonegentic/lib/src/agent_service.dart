@@ -114,6 +114,12 @@ class AgentService extends ChangeNotifier {
   }
 
   final List<ChatMessage> _messages = [];
+  bool _persistEnabled = false;
+  int? _oldestSessionRowId;
+  bool _hasMoreSessionHistory = false;
+
+  bool get hasMoreSessionHistory => _hasMoreSessionHistory;
+
   AgentBootContext _bootContext = AgentBootContext.trivia();
 
   CallPhase _callPhase = CallPhase.idle;
@@ -304,6 +310,7 @@ class AgentService extends ChangeNotifier {
 
     if (_voiceFinalPending) {
       _messages[idx].isStreaming = false;
+      _updatePersistedText(_messages[idx].id, _messages[idx].text);
       _voiceFinalPending = false;
       _voiceFinalTimer?.cancel();
       _voiceFinalTimer = null;
@@ -322,6 +329,7 @@ class AgentService extends ChangeNotifier {
           _messages[idx].text = _voiceUiBuffer.toString();
         }
         _messages[idx].isStreaming = false;
+        _updatePersistedText(_messages[idx].id, _messages[idx].text);
       }
     }
     _resetVoiceUiSyncState();
@@ -561,8 +569,85 @@ class AgentService extends ChangeNotifier {
 
   void removeMessage(ChatMessage msg) {
     _messages.remove(msg);
+    if (_persistEnabled) {
+      CallHistoryDb.deleteSessionMessageByMsgId(msg.id);
+    }
     notifyListeners();
   }
+
+  // ---------------------------------------------------------------------------
+  // Session persistence helpers
+  // ---------------------------------------------------------------------------
+
+  void _addMsg(ChatMessage msg) {
+    _messages.add(msg);
+    if (_persistEnabled) {
+      CallHistoryDb.insertSessionMessage(msg.toDbMap()).catchError((e) {
+        debugPrint('[AgentService] Failed to persist message: $e');
+      });
+    }
+  }
+
+  void _removeMsgAt(int idx) {
+    final msg = _messages[idx];
+    _messages.removeAt(idx);
+    if (_persistEnabled) {
+      CallHistoryDb.deleteSessionMessageByMsgId(msg.id);
+    }
+  }
+
+  void _updatePersistedText(String messageId, String text) {
+    if (!_persistEnabled) return;
+    CallHistoryDb.updateSessionMessageText(messageId, text).catchError((e) {
+      debugPrint('[AgentService] Failed to update persisted text: $e');
+    });
+  }
+
+  Future<bool> _restoreSession() async {
+    try {
+      final rows = await CallHistoryDb.loadRecentSessionMessages();
+      if (rows.isEmpty) return false;
+
+      _oldestSessionRowId = rows.first['id'] as int;
+      _hasMoreSessionHistory =
+          rows.length >= CallHistoryDb.sessionPageSize;
+
+      for (final row in rows) {
+        _messages.add(ChatMessage.fromDbMap(row));
+      }
+      return true;
+    } catch (e) {
+      debugPrint('[AgentService] Failed to restore session: $e');
+      return false;
+    }
+  }
+
+  Future<bool> loadMoreHistory() async {
+    if (!_hasMoreSessionHistory || _oldestSessionRowId == null) return false;
+    try {
+      final rows = await CallHistoryDb.loadSessionMessagesBefore(
+        beforeId: _oldestSessionRowId!,
+      );
+      if (rows.isEmpty) {
+        _hasMoreSessionHistory = false;
+        notifyListeners();
+        return false;
+      }
+
+      _oldestSessionRowId = rows.first['id'] as int;
+      _hasMoreSessionHistory =
+          rows.length >= CallHistoryDb.sessionPageSize;
+
+      _messages.insertAll(
+          0, rows.map((r) => ChatMessage.fromDbMap(r)));
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[AgentService] Failed to load more history: $e');
+      return false;
+    }
+  }
+
   WhisperRealtimeService get whisper => _whisper;
   AgentBootContext get bootContext => _bootContext;
 
@@ -602,7 +687,7 @@ class AgentService extends ChangeNotifier {
     _bootContext = ctx;
     if (jobFunctionName != null) {
       final mode = whisperByDefault == true ? ' (text-only)' : '';
-      _messages.add(ChatMessage.system(
+      _addMsg(ChatMessage.system(
         'Switched to "$jobFunctionName"$mode',
       ));
     }
@@ -668,12 +753,13 @@ class AgentService extends ChangeNotifier {
   }
 
   AgentService() {
-    _messages.add(ChatMessage.system('Agent starting...'));
+    _addMsg(ChatMessage.system('Agent starting...'));
     _tapChannel.setMethodCallHandler(_handleNativeTapCall);
     _init();
   }
 
   Future<void> _init() async {
+    _persistEnabled = false;
     try {
       _syncBootContextFromJobFunction();
       _globalMutePolicy = await AgentConfigService.loadMutePolicy();
@@ -711,7 +797,9 @@ class AgentService extends ChangeNotifier {
         _messages.clear();
         _resetVoiceUiSyncState();
         _streamingMessageId = null;
-        _messages.add(ChatMessage.system(
+        await _restoreSession();
+        _persistEnabled = true;
+        _addMsg(ChatMessage.system(
             'Voice agent not configured. Go to Settings > Agents to set up.'));
         notifyListeners();
         return;
@@ -722,7 +810,7 @@ class AgentService extends ChangeNotifier {
       _smsHistoryLoadedPhones.clear();
       _resetVoiceUiSyncState();
       _streamingMessageId = null;
-      _messages.add(ChatMessage.system('Connecting to AI...'));
+      _addMsg(ChatMessage.system('Connecting to AI...'));
       notifyListeners();
 
       final hasJobFunction = _jobFunctionService?.selected != null;
@@ -755,14 +843,17 @@ class AgentService extends ChangeNotifier {
       _resetVoiceUiSyncState();
       _streamingMessageId = null;
       if (_active) {
-        await _loadPreviousConversation();
+        final hadSession = await _restoreSession();
+        _persistEnabled = true;
+        if (!hadSession) await _loadPreviousConversation();
         final jfTitle = _jobFunctionService?.selected?.title;
         final label = jfTitle != null ? 'Ready as "$jfTitle".' : 'Ready.';
-        _messages.add(ChatMessage.agent(
+        _addMsg(ChatMessage.agent(
           '$label I\'m listening to the call and can assist anytime. Type a message or just talk.',
         ));
       } else {
-        _messages.add(ChatMessage.system('Failed to connect to AI agent.'));
+        _persistEnabled = true;
+        _addMsg(ChatMessage.system('Failed to connect to AI agent.'));
       }
       notifyListeners();
 
@@ -835,7 +926,11 @@ class AgentService extends ChangeNotifier {
       _statusText = 'Error';
       _active = false;
       _pipelineError = _formatPipelineError('$e');
-      _messages.add(ChatMessage.system('Error: $e'));
+      if (!_persistEnabled) {
+        await _restoreSession();
+        _persistEnabled = true;
+      }
+      _addMsg(ChatMessage.system('Error: $e'));
       debugPrint('[AgentService] Init failed: $e');
       notifyListeners();
     }
@@ -916,7 +1011,7 @@ class AgentService extends ChangeNotifier {
     _smsHistoryLoadedPhones.clear();
     _resetVoiceUiSyncState();
     _streamingMessageId = null;
-    _messages.add(ChatMessage.system('Loading STT model...'));
+    _addMsg(ChatMessage.system('Loading STT model...'));
     notifyListeners();
 
     try {
@@ -926,7 +1021,9 @@ class AgentService extends ChangeNotifier {
       if (!_whisperKitStt!.isInitialized) {
         _statusText = 'STT model not found';
         _messages.clear();
-        _messages.add(ChatMessage.system(
+        await _restoreSession();
+        _persistEnabled = true;
+        _addMsg(ChatMessage.system(
             'Whisper model not found. Run scripts/download_models.sh whisper '
             'to download it, then restart the app.'));
         notifyListeners();
@@ -936,10 +1033,12 @@ class AgentService extends ChangeNotifier {
       _active = true;
       _statusText = 'Listening';
       _messages.clear();
-      await _loadPreviousConversation();
+      final hadSession = await _restoreSession();
+      _persistEnabled = true;
+      if (!hadSession) await _loadPreviousConversation();
       final jfTitle = _jobFunctionService?.selected?.title;
       final label = jfTitle != null ? 'Ready as "$jfTitle".' : 'Ready.';
-      _messages.add(ChatMessage.agent(
+      _addMsg(ChatMessage.agent(
           '$label On-device STT active. Speak and I\'ll assist via text.'));
       notifyListeners();
 
@@ -1015,7 +1114,11 @@ class AgentService extends ChangeNotifier {
     } catch (e) {
       _statusText = 'Error';
       _active = false;
-      _messages.add(ChatMessage.system('Local STT error: $e'));
+      if (!_persistEnabled) {
+        await _restoreSession();
+        _persistEnabled = true;
+      }
+      _addMsg(ChatMessage.system('Local STT error: $e'));
       debugPrint('[AgentService] Local STT init failed: $e');
       notifyListeners();
     }
@@ -2141,7 +2244,7 @@ class AgentService extends ChangeNotifier {
       final dateLabel = '${startedAt.month}/${startedAt.day}/${startedAt.year} '
           '${startedAt.hour}:${startedAt.minute.toString().padLeft(2, '0')}';
 
-      _messages.add(ChatMessage.system(
+      _addMsg(ChatMessage.system(
         'Previous call: $remoteName \u2014 $dateLabel',
         metadata: const {'isPreviousCallHeader': true},
       ));
@@ -2165,16 +2268,16 @@ class AgentService extends ChangeNotifier {
         }
 
         if (chatRole == ChatRole.agent) {
-          _messages.add(ChatMessage.agent(text,
+          _addMsg(ChatMessage.agent(text,
               metadata: const {'isPreviousCall': true}));
         } else {
-          _messages.add(ChatMessage.transcript(chatRole, text,
+          _addMsg(ChatMessage.transcript(chatRole, text,
               speakerName: speakerName,
               metadata: const {'isPreviousCall': true}));
         }
       }
 
-      _messages.add(ChatMessage.system('— End of previous call —',
+      _addMsg(ChatMessage.system('— End of previous call —',
           metadata: const {'isPreviousCallFooter': true}));
     } catch (e) {
       debugPrint('[AgentService] Failed to load previous conversation: $e');
@@ -2786,7 +2889,7 @@ class AgentService extends ChangeNotifier {
       _whisper.isTtsPlaying = false;
       if (_streamingMessageId != null) {
         final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
-        if (idx >= 0) _messages.removeAt(idx);
+        if (idx >= 0) _removeMsgAt(idx);
         _streamingMessageId = null;
       }
       _resetVoiceUiSyncState();
@@ -2866,7 +2969,7 @@ class AgentService extends ChangeNotifier {
             _ttsInterrupted = true;
             _whisper.stopResponseAudio();
             _whisper.clearTTSQueue();
-            _messages.removeAt(idx);
+            _removeMsgAt(idx);
             _streamingMessageId = null;
             _resetVoiceUiSyncState();
             notifyListeners();
@@ -2898,6 +3001,7 @@ class AgentService extends ChangeNotifier {
             _voiceUiBuffer = null;
             _messages[idx].isStreaming = false;
             _streamingMessageId = null;
+            _updatePersistedText(_messages[idx].id, finalText);
           }
         } else {
           _streamingMessageId = null;
@@ -2972,7 +3076,7 @@ class AgentService extends ChangeNotifier {
     } else {
       _resetVoiceUiSyncState();
     }
-    _messages.add(msg);
+    _addMsg(msg);
     notifyListeners();
   }
 
@@ -3339,7 +3443,7 @@ class AgentService extends ChangeNotifier {
         contactName = contact['display_name'] as String?;
       }
     }
-    _messages.add(ChatMessage.sms(
+    _addMsg(ChatMessage.sms(
       'Inbound SMS from $senderLabel: "$preview"',
       direction: 'inbound',
       remotePhone: msg.from,
@@ -3501,7 +3605,7 @@ class AgentService extends ChangeNotifier {
           contactName = contact['display_name'] as String?;
         }
       }
-      _messages.add(ChatMessage.sms(
+      _addMsg(ChatMessage.sms(
         'SMS sent to $displayTo: "$text"',
         direction: 'outbound',
         remotePhone: to,
@@ -3547,7 +3651,7 @@ class AgentService extends ChangeNotifier {
           contactName = contact['display_name'] as String?;
         }
       }
-      _messages.add(ChatMessage.sms(
+      _addMsg(ChatMessage.sms(
         'SMS reply to $displayTo: "$text"',
         direction: 'outbound',
         remotePhone: selected,
@@ -3869,7 +3973,7 @@ class AgentService extends ChangeNotifier {
       _playRecordingOverStream(recordingPath);
     }
 
-    _messages.add(ChatMessage(
+    _addMsg(ChatMessage(
       id: 'rec_${DateTime.now().millisecondsSinceEpoch}',
       role: ChatRole.system,
       type: MessageType.status,
@@ -4401,7 +4505,7 @@ class AgentService extends ChangeNotifier {
         _agentManagerConfig.isConfigured;
 
     // Always show in the chat panel so it's visible if the manager is looking.
-    _messages.add(ChatMessage.system(
+    _addMsg(ChatMessage.system(
       'TRANSFER REQUEST: $callerName wants to be transferred$targetDesc. '
       'Reason: $reason — Tell the agent YES or NO.',
     ));
@@ -4630,7 +4734,7 @@ class AgentService extends ChangeNotifier {
       );
       msg.isStreaming = true;
       _samplingMessageId = msg.id;
-      _messages.add(msg);
+      _addMsg(msg);
       notifyListeners();
       debugPrint(
           '[AgentService] Agent-initiated voice sample → $_agentSamplePath ($party)');
@@ -4671,7 +4775,7 @@ class AgentService extends ChangeNotifier {
     _finalizeSamplingMessage(success: true);
 
     try {
-      _messages.add(ChatMessage.system('Cloning voice...'));
+      _addMsg(ChatMessage.system('Cloning voice...'));
       notifyListeners();
 
       final voiceId = await ElevenLabsApiService.addVoice(
@@ -4681,7 +4785,7 @@ class AgentService extends ChangeNotifier {
       );
 
       _agentSamplePath = null;
-      _messages.add(ChatMessage.system('Voice "$name" cloned successfully'));
+      _addMsg(ChatMessage.system('Voice "$name" cloned successfully'));
       notifyListeners();
       debugPrint('[AgentService] Voice cloned: $voiceId ($name)');
       return 'Voice cloned successfully. voice_id=$voiceId name="$name". '
@@ -4760,7 +4864,7 @@ class AgentService extends ChangeNotifier {
       return 'No TTS provider is active. Cannot change voice.';
     }
 
-    _messages.add(ChatMessage.system('Agent voice changed to $voiceId'));
+    _addMsg(ChatMessage.system('Agent voice changed to $voiceId'));
     notifyListeners();
     debugPrint('[AgentService] Agent voice swapped to: $voiceId');
     return 'Voice updated. You are now speaking with voice_id=$voiceId. '
@@ -5246,7 +5350,7 @@ class AgentService extends ChangeNotifier {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    _messages.add(ChatMessage.user(trimmed));
+    _addMsg(ChatMessage.user(trimmed));
     notifyListeners();
 
     if (_active) {
@@ -5257,7 +5361,7 @@ class AgentService extends ChangeNotifier {
         _whisper.sendTextMessage(trimmed);
       }
     } else {
-      _messages.add(ChatMessage.system('Agent is not connected.'));
+      _addMsg(ChatMessage.system('Agent is not connected.'));
       notifyListeners();
     }
   }
@@ -5401,11 +5505,12 @@ class AgentService extends ChangeNotifier {
           DateTime.now().difference(last.timestamp).inMilliseconds <
               _transcriptMergeWindowMs) {
         last.text = '${last.text} $text';
+        _updatePersistedText(last.id, last.text);
         notifyListeners();
         return;
       }
     }
-    _messages.add(ChatMessage.transcript(
+    _addMsg(ChatMessage.transcript(
       role,
       text,
       speakerName: speakerName,
@@ -5415,14 +5520,14 @@ class AgentService extends ChangeNotifier {
   }
 
   void addSystemMessage(String text) {
-    _messages.add(ChatMessage.system(text));
+    _addMsg(ChatMessage.system(text));
     notifyListeners();
   }
 
   /// Send a system-level context update that the model can see and act on.
   /// Also adds it to the local chat as a system message.
   void sendSystemEvent(String text, {bool requireResponse = false}) {
-    _messages.add(ChatMessage.system(text));
+    _addMsg(ChatMessage.system(text));
     notifyListeners();
 
     if (_active) {
@@ -5442,7 +5547,7 @@ class AgentService extends ChangeNotifier {
   }
 
   void addReminderMessage(String text, {int? reminderId}) {
-    _messages.add(ChatMessage.reminder(
+    _addMsg(ChatMessage.reminder(
       text,
       reminderId: reminderId,
       actions: [
@@ -5457,7 +5562,7 @@ class AgentService extends ChangeNotifier {
   }
 
   void addMissedReminderMessage(String text, {int? reminderId}) {
-    _messages.add(ChatMessage.reminder(
+    _addMsg(ChatMessage.reminder(
       text,
       reminderId: reminderId,
       actions: [
@@ -5475,7 +5580,7 @@ class AgentService extends ChangeNotifier {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    _messages.add(ChatMessage.whisper(trimmed));
+    _addMsg(ChatMessage.whisper(trimmed));
     notifyListeners();
 
     if (_active) {
@@ -5496,7 +5601,7 @@ class AgentService extends ChangeNotifier {
   void sendFileAttachment({required String fileName, required String content}) {
     if (content.trim().isEmpty) return;
 
-    _messages.add(ChatMessage.attachment(
+    _addMsg(ChatMessage.attachment(
       'Attached file: $fileName',
       fileName: fileName,
     ));
@@ -5725,7 +5830,7 @@ class AgentService extends ChangeNotifier {
       outbound: _isOutbound,
     );
 
-    _messages.add(ChatMessage.callState(
+    _addMsg(ChatMessage.callState(
       phase.displayLabel,
       metadata: {'phase': phase.name, 'partyCount': partyCount},
     ));
@@ -6114,7 +6219,7 @@ class AgentService extends ChangeNotifier {
     callHistory?.addTranscript(role: 'agent', text: displayText);
 
     final msg = ChatMessage.agent(displayText);
-    _messages.add(msg);
+    _addMsg(msg);
     notifyListeners();
 
     if (_hasTts && !_ttsMuted && !_muted) {
@@ -6490,11 +6595,11 @@ class AgentService extends ChangeNotifier {
     _userMuteOverride = false;
     _callPhase = CallPhase.idle;
     _levels.clear();
-    _messages.clear();
     _smsHistoryLoadedPhones.clear();
     _resetVoiceUiSyncState();
     _streamingMessageId = null;
     _statusText = 'Reconnecting...';
+    _addMsg(ChatMessage.system('Reconnecting…'));
     notifyListeners();
     await _init();
   }
