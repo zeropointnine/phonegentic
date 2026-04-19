@@ -93,7 +93,7 @@ class TelnyxMessagingConfig {
     this.messagingProfileId = '',
     this.webhookUrl = '',
     this.mediaUploadSecret = '',
-    this.pollingIntervalSeconds = 15,
+    this.pollingIntervalSeconds = 300,
   });
 
   bool get isConfigured => apiKey.isNotEmpty && fromNumber.isNotEmpty;

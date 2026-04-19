@@ -30,7 +30,7 @@ class TelnyxMessagingProvider implements MessagingProvider {
     required this.fromNumber,
     this.messagingProfileId,
     this.mediaUploadSecret,
-    this.pollingIntervalSeconds = 15,
+    this.pollingIntervalSeconds = 300,
   });
 
   @override
@@ -189,7 +189,15 @@ class TelnyxMessagingProvider implements MessagingProvider {
     }
 
     final data = jsonDecode(resp.body)['data'] as Map<String, dynamic>;
-    return _parseMessageResponse(data, SmsDirection.outbound);
+    final msg = _parseMessageResponse(data, SmsDirection.outbound);
+    // Telnyx's immediate response may not echo back media URLs; preserve the
+    // resolved public URLs we uploaded so they show in the conversation.
+    if (msg.mediaUrls.isEmpty &&
+        resolvedMedia != null &&
+        resolvedMedia.isNotEmpty) {
+      return msg.copyWith(mediaUrls: resolvedMedia);
+    }
+    return msg;
   }
 
   // ---------------------------------------------------------------------------
@@ -212,6 +220,22 @@ class TelnyxMessagingProvider implements MessagingProvider {
         ? SmsDirection.inbound
         : SmsDirection.outbound;
     final msg = _parseMessageResponse(data, dir);
+
+    // Log media status for MMS diagnostics
+    final mediaArray = data['media'] as List<dynamic>?;
+    if (mediaArray != null && mediaArray.isNotEmpty) {
+      for (final m in mediaArray) {
+        final mm = m as Map<String, dynamic>;
+        final mediaError = mm['media_error'] as String?;
+        final ct = mm['content_type'] as String?;
+        final size = mm['size'];
+        if (mediaError != null && mediaError.isNotEmpty) {
+          debugPrint('[TelnyxMessaging] Media error for $providerId: $mediaError');
+        } else {
+          debugPrint('[TelnyxMessaging] Media OK for $providerId: type=$ct size=$size');
+        }
+      }
+    }
 
     if (msg.status == SmsStatus.failed) {
       debugPrint('[TelnyxMessaging] Message $providerId FAILED. Full response: ${resp.body}');
