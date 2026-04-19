@@ -84,6 +84,7 @@ class TelnyxMessagingConfig {
   final String fromNumber;
   final String messagingProfileId;
   final String webhookUrl;
+  final String mediaUploadSecret;
   final int pollingIntervalSeconds;
 
   const TelnyxMessagingConfig({
@@ -91,6 +92,7 @@ class TelnyxMessagingConfig {
     this.fromNumber = '',
     this.messagingProfileId = '',
     this.webhookUrl = '',
+    this.mediaUploadSecret = '',
     this.pollingIntervalSeconds = 15,
   });
 
@@ -101,6 +103,7 @@ class TelnyxMessagingConfig {
     String? fromNumber,
     String? messagingProfileId,
     String? webhookUrl,
+    String? mediaUploadSecret,
     int? pollingIntervalSeconds,
   }) {
     return TelnyxMessagingConfig(
@@ -108,6 +111,7 @@ class TelnyxMessagingConfig {
       fromNumber: fromNumber ?? this.fromNumber,
       messagingProfileId: messagingProfileId ?? this.messagingProfileId,
       webhookUrl: webhookUrl ?? this.webhookUrl,
+      mediaUploadSecret: mediaUploadSecret ?? this.mediaUploadSecret,
       pollingIntervalSeconds:
           pollingIntervalSeconds ?? this.pollingIntervalSeconds,
     );
@@ -123,6 +127,8 @@ class TelnyxMessagingConfig {
       messagingProfileId:
           prefs.getString('${_prefix}messaging_profile_id') ?? '',
       webhookUrl: prefs.getString('${_prefix}webhook_url') ?? '',
+      mediaUploadSecret:
+          prefs.getString('${_prefix}media_upload_secret') ?? '',
       pollingIntervalSeconds:
           prefs.getInt('${_prefix}polling_interval') ?? 15,
     );
@@ -134,6 +140,7 @@ class TelnyxMessagingConfig {
     await prefs.setString('${_prefix}from_number', fromNumber);
     await prefs.setString('${_prefix}messaging_profile_id', messagingProfileId);
     await prefs.setString('${_prefix}webhook_url', webhookUrl);
+    await prefs.setString('${_prefix}media_upload_secret', mediaUploadSecret);
     await prefs.setInt('${_prefix}polling_interval', pollingIntervalSeconds);
   }
 }

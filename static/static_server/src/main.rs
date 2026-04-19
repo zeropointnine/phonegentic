@@ -9,7 +9,7 @@
 //!   (`SMS_LOG_FILE` / `HELP_LOG_FILE`) so nothing is ever lost.
 
 use axum::body::Bytes;
-use axum::extract::{Form, State, WebSocketUpgrade};
+use axum::extract::{Form, Multipart, State, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
@@ -36,6 +36,10 @@ const MAX_NOTE_LEN: usize = 2000;
 const DEFAULT_SMS_LOG: &str = "/var/log/sms_submissions.log";
 const DEFAULT_HELP_LOG: &str = "/var/log/help_submissions.log";
 const MAX_MESSAGE_LEN: usize = 5000;
+const MAX_UPLOAD_BYTES: usize = 2_000_000; // 2 MB
+const ALLOWED_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "mp3", "mp4", "pdf", "wav", "vcf",
+];
 
 /// Shared state: broadcast channels for relaying Telnyx webhook events to
 /// connected WebSocket clients.
@@ -139,6 +143,7 @@ fn router(web_root: String, state: AppState) -> Router {
         .route("/api/sms-opt-in", post(sms_opt_in_handler))
         .route("/api/sms-opt-out", post(sms_opt_out_dispatch))
         .route("/api/help", post(help_handler))
+        .route("/api/media/upload", post(media_upload_handler))
         .nest_service("/images", ServeDir::new(images_dir))
         .route("/web_hooks/telnyx", post(telnyx_webhook_handler))
         .route("/web_hooks/telnyx_fail", post(telnyx_fail_handler))
@@ -151,6 +156,133 @@ fn router(web_root: String, state: AppState) -> Router {
 
 async fn health_handler() -> &'static str {
     r#"{"status":"ok","server":"axum"}"#
+}
+
+fn media_upload_secret() -> Option<String> {
+    std::env::var("MEDIA_UPLOAD_SECRET")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+async fn media_upload_handler(
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Response {
+    if let Some(secret) = media_upload_secret() {
+        let provided = headers
+            .get("x-upload-secret")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if provided != secret {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(JsonError { error: "invalid upload secret".into() }),
+            )
+                .into_response();
+        }
+    }
+
+    let mut file_data: Option<(String, Vec<u8>)> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let filename = field
+            .file_name()
+            .unwrap_or("upload")
+            .to_string();
+        let ext = filename
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+
+        if !ALLOWED_EXTENSIONS.contains(&ext.as_str()) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(JsonError {
+                    error: format!(
+                        "unsupported file type '.{}'. Accepted: {}",
+                        ext,
+                        ALLOWED_EXTENSIONS.join(", ")
+                    ),
+                }),
+            )
+                .into_response();
+        }
+
+        let bytes = match field.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(JsonError { error: format!("read error: {}", e) }),
+                )
+                    .into_response();
+            }
+        };
+
+        if bytes.len() > MAX_UPLOAD_BYTES {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(JsonError {
+                    error: format!(
+                        "file too large ({} KB, max {} KB)",
+                        bytes.len() / 1024,
+                        MAX_UPLOAD_BYTES / 1024
+                    ),
+                }),
+            )
+                .into_response();
+        }
+
+        file_data = Some((ext, bytes.to_vec()));
+        break;
+    }
+
+    let (ext, data) = match file_data {
+        Some(d) => d,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(JsonError { error: "no 'file' field in multipart body".into() }),
+            )
+                .into_response();
+        }
+    };
+
+    let id = uuid::Uuid::new_v4();
+    let stored_name = format!("mms-{}.{}", id, ext);
+    let upload_dir = format!("{}/images/mms", web_root());
+
+    if let Err(e) = std::fs::create_dir_all(&upload_dir) {
+        tracing::error!("failed to create upload dir {}: {}", upload_dir, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(JsonError { error: "storage error".into() }),
+        )
+            .into_response();
+    }
+
+    let dest = format!("{}/{}", upload_dir, stored_name);
+    if let Err(e) = tokio::fs::write(&dest, &data).await {
+        tracing::error!("failed to write {}: {}", dest, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(JsonError { error: "write error".into() }),
+        )
+            .into_response();
+    }
+
+    let public_url = format!("https://phonegentic.ai/images/mms/{}", stored_name);
+    tracing::info!(file = %stored_name, bytes = data.len(), "media uploaded");
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "url": public_url })),
+    )
+        .into_response()
 }
 
 async fn telnyx_webhook_handler(

@@ -221,12 +221,21 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
     if (event.logicalKey == LogicalKeyboardKey.escape) {
       if (_dropdownOpen) {
-        setState(() => _dropdownOpen = false);
+        final hadNoSelection = _selectedContact == null;
+        setState(() {
+          _dropdownOpen = false;
+          _highlightedIndex = -1;
+          if (hadNoSelection) {
+            _textController!.text = '';
+            _autocompleteMatches = [];
+          }
+        });
         return true;
       }
       if (_textController!.text.isNotEmpty) {
         setState(() {
           _textController!.text = '';
+          _selectedContact = null;
           _autocompleteMatches = [];
         });
         return true;
@@ -658,9 +667,14 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _dismissAutocomplete() {
     if (_dropdownOpen) {
+      final hadNoSelection = _selectedContact == null;
       setState(() {
         _dropdownOpen = false;
         _highlightedIndex = -1;
+        if (hadNoSelection) {
+          _textController!.text = '';
+          _autocompleteMatches = [];
+        }
       });
     }
   }
@@ -1562,15 +1576,27 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _toggleSearchDropdown() {
     final opening = !_dropdownOpen;
-    setState(() => _dropdownOpen = opening);
+    final hadNoSelection = _selectedContact == null;
+    setState(() {
+      _dropdownOpen = opening;
+      if (!opening && hadNoSelection) {
+        _textController!.text = '';
+        _autocompleteMatches = [];
+      }
+    });
     if (opening) _focusNode.requestFocus();
   }
 
   void _handleSlashSearch() {
     if (_dropdownOpen) {
+      final hadNoSelection = _selectedContact == null;
       setState(() {
         _dropdownOpen = false;
         _highlightedIndex = -1;
+        if (hadNoSelection) {
+          _textController!.text = '';
+          _autocompleteMatches = [];
+        }
       });
       return;
     }
@@ -1950,6 +1976,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
             _audioMuted = false;
             _speakerOn = false;
             _textController?.text = '';
+            _selectedContact = null;
             _autocompleteMatches = [];
             _dropdownOpen = false;
           }

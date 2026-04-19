@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:path/path.dart' as p;
 
 import 'messaging_provider.dart';
@@ -17,6 +18,7 @@ class TelnyxMessagingProvider implements MessagingProvider {
   @override
   final String fromNumber;
   final String? messagingProfileId;
+  final String? mediaUploadSecret;
   final int pollingIntervalSeconds;
 
   Timer? _pollTimer;
@@ -27,6 +29,7 @@ class TelnyxMessagingProvider implements MessagingProvider {
     required this.apiKey,
     required this.fromNumber,
     this.messagingProfileId,
+    this.mediaUploadSecret,
     this.pollingIntervalSeconds = 15,
   });
 
@@ -44,7 +47,25 @@ class TelnyxMessagingProvider implements MessagingProvider {
 
   static const _maxMmsBytes = 1000000; // 1 MB Telnyx MMS limit
 
-  /// Upload a local file to Telnyx Media Storage and return the download URL.
+  static const _extToMime = <String, String>{
+    'png': 'image/png',
+    'jpg': 'image/jpg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'mp3': 'audio/mpeg',
+    'mp4': 'video/mp4',
+    'pdf': 'application/pdf',
+    'wav': 'audio/wav',
+    'xml': 'application/xml',
+    'vcf': 'text/vcard',
+    '3gpp': 'audio/3gpp',
+  };
+
+  static const _mediaUploadUrl = 'https://phonegentic.ai/api/media/upload';
+
+  /// Upload a local file to the phonegentic.ai server and return a public URL.
+  /// Telnyx MMS requires publicly accessible media URLs — their own Media
+  /// Storage API returns auth-gated download links that fail at send time.
   Future<String> _uploadLocalFile(String filePath) async {
     final file = File(filePath);
     if (!file.existsSync()) {
@@ -60,12 +81,30 @@ class TelnyxMessagingProvider implements MessagingProvider {
       );
     }
 
+    final ext = p.extension(filePath).replaceFirst('.', '').toLowerCase();
+    final mime = _extToMime[ext];
+    if (mime == null) {
+      throw TelnyxApiException(
+        422,
+        'Unsupported file type ".$ext". '
+            'Accepted: ${_extToMime.keys.join(', ')}.',
+      );
+    }
+    final contentType = http_parser.MediaType.parse(mime);
+    final cleanName =
+        'mms-${DateTime.now().millisecondsSinceEpoch}.$ext';
+
     final request =
-        http.MultipartRequest('POST', Uri.parse('$_baseUrl/media'));
-    request.headers['Authorization'] = 'Bearer $apiKey';
-    request.fields['ttl_secs'] = '3600';
-    request.fields['media_name'] = 'mms-${DateTime.now().millisecondsSinceEpoch}-${p.basename(filePath)}';
-    request.files.add(await http.MultipartFile.fromPath('media', filePath));
+        http.MultipartRequest('POST', Uri.parse(_mediaUploadUrl));
+    if (mediaUploadSecret != null && mediaUploadSecret!.isNotEmpty) {
+      request.headers['x-upload-secret'] = mediaUploadSecret!;
+    }
+    request.files.add(await http.MultipartFile.fromPath(
+      'file',
+      filePath,
+      filename: cleanName,
+      contentType: contentType,
+    ));
 
     debugPrint(
         '[TelnyxMessaging] Uploading media: ${p.basename(filePath)} ($fileSize bytes)');
@@ -79,11 +118,10 @@ class TelnyxMessagingProvider implements MessagingProvider {
       throw TelnyxApiException(resp.statusCode, resp.body);
     }
 
-    final data = jsonDecode(resp.body)['data'] as Map<String, dynamic>;
-    final mediaName = data['media_name'] as String;
-    final downloadUrl = '$_baseUrl/media/$mediaName/download';
-    debugPrint('[TelnyxMessaging] Media uploaded → $downloadUrl');
-    return downloadUrl;
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final publicUrl = data['url'] as String;
+    debugPrint('[TelnyxMessaging] Media uploaded → $publicUrl');
+    return publicUrl;
   }
 
   /// Resolve any local file paths in [urls] by uploading them to Telnyx.

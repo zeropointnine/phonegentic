@@ -171,6 +171,7 @@ ssh root@phonegentic.ai "journalctl -u static_server -f"
 | `NOTIFY_EMAIL`    | *(unset)*                      | Destination address for form alerts  |
 | `SMS_LOG_FILE`    | `/var/log/sms_submissions.log` | Fallback log for SMS opt-in/out      |
 | `HELP_LOG_FILE`   | `/var/log/help_submissions.log`| Fallback log for help form           |
+| `MEDIA_UPLOAD_SECRET` | *(unset — open)* | Shared secret for `/api/media/upload`; set to lock it down |
 
 ---
 
@@ -186,6 +187,7 @@ ssh root@phonegentic.ai "journalctl -u static_server -f"
 | POST   | `/api/sms-opt-in`       | SMS opt-in form                                      |
 | POST   | `/api/sms-opt-out`      | SMS opt-out form                                     |
 | POST   | `/api/help`             | Help/contact form                                    |
+| POST   | `/api/media/upload`     | MMS media upload → public URL (multipart, auth via `x-upload-secret`) |
 | GET    | `/*`                    | Static files from `WEB_ROOT`                         |
 
 ---

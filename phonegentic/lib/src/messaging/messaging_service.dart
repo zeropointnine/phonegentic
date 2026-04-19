@@ -132,6 +132,9 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
         messagingProfileId: telnyxConfig.messagingProfileId.isEmpty
             ? null
             : telnyxConfig.messagingProfileId,
+        mediaUploadSecret: telnyxConfig.mediaUploadSecret.isEmpty
+            ? null
+            : telnyxConfig.mediaUploadSecret,
         pollingIntervalSeconds: telnyxConfig.pollingIntervalSeconds,
       );
     } else if (twilioConfig.isConfigured) {
@@ -148,6 +151,9 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
         messagingProfileId: telnyxConfig.messagingProfileId.isEmpty
             ? null
             : telnyxConfig.messagingProfileId,
+        mediaUploadSecret: telnyxConfig.mediaUploadSecret.isEmpty
+            ? null
+            : telnyxConfig.mediaUploadSecret,
         pollingIntervalSeconds: telnyxConfig.pollingIntervalSeconds,
       );
     }

@@ -242,6 +242,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   final _telnyxMsgKeyCtrl = TextEditingController();
   final _telnyxMsgFromCtrl = TextEditingController();
   final _telnyxMsgProfileCtrl = TextEditingController();
+  final _telnyxMsgUploadSecretCtrl = TextEditingController();
   final _twilioSidCtrl = TextEditingController();
   final _twilioTokenCtrl = TextEditingController();
   final _twilioFromCtrl = TextEditingController();
@@ -268,6 +269,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _telnyxMsgKeyCtrl.dispose();
     _telnyxMsgFromCtrl.dispose();
     _telnyxMsgProfileCtrl.dispose();
+    _telnyxMsgUploadSecretCtrl.dispose();
     _twilioSidCtrl.dispose();
     _twilioTokenCtrl.dispose();
     _twilioFromCtrl.dispose();
@@ -314,6 +316,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _telnyxMsgKeyCtrl.text = t.apiKey;
       _telnyxMsgFromCtrl.text = t.fromNumber;
       _telnyxMsgProfileCtrl.text = t.messagingProfileId;
+      _telnyxMsgUploadSecretCtrl.text = t.mediaUploadSecret;
       _twilioSidCtrl.text = tw.accountSid;
       _twilioTokenCtrl.text = tw.authToken;
       _twilioFromCtrl.text = tw.fromNumber;
@@ -803,6 +806,12 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                       'Optional', (val) {
                     _updateTelnyxMsg(
                         _telnyxMsg.copyWith(messagingProfileId: val));
+                  }),
+                  _divider(),
+                  _buildKeyField(
+                      'MMS Upload Secret', _telnyxMsgUploadSecretCtrl, (val) {
+                    _updateTelnyxMsg(
+                        _telnyxMsg.copyWith(mediaUploadSecret: val));
                   }),
                   _buildTelnyxMsgTestRow(),
                 ] else ...[
