@@ -87,6 +87,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
   DateTime? _inboundRingStart;
   Timer? _forkGraceTimer;
   static const _forkGraceMs = 4000;
+  Timer? _autoAnswerTimer;
+  bool _pendingAutoAnswer = false;
   // Stable key for the CallScreenWidget so fork replacements don't tear down
   // and recreate the widget (which resets the call timer and flickers the UI).
   String? _logicalCallKey;
@@ -115,6 +117,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
   @override
   void dispose() {
     _forkGraceTimer?.cancel();
+    _autoAnswerTimer?.cancel();
     HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _focusNode.dispose();
     _textController?.dispose();
@@ -1897,13 +1900,18 @@ class _MyDialPadWidget extends State<DialPadWidget>
           _handleInboundRing(call);
         } else if (isForkReplacement) {
           debugPrint('[Dialpad] Fork coalesced for $_inboundRingCaller');
+          if (_pendingAutoAnswer) {
+            _attemptAutoAnswer();
+          }
         }
         break;
       case CallStateEnum.CONFIRMED:
         _stopRinging();
         _forkGraceTimer?.cancel();
+        _autoAnswerTimer?.cancel();
         _inboundRingCaller = null;
         _forkGraceTimer = null;
+        _pendingAutoAnswer = false;
         context.read<AgentService>().forkCoalescing = false;
         conf.updateLegState(call.id!, LegState.active);
         _cancelConferenceTimeout(call.id!);
@@ -2086,17 +2094,34 @@ class _MyDialPadWidget extends State<DialPadWidget>
       _applyInboundJobFunction(matchedId, jf, agent);
     }
 
-    if (ringtone.agentAutoAnswer && _calls.length <= 1) {
-      Future.delayed(const Duration(milliseconds: 800), () {
-        if (!mounted) return;
-        if (call.state == CallStateEnum.CALL_INITIATION ||
-            call.state == CallStateEnum.PROGRESS) {
-          debugPrint('[Dialpad] Auto-answer firing for ${call.remote_identity}');
-          CallScreenWidget.acceptCall(call, helper!);
-          _scheduleAutoAnswerSafetyCheck(call);
-        }
-      });
+    if ((matchedId != null || ringtone.agentAutoAnswer) &&
+        _calls.length <= 1) {
+      _pendingAutoAnswer = true;
+      _attemptAutoAnswer();
     }
+  }
+
+  /// Cancel any pending auto-answer timer and start a fresh one targeting
+  /// the current focused call. Called on initial inbound ring and again
+  /// each time a SIP fork replacement arrives, so the timer always targets
+  /// a live call object.
+  void _attemptAutoAnswer() {
+    _autoAnswerTimer?.cancel();
+    _autoAnswerTimer = Timer(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      final call = _focusedCall;
+      if (call == null || helper == null) return;
+      if (call.state != CallStateEnum.CALL_INITIATION &&
+          call.state != CallStateEnum.PROGRESS) {
+        debugPrint(
+            '[Dialpad] Auto-answer skipped — state=${call.state}');
+        return;
+      }
+      debugPrint(
+          '[Dialpad] Auto-answer firing for ${call.remote_identity}');
+      CallScreenWidget.acceptCall(call, helper!);
+      _scheduleAutoAnswerSafetyCheck(call);
+    });
   }
 
   /// Safety net: if the SIP CONFIRMED/ACCEPTED callback was lost after
@@ -2171,9 +2196,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _endInboundRingSession() {
     _forkGraceTimer?.cancel();
+    _autoAnswerTimer?.cancel();
     _inboundRingCaller = null;
     _inboundRingStart = null;
     _forkGraceTimer = null;
+    _pendingAutoAnswer = false;
     _logicalCallKey = null;
     try {
       final agent = context.read<AgentService>();
