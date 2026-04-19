@@ -3187,6 +3187,22 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
+    // Suppress stray responses during pre-connect phases (ringing, answered,
+    // settling). The pre-greeting mechanism handles the actual greeting; any
+    // other LLM output (e.g. from a lingering tool chain) should not appear
+    // in the UI or be spoken.
+    if ((_callPhase.isPreConnect ||
+            _callPhase == CallPhase.answered ||
+            _callPhase == CallPhase.settling) &&
+        _callPhase != CallPhase.idle) {
+      if (event.isFinal) {
+        debugPrint('[AgentService] Response suppressed (pre-connect '
+            '${_callPhase.name}): '
+            '"${event.text.length > 60 ? event.text.substring(0, 60) : event.text}..."');
+      }
+      return;
+    }
+
     if (event.isFinal) {
       debugPrint('[AgentService] Response final: '
           '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
@@ -4617,9 +4633,9 @@ class AgentService extends ChangeNotifier {
 
     if (_connectedAt != null) {
       final elapsed = DateTime.now().difference(_connectedAt!).inSeconds;
-      if (elapsed < 20) {
+      if (elapsed < 5) {
         return 'Call just connected ${elapsed}s ago. '
-            'Do NOT hang up autonomously — only the host can decide when to end the call.';
+            'Wait a moment before ending the call.';
       }
     }
 
@@ -6148,6 +6164,7 @@ class AgentService extends ChangeNotifier {
       _whisper.stopResponseAudio();
       _whisper.inCallMode = false;
       _activeTtsEndGeneration();
+      _textAgent?.inCallMode = false;
       _textAgent?.reset();
 
       // Clean up any agent-initiated voice sampling still in progress
@@ -6189,6 +6206,7 @@ class AgentService extends ChangeNotifier {
 
     if (phase == CallPhase.settling) {
       _whisper.inCallMode = true;
+      _textAgent?.inCallMode = true;
       _startSettleTimer();
       _activeTtsWarmUp();
       comfortNoiseService?.startPlayback(_bootContext.comfortNoisePath);

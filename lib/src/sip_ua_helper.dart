@@ -405,6 +405,10 @@ class SIPUAHelper extends EventManager {
           'OfferToReceiveVideo': !voiceonly,
         },
         'optional': <dynamic>[],
+        if (_uaSettings?.requireHdCodecs == true)
+          'offerModifiers': <Future<RTCSessionDescription> Function(RTCSessionDescription)>[
+            _stripNarrowbandCodecs,
+          ],
       },
       'rtcAnswerConstraints': <String, dynamic>{
         'mandatory': <String, dynamic>{
@@ -422,6 +426,45 @@ class SIPUAHelper extends EventManager {
       'sessionTimersExpires': 120
     };
     return defaultOptions;
+  }
+
+  /// SDP offer modifier that removes PCMU (PT 0) and PCMA (PT 8) so the
+  /// remote must negotiate a wideband codec (Opus / G722).
+  static Future<RTCSessionDescription> _stripNarrowbandCodecs(
+      RTCSessionDescription desc) async {
+    final sdp = desc.sdp;
+    if (sdp == null) return desc;
+
+    final lines = sdp.split('\r\n');
+    final out = <String>[];
+    const narrowband = {'0', '8'}; // PCMU, PCMA payload types
+
+    for (final line in lines) {
+      if (line.startsWith('m=audio ')) {
+        final parts = line.split(' ');
+        // m=audio <port> <proto> <pt1> <pt2> ...
+        if (parts.length > 3) {
+          final filtered = [
+            ...parts.sublist(0, 3),
+            ...parts.sublist(3).where((pt) => !narrowband.contains(pt)),
+          ];
+          out.add(filtered.join(' '));
+          continue;
+        }
+      }
+      // Drop a=rtpmap / a=fmtp lines for narrowband PTs
+      if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:')) {
+        final colon = line.indexOf(':');
+        final space = line.indexOf(' ', colon);
+        final pt = space > 0
+            ? line.substring(colon + 1, space)
+            : line.substring(colon + 1);
+        if (narrowband.contains(pt)) continue;
+      }
+      out.add(line);
+    }
+
+    return RTCSessionDescription(out.join('\r\n'), desc.type);
   }
 
   bool setUAParam(String parameter, dynamic value) {
@@ -988,6 +1031,11 @@ class UaSettings {
   /// trying to connect, so that they're already available for inspection
   /// when RTCPeerConnection.setLocalDescription() is called.
   int iceCandidatePoolSize = 0;
+
+  /// When true, PCMU (G.711µ) and PCMA (G.711A) are stripped from outbound
+  /// SDP offers, forcing the remote side to negotiate a wideband codec
+  /// (Opus or G722). Calls to endpoints that only support G.711 will fail.
+  bool requireHdCodecs = false;
 
   /// Controls which kind of messages are to be sent to keep a SIP session
   /// alive.

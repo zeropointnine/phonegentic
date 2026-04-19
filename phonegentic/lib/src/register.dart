@@ -37,6 +37,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
   final Map<String, String> _wsExtraHeaders = {};
 
   ConferenceConfig _conf = const ConferenceConfig();
+  bool _requireHdCodecs = false;
 
   late SharedPreferences _preferences;
   late RegistrationState _registerState;
@@ -100,6 +101,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
       if (defaultUser.selectedTransport == TransportType.WS) {
         _selectedTransport = TransportType.WS;
       }
+      _requireHdCodecs = _preferences.getBool('require_hd_codecs') ?? false;
     });
     _loadConferenceConfig();
   }
@@ -125,6 +127,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
     _preferences.setString('display_name', _displayNameController.text);
     _preferences.setString('password', _passwordController.text);
     _preferences.setString('auth_user', _authorizationUserController.text);
+    _preferences.setBool('require_hd_codecs', _requireHdCodecs);
   }
 
   @override
@@ -170,6 +173,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
       displayName: _displayNameController.text,
       password: _passwordController.text,
       authUser: _authorizationUserController.text,
+      requireHdCodecs: _requireHdCodecs,
     ));
   }
 
@@ -346,6 +350,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   ]),
                   const SizedBox(height: 16),
                   _buildConferenceCard(),
+                  const SizedBox(height: 16),
+                  _buildHdCodecCard(),
                   if (!kIsWeb) ...[
                     const SizedBox(height: 16),
                     _buildTransportSelector(),
@@ -632,6 +638,86 @@ class _MyRegisterWidget extends State<RegisterWidget>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildHdCodecCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'AUDIO QUALITY',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: _requireHdCodecs
+                        ? AppColors.accent.withValues(alpha: 0.12)
+                        : AppColors.card,
+                  ),
+                  child: Icon(Icons.graphic_eq_rounded,
+                      size: 17,
+                      color: _requireHdCodecs
+                          ? AppColors.accent
+                          : AppColors.textTertiary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Require HD Codecs',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _requireHdCodecs
+                            ? 'Opus / G722 only — calls fail if unsupported'
+                            : 'Allow narrowband fallback (PCMU / PCMA)',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                    ],
+                  ),
+                ),
+                Switch.adaptive(
+                  value: _requireHdCodecs,
+                  activeColor: AppColors.accent,
+                  onChanged: (v) {
+                    setState(() => _requireHdCodecs = v);
+                    _preferences.setBool('require_hd_codecs', v);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 

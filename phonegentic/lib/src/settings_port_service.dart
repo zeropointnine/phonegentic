@@ -760,6 +760,7 @@ class SettingsPortService {
       'display_name': prefs.getString('display_name') ?? '',
       'password': prefs.getString('password') ?? '',
       'auth_user': prefs.getString('auth_user') ?? '',
+      'require_hd_codecs': prefs.getBool('require_hd_codecs') ?? false,
       'conference': {
         'provider': conf.provider.index,
         'basic_supports_update': conf.basicSupportsUpdate,
@@ -903,6 +904,8 @@ class SettingsPortService {
     await prefs.setString('display_name', data['display_name'] as String? ?? '');
     await prefs.setString('password', data['password'] as String? ?? '');
     await prefs.setString('auth_user', data['auth_user'] as String? ?? '');
+    await prefs.setBool(
+        'require_hd_codecs', data['require_hd_codecs'] as bool? ?? false);
 
     final conf = data['conference'] as Map<String, dynamic>?;
     if (conf != null) {

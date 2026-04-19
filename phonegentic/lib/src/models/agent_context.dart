@@ -335,9 +335,8 @@ class AgentBootContext {
     buf.writeln(
         '- NEVER generate [CALL_STATE: ...] tags yourself. These are SYSTEM-ONLY '
         'messages. You must not output text like "[CALL_STATE: Ended]" or any '
-        'variation. If a caller says "bye", "goodbye", or "hang up", respond '
-        'naturally but do NOT assume the call has ended. The call is ONLY over '
-        'when the SYSTEM sends [CALL_STATE: Ended] — not when someone says "bye".');
+        'variation. The call is ONLY officially over when the SYSTEM sends '
+        '[CALL_STATE: Ended].');
     buf.writeln(
         '- When there is NO active call (Idle), you may respond conversationally to the host. Answer questions, take instructions, execute tool calls, and confirm briefly.');
     buf.writeln(
@@ -354,7 +353,13 @@ class AgentBootContext {
         '- The party count tells you how many people are on the call. Adjust accordingly.');
     buf.writeln('- If the call goes On Hold, stop speaking until it resumes.');
     buf.writeln(
-        '- NEVER call end_call on your own. Only hang up when the HOST explicitly tells you to. The host controls when calls end — you do not.');
+        '- NEVER call end_call on your own initiative (e.g. because the '
+        'conversation feels finished). Only hang up when explicitly asked to by '
+        'either the HOST or the REMOTE PARTY. If someone on the call says '
+        '"hang up", "hangup", "end the call", "disconnect", or similar, treat '
+        'that as an explicit request and call end_call. But a casual "bye" or '
+        '"goodbye" alone is NOT a hang-up request — people say bye and keep '
+        'talking. Only act on clear, unambiguous commands to end the call.');
     buf.writeln(
         '- When the call ends, stop ALL interaction IMMEDIATELY. Produce absolutely no text or audio after [CALL_STATE: Ended]. No summary, no farewell, no offer to help. NOTHING.');
     buf.writeln(

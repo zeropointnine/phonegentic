@@ -44,6 +44,11 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private static let whisperSampleRate: Double = 16000
     private static let minSamplesForTranscription = 16000 // 1s at 16kHz
 
+    /// Tail of the previous transcription buffer, prepended to the next buffer
+    /// so speech straddling a boundary isn't lost. 500ms at 24kHz PCM16 = 24000 bytes.
+    private var carryOverBuffer = Data()
+    private static let carryOverBytes = Int(inputSampleRate) * 2 / 2 // 500ms of PCM16
+
     init(messenger: FlutterBinaryMessenger) {
         methodChannel = FlutterMethodChannel(
             name: "com.agentic_ai/whisperkit_stt",
@@ -167,6 +172,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         consecutiveAneFailures = 0
         bufferLock.lock()
         audioBuffer = Data()
+        carryOverBuffer = Data()
         bufferLock.unlock()
 
         transcriptionTimer = Timer.scheduledTimer(
@@ -203,7 +209,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             bufferLock.unlock()
             return
         }
-        let audioData = audioBuffer
+        // Prepend carry-over from the previous transcription so speech at
+        // buffer boundaries isn't lost (first couple of words).
+        let audioData = carryOverBuffer + audioBuffer
         audioBuffer = Data()
         bufferLock.unlock()
 
@@ -214,6 +222,14 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             audioBuffer.insert(contentsOf: audioData, at: 0)
             bufferLock.unlock()
             return
+        }
+
+        // Save the tail as carry-over for the next cycle.
+        let co = WhisperKitChannel.carryOverBytes
+        if audioData.count > co {
+            carryOverBuffer = audioData.suffix(co)
+        } else {
+            carryOverBuffer = audioData
         }
 
         isProcessing = true
@@ -344,6 +360,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
 
         bufferLock.lock()
         audioBuffer = Data()
+        carryOverBuffer = Data()
         bufferLock.unlock()
 
         NSLog("[WhisperKit] Transcription stopped")

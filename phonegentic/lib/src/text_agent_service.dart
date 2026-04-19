@@ -31,6 +31,12 @@ class TextAgentService {
   final List<String> _pendingContext = [];
   Timer? _debounceTimer;
 
+  /// True when `addTranscript` has added at least one real speech turn since
+  /// the last flush. The `_respond()` finally-block only auto-triggers a new
+  /// response when this is true, preventing system-context-only accumulation
+  /// (call-state changes, transfer rules) from causing the agent to monologue.
+  bool _hasTranscriptPending = false;
+
   HttpClient? _httpClient;
   bool _responding = false;
   bool _pendingRespond = false;
@@ -47,8 +53,10 @@ class TextAgentService {
 
   bool _disposed = false;
 
-  static const _debounceMs = 1500;
+  static const _defaultDebounceMs = 1500;
+  static const _inCallDebounceMs = 3500;
   static const _maxHistory = 60;
+  int _debounceMs = _defaultDebounceMs;
 
   /// Matches fabricated transcript lines the LLM may hallucinate, e.g.
   /// `[Remote Party 1]: Hello?` or `[Host]: Sure`.  Only the SYSTEM
@@ -79,9 +87,15 @@ class TextAgentService {
   void updateInstructions(String instructions) =>
       _systemInstructions = instructions;
 
+  /// Use longer debounce during active calls so remote-party speech
+  /// has time to accumulate before the LLM fires a response.
+  set inCallMode(bool value) =>
+      _debounceMs = value ? _inCallDebounceMs : _defaultDebounceMs;
+
   /// Buffer a transcript line; triggers a debounced flush → LLM call.
   void addTranscript(String speakerLabel, String text) {
     _pendingContext.add('[$speakerLabel]: $text');
+    _hasTranscriptPending = true;
     _scheduleFlush();
   }
 
@@ -97,6 +111,7 @@ class TextAgentService {
   void clearPendingContext() {
     _debounceTimer?.cancel();
     _pendingContext.clear();
+    _hasTranscriptPending = false;
   }
 
   /// Cancel the in-flight LLM response (if any). The streaming loop in
@@ -161,12 +176,13 @@ class TextAgentService {
       content: [LlmTextBlock(_pendingContext.join('\n'))],
     ));
     _pendingContext.clear();
+    _hasTranscriptPending = false;
   }
 
   void _scheduleFlush() {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(
-      const Duration(milliseconds: _debounceMs),
+      Duration(milliseconds: _debounceMs),
       _flushAndRespond,
     );
   }
@@ -207,7 +223,7 @@ class TextAgentService {
         _pendingRespond = false;
         debugPrint('[TextAgentService] _respond: processing queued request');
         unawaited(_respond());
-      } else if (_pendingContext.isNotEmpty) {
+      } else if (_pendingContext.isNotEmpty && _hasTranscriptPending) {
         _scheduleFlush();
       }
     }
@@ -899,6 +915,8 @@ class TextAgentService {
     _responding = false;
     _pendingRespond = false;
     _cancelRequested = false;
+    _debounceMs = _defaultDebounceMs;
+    _hasTranscriptPending = false;
   }
 
   void dispose() {

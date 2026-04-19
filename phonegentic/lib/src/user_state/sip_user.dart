@@ -10,6 +10,7 @@ class SipUser {
   final String authUser;
   final TransportType selectedTransport;
   final Map<String, String>? wsExtraHeaders;
+  final bool requireHdCodecs;
 
   SipUser({
     required this.port,
@@ -21,6 +22,7 @@ class SipUser {
     this.wsExtraHeaders,
     this.wsUrl,
     this.sipUri,
+    this.requireHdCodecs = false,
   });
 
   @override
@@ -35,11 +37,12 @@ class SipUser {
         other.wsExtraHeaders == wsExtraHeaders &&
         other.password == password &&
         other.authUser == authUser &&
-        other.host == host;
+        other.host == host &&
+        other.requireHdCodecs == requireHdCodecs;
   }
 
   @override
   int get hashCode {
-    return Object.hashAll([port, displayName, wsUrl, sipUri, password, wsExtraHeaders, selectedTransport, authUser, host]);
+    return Object.hashAll([port, displayName, wsUrl, sipUri, password, wsExtraHeaders, selectedTransport, authUser, host, requireHdCodecs]);
   }
 }

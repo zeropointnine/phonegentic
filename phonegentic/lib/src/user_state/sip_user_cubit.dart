@@ -33,6 +33,7 @@ class SipUserCubit extends Cubit<SipUser?> {
     settings.displayName = user.displayName;
     settings.userAgent = 'Dart SIP Client v1.0.0';
     settings.dtmfMode = DtmfMode.RFC2833;
+    settings.requireHdCodecs = user.requireHdCodecs;
     settings.contact_uri = cleanSipUri != null ? 'sip:$cleanSipUri' : null;
 
     emit(user);

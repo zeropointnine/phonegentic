@@ -611,11 +611,13 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
     /// Consecutive 10ms frames where a pure tone was detected.
     private var toneFrameCount: Int = 0
 
-    /// Minimum consecutive tone frames to confirm a beep (80 × 10ms = 800ms).
-    /// Voicemail beeps are typically 0.5–2s.  The previous 400ms threshold
-    /// caused false positives on sustained vowels from male speakers whose
-    /// fundamental (~100-150 Hz) has strong harmonics near 440/480 Hz.
-    private static let toneConfirmFrames = 80
+    /// Minimum consecutive tone frames to confirm a beep (120 × 10ms = 1200ms).
+    /// Voicemail beeps are typically 0.5–2s.  On PCMU (8 kHz) calls, the
+    /// limited frequency resolution causes male-voice harmonics to concentrate
+    /// energy near 440/480 Hz, triggering false positives.  1200ms of
+    /// sustained tone virtually eliminates speech false-positives while still
+    /// catching real voicemail beeps (typically 0.8–2s).
+    private static let toneConfirmFrames = 120
 
     /// True while a confirmed tone is ongoing — prevents duplicate callbacks.
     private var toneActive = false
@@ -727,10 +729,11 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
         var isTone = false
         for freq in goertzelFreqs {
             let mag = goertzelMagnitude(buf: buf, frames: frames, freq: freq, rate: rate)
-            // Pure voicemail beeps concentrate >90% of energy at one frequency.
-            // Speech harmonics spread energy across multiple bins — 80% threshold
-            // rejects them while still catching real beeps reliably.
-            if mag > totalEnergy * 0.80 {
+            // Pure voicemail beeps concentrate >95% of energy at one frequency.
+            // On PCMU (8 kHz) the coarse FFT bins allow speech harmonics to
+            // exceed 80% — 92% threshold eliminates these false positives
+            // while reliably catching real tones.
+            if mag > totalEnergy * 0.92 {
                 isTone = true
                 break
             }
