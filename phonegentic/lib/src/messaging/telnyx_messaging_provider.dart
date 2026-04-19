@@ -381,8 +381,6 @@ class TelnyxMessagingProvider implements MessagingProvider {
       direction: SmsDirection.inbound,
       pageSize: 50,
     );
-    debugPrint('[TelnyxMessaging] Poll found ${mdrMsgs.length} inbound MDR records');
-
     int newCount = 0;
     for (final mdr in mdrMsgs) {
       final id = mdr.providerId;

@@ -814,7 +814,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             }
 
             diagCounter += 1
-            if diagCounter % 50 == 1 {
+            if diagCounter <= 5 || diagCounter % 500 == 1 {
                 NSLog("[AudioTap] flush: mode=direct bytes=%d sink=%@ playing=%@",
                       dataToSend?.count ?? 0,
                       eventSink != nil ? "yes" : "NO",

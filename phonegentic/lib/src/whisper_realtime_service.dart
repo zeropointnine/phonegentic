@@ -60,6 +60,17 @@ class WhisperRealtimeService {
   DateTime _ttsSuppressedUntil = DateTime(0);
   static const int _ttsEchoCooldownMs = 300;
 
+  // Client-side silence gate: avoid sending near-silent audio to the API.
+  // Once silence persists for _silenceGateFrames consecutive chunks the gate
+  // closes and we stop sending until energy rises above the threshold or VAD
+  // indicates speech.  A keepalive frame is sent every _keepAliveFrames to
+  // prevent the WebSocket from timing out.
+  static const double _silenceRmsThreshold = 0.008;
+  static const int _silenceGateFrames = 20; // ~2 s at 100 ms chunks
+  static const int _keepAliveFrames = 100; // ~10 s
+  int _consecutiveSilentFrames = 0;
+  int _framesSinceLastSend = 0;
+
   /// When true, the native layer strips mic echo and sends remote-only audio
   /// during TTS playback, so Flutter-level suppression is unnecessary.
   bool inCallMode = false;
@@ -1119,11 +1130,24 @@ class WhisperRealtimeService {
   void sendAudio(Uint8List pcm16Mono24kHz) {
     _emitAudioLevel(pcm16Mono24kHz);
     if (muted || !_connected || _ws == null) return;
-    // In call mode, native flushBuffers strips mic echo and sends
-    // remote-only audio during TTS — no Flutter-level suppression needed.
-    // In direct mode, native blocks the event sink entirely via
-    // isPlayingResponse, so _ttsSuppressed is the safety net.
     if (!inCallMode && _ttsSuppressed) return;
+
+    // Client-side silence gate: compute RMS and suppress silence.
+    final rms = _computeRms(pcm16Mono24kHz);
+    final isSilent = rms < _silenceRmsThreshold;
+
+    if (isSilent && !_vadActive) {
+      _consecutiveSilentFrames++;
+      _framesSinceLastSend++;
+      if (_consecutiveSilentFrames >= _silenceGateFrames &&
+          _framesSinceLastSend < _keepAliveFrames) {
+        return;
+      }
+    } else {
+      _consecutiveSilentFrames = 0;
+    }
+    _framesSinceLastSend = 0;
+
     _audioSendCount++;
     if (_audioSendCount == 1 || _audioSendCount == 50 || _audioSendCount % 500 == 0) {
       debugPrint('[Whisper] sendAudio #$_audioSendCount: ${pcm16Mono24kHz.length} bytes '
@@ -1134,6 +1158,18 @@ class WhisperRealtimeService {
       'type': 'input_audio_buffer.append',
       'audio': b64,
     });
+  }
+
+  static double _computeRms(Uint8List pcm16) {
+    if (pcm16.length < 4) return 0.0;
+    final byteData = ByteData.sublistView(pcm16);
+    final sampleCount = pcm16.length ~/ 2;
+    double sumSquares = 0;
+    for (int i = 0; i < sampleCount; i++) {
+      final sample = byteData.getInt16(i * 2, Endian.little) / 32768.0;
+      sumSquares += sample * sample;
+    }
+    return sqrt(sumSquares / sampleCount);
   }
 
   void _emitAudioLevel(Uint8List pcm16) {

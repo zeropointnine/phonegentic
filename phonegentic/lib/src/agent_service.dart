@@ -470,6 +470,7 @@ class AgentService extends ChangeNotifier {
   Timer? _settleTimer;
   Timer? _preGreetTimer;
   int _ivrHitsInSettle = 0;
+  int _hallucinationDropCount = 0;
   final List<TranscriptionEvent> _settleTranscripts = [];
   final List<String> _settleAccumulatedTexts = [];
   static const _settleWindowInboundMs = 1000;
@@ -2793,10 +2794,15 @@ class AgentService extends ChangeNotifier {
 
     // Drop common Whisper hallucination artifacts before any further processing.
     if (_isWhisperHallucination(event.text.trim())) {
-      debugPrint(
-          '[AgentService] Whisper hallucination dropped: "${event.text.trim()}"');
+      _hallucinationDropCount++;
+      if (_hallucinationDropCount <= 3 || _hallucinationDropCount % 25 == 0) {
+        debugPrint(
+            '[AgentService] Whisper hallucination dropped: "${event.text.trim()}" '
+            '(total: $_hallucinationDropCount)');
+      }
       return;
     }
+    _hallucinationDropCount = 0;
 
     // Suppress transcripts while call is still setting up — but in split
     // pipeline mode or local STT mode, allow transcripts when idle so the

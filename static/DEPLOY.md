@@ -26,7 +26,7 @@ scp static/static_server/src/main.rs root@phonegentic.ai:/root/phonegentic/stati
 ```
 
 Tail server
-```
+```bash 
 ssh root@phonegentic.ai "journalctl -u static_server -f"
 ```
 
