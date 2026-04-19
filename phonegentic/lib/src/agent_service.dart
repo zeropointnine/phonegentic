@@ -130,6 +130,7 @@ class AgentService extends ChangeNotifier {
   String? _remoteDisplayName;
   String? _localIdentity;
   bool _isOutbound = true;
+  bool _callDialPending = false;
   String? _lastDialedNumber;
   String? _priorCallTranscript;
 
@@ -2513,11 +2514,25 @@ class AgentService extends ChangeNotifier {
     r'[\u3000-\u9FFF\uAC00-\uD7AF\u0400-\u04FF\u0600-\u06FF\u0E00-\u0E7F]',
   );
 
-  /// Bracketed Whisper tags for non-speech segments (but not ♪ lyrics ♪).
-  static final RegExp _whisperBracketedTagRe = RegExp(
-    r'^\[(BLANK_AUDIO|BLANK audio|blank_audio|Music|Silence|Applause|Laughter|'
+  /// Non-speech segment tags in brackets or parentheses.
+  static const String _nonSpeechTagPattern =
+    r'BLANK_AUDIO|BLANK audio|blank_audio|Music|Silence|Applause|Laughter|'
     r'NOISE|noise|CLICK|click|clicking|typing|COUGH|cough|Sighs?|sighs?|'
-    r'breathing|BREATHING|sneezing|clearing throat)\]$',
+    r'breathing|BREATHING|sneezing|clearing throat|'
+    r'BEEP|beep|RING|ring|ringing|TONE|tone|dial tone|busy signal|'
+    r'phone ringing|crickets chirping|crickets|inaudible';
+
+  /// Matches `[tag]` or `(tag)` — full-transcript non-speech marker.
+  static final RegExp _whisperBracketedTagRe = RegExp(
+    r'^[\[\(](' + _nonSpeechTagPattern + r')[\]\)]$',
+    caseSensitive: false,
+  );
+
+  /// Matches leading `(tag)` prefix that WhisperKit sometimes prepends to
+  /// real speech, e.g. "(crickets chirping) Yes". Used to strip artifacts
+  /// before further processing.
+  static final RegExp _whisperParenPrefixRe = RegExp(
+    r'^\(' + _nonSpeechTagPattern + r'\)\s*',
     caseSensitive: false,
   );
 
@@ -2791,6 +2806,17 @@ class AgentService extends ChangeNotifier {
   void _onTranscript(TranscriptionEvent event) async {
     if (!event.isFinal || event.text.trim().isEmpty) return;
     if (_muted) return;
+
+    // Strip parenthetical non-speech prefixes WhisperKit sometimes injects,
+    // e.g. "(crickets chirping) Yes" → "Yes".
+    final cleaned = event.text.trim().replaceAll(_whisperParenPrefixRe, '');
+    if (cleaned != event.text.trim() && cleaned.isNotEmpty) {
+      event = TranscriptionEvent(
+        text: cleaned,
+        isFinal: event.isFinal,
+        itemId: event.itemId,
+      );
+    }
 
     // Drop common Whisper hallucination artifacts before any further processing.
     if (_isWhisperHallucination(event.text.trim())) {
@@ -3077,6 +3103,17 @@ class AgentService extends ChangeNotifier {
   void _appendStreamingResponse(ResponseTextEvent event) {
     if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) return;
 
+    // Dial pending: SIP events haven't promoted the phase yet but a call is
+    // being placed.  Drop the response entirely so the LLM doesn't burn its
+    // greeting before the call connects.
+    if (_callDialPending) {
+      if (event.isFinal) {
+        debugPrint('[AgentService] Response suppressed during dial-pending: '
+            '"${event.text.length > 60 ? event.text.substring(0, 60) : event.text}..."');
+      }
+      return;
+    }
+
     // The LLM must never generate [CALL_STATE: ...] tags — those are
     // system-only. Strip them to prevent hallucinated state changes from
     // poisoning the conversation history.
@@ -3226,11 +3263,14 @@ class AgentService extends ChangeNotifier {
     }
 
     // Suppress TTS during pre-connect and settling phases so the agent
-    // doesn't talk over auto-attendants / IVR greetings.
-    final suppressTts = (_callPhase.isPreConnect ||
-            _callPhase == CallPhase.answered ||
-            _callPhase == CallPhase.settling) &&
-        _callPhase != CallPhase.idle;
+    // doesn't talk over auto-attendants / IVR greetings.  Also suppress
+    // when a dial is pending — SIP events haven't arrived yet but the
+    // agent must not speak until the call connects.
+    final suppressTts = _callDialPending ||
+        ((_callPhase.isPreConnect ||
+                _callPhase == CallPhase.answered ||
+                _callPhase == CallPhase.settling) &&
+            _callPhase != CallPhase.idle);
 
     /// Only defer when this pipeline drives speech via Kokoro/ElevenLabs
     /// (`_ttsAudioSub`). Unified OpenAI audio does not use that stream.
@@ -4560,6 +4600,7 @@ class AgentService extends ChangeNotifier {
       if (!success) {
         return 'Failed to make call: SIP not connected. User needs to register first.';
       }
+      _callDialPending = true;
       final displayNum = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(number)
           : number;
@@ -6011,6 +6052,7 @@ class AgentService extends ChangeNotifier {
     final phaseChanged = phase != _callPhase || partyCount != _partyCount;
 
     _callPhase = phase;
+    _callDialPending = false;
     _partyCount = partyCount;
     if (remoteIdentity != null) _remoteIdentity = remoteIdentity;
     if (remoteDisplayName != null) _remoteDisplayName = remoteDisplayName;
@@ -6573,11 +6615,31 @@ class AgentService extends ChangeNotifier {
     }
     callHistory?.addTranscript(role: 'agent', text: displayText);
 
-    final msg = ChatMessage.agent(displayText);
+    final ttsActive = _hasTts && !_ttsMuted && !_muted;
+    final deferText = _splitPipeline && ttsActive;
+
+    final msg = ChatMessage.agent(
+      deferText ? '' : displayText,
+      isStreaming: deferText,
+    );
     _addMsg(msg);
+
+    if (deferText) {
+      _streamingMessageId = msg.id;
+      _voiceHoldUntilFirstPcm = true;
+      _voiceUiBuffer = StringBuffer(displayText);
+      _voiceFinalPending = true;
+      _voiceFinalTimer?.cancel();
+      _voiceFinalTimer = Timer(const Duration(seconds: 8), () {
+        if (!_voiceHoldUntilFirstPcm) return;
+        debugPrint('[AgentService] Pre-greet voice-hold timeout — releasing');
+        _forceReleaseVoiceHold();
+      });
+    }
+
     notifyListeners();
 
-    if (_hasTts && !_ttsMuted && !_muted) {
+    if (ttsActive) {
       _ttsBracketDepth = 0;
       _activeTtsStartGeneration();
       final ttsText = _flattenMarkdownForTtsDelta(
@@ -6949,6 +7011,7 @@ class AgentService extends ChangeNotifier {
     _ttsInterrupted = false;
     _userMuteOverride = false;
     _callPhase = CallPhase.idle;
+    _callDialPending = false;
     _levels.clear();
     _smsHistoryLoadedPhones.clear();
     _resetVoiceUiSyncState();

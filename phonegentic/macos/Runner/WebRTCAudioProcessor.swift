@@ -611,9 +611,11 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
     /// Consecutive 10ms frames where a pure tone was detected.
     private var toneFrameCount: Int = 0
 
-    /// Minimum consecutive tone frames to confirm a beep (40 × 10ms = 400ms).
-    /// Voicemail beeps are typically 0.5–2s; short DTMF tones won't reach this.
-    private static let toneConfirmFrames = 40
+    /// Minimum consecutive tone frames to confirm a beep (80 × 10ms = 800ms).
+    /// Voicemail beeps are typically 0.5–2s.  The previous 400ms threshold
+    /// caused false positives on sustained vowels from male speakers whose
+    /// fundamental (~100-150 Hz) has strong harmonics near 440/480 Hz.
+    private static let toneConfirmFrames = 80
 
     /// True while a confirmed tone is ongoing — prevents duplicate callbacks.
     private var toneActive = false
@@ -725,9 +727,10 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
         var isTone = false
         for freq in goertzelFreqs {
             let mag = goertzelMagnitude(buf: buf, frames: frames, freq: freq, rate: rate)
-            // If >60% of frame energy concentrates at one frequency, it's a tone.
-            // Higher threshold reduces false positives from speech harmonics.
-            if mag > totalEnergy * 0.60 {
+            // Pure voicemail beeps concentrate >90% of energy at one frequency.
+            // Speech harmonics spread energy across multiple bins — 80% threshold
+            // rejects them while still catching real beeps reliably.
+            if mag > totalEnergy * 0.80 {
                 isTone = true
                 break
             }
