@@ -1,4 +1,8 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
@@ -6,6 +10,7 @@ import '../comfort_noise_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../kokoro_tts_service.dart';
 import '../build_config.dart';
+import '../pocket_tts_service.dart';
 import '../settings_port_service.dart';
 import '../theme_provider.dart';
 import 'comfort_noise_picker.dart';
@@ -833,6 +838,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final isEnabled = _tts.provider != TtsProvider.none;
     final isElevenlabs = _tts.provider == TtsProvider.elevenlabs;
     final isKokoro = _tts.provider == TtsProvider.kokoro;
+    final isPocketTts = _tts.provider == TtsProvider.pocketTts;
 
     String subtitle;
     switch (_tts.provider) {
@@ -841,6 +847,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         break;
       case TtsProvider.kokoro:
         subtitle = 'Kokoro (On-Device)';
+        break;
+      case TtsProvider.pocketTts:
+        subtitle = 'Pocket TTS (On-Device)';
         break;
       case TtsProvider.none:
         subtitle = 'None';
@@ -888,6 +897,10 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             (v) => _updateTts(_tts.copyWith(kokoroVoiceStyle: v)),
           ),
         ],
+        if (isPocketTts) ...[
+          _divider(),
+          _buildPocketTtsVoiceCloneRow(),
+        ],
       ],
     );
   }
@@ -898,6 +911,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     };
     if (BuildConfig.onDeviceModelsSupported) {
       providers[TtsProvider.kokoro] = 'Kokoro (On-Device)';
+      if (Platform.isLinux) {
+        providers[TtsProvider.pocketTts] = 'Pocket TTS (On-Device)';
+      }
     }
 
     return Padding(
@@ -931,6 +947,64 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     ),
                   )).toList(),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPocketTtsVoiceCloneRow() {
+    final clonePath = _tts.pocketTtsVoiceClonePath;
+    final hasClone = clonePath.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Voice clone',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: Text(
+              hasClone ? p.basename(clonePath) : 'None',
+              style: TextStyle(
+                fontSize: 13,
+                color: hasClone ? AppColors.textPrimary : AppColors.textSecondary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (hasClone)
+            IconButton(
+              icon: const Icon(Icons.close, size: 16),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _updateTts(_tts.copyWith(pocketTtsVoiceClonePath: '')),
+            ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () async {
+              final result = await FilePicker.platform.pickFiles(
+                type: FileType.custom,
+                allowedExtensions: ['wav', 'mp3', 'm4a', 'ogg', 'flac', 'aac'],
+              );
+              if (result == null || result.files.single.path == null) return;
+              final path = result.files.single.path!;
+              final duration = await PocketTtsService.getAudioDurationSeconds(path);
+              if (!mounted) return;
+              if (duration > 30) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('File too long — voice clone must be 30 seconds or less'),
+                  behavior: SnackBarBehavior.floating,
+                ));
+                return;
+              }
+              _updateTts(_tts.copyWith(pocketTtsVoiceClonePath: path));
+            },
+            child: const Text('Browse', style: TextStyle(fontSize: 13)),
           ),
         ],
       ),

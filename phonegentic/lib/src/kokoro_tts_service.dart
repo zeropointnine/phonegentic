@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'agent_config_service.dart';
+import 'local_tts_service.dart';
 import 'text_segmenter.dart';
 
 // =============================================================================
@@ -32,7 +33,7 @@ import 'text_segmenter.dart';
 // plays through AudioTap, sentence N+1 is being synthesized.
 // =============================================================================
 
-class KokoroTtsService {
+class KokoroTtsService implements LocalTtsService {
   static const _channel = MethodChannel('com.agentic_ai/kokoro_tts');
   static const _audioChannel = EventChannel('com.agentic_ai/kokoro_tts_audio');
 
@@ -46,15 +47,18 @@ class KokoroTtsService {
   Completer<void>? _drainCompleter;
 
   final _audioController = StreamController<Uint8List>.broadcast();
+  @override
   Stream<Uint8List> get audioChunks => _audioController.stream;
 
   final _speakingController = StreamController<bool>.broadcast();
+  @override
   Stream<bool> get speakingState => _speakingController.stream;
 
   StreamSubscription? _audioEventSub;
 
   KokoroTtsService({required TtsConfig config}) : _config = config;
 
+  @override
   bool get isInitialized => _initialized;
 
   /// Available Kokoro voice styles.
@@ -89,6 +93,7 @@ class KokoroTtsService {
     'bm_lewis',
   ];
 
+  @override
   Future<void> initialize() async {
     if (_initialized) return;
     try {
@@ -126,6 +131,7 @@ class KokoroTtsService {
   }
 
   /// Set the voice style for subsequent generations.
+  @override
   Future<void> setVoice(String voiceStyle) async {
     if (!_initialized) return;
     try {
@@ -138,6 +144,7 @@ class KokoroTtsService {
 
   /// Prime MLX / Kokoro on the native queue with a discarded `.` synthesis so
   /// the first user-visible sentence does not pay full cold-start latency.
+  @override
   Future<void> warmUpSynthesis() async {
     if (!_initialized) return;
     try {
@@ -152,6 +159,7 @@ class KokoroTtsService {
     }
   }
 
+  @override
   void startGeneration() {
     if (_generating) {
       endGeneration();
@@ -166,6 +174,7 @@ class KokoroTtsService {
   /// Stream a text chunk. The TextSegmenter accumulates deltas and detects
   /// sentence boundaries. Each complete sentence is queued for immediate
   /// synthesis rather than waiting for the full response.
+  @override
   void sendText(String text) {
     if (!_generating || text.isEmpty) return;
 
@@ -177,6 +186,7 @@ class KokoroTtsService {
   }
 
   /// Flush remaining text and wait for the synthesis queue to drain.
+  @override
   Future<void> endGeneration() async {
     if (!_generating) return;
     _generating = false;
@@ -256,6 +266,7 @@ class KokoroTtsService {
     }
   }
 
+  @override
   Future<void> dispose() async {
     _generating = false;
     _segmenter.reset();

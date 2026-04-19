@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Downloads on-device ML models for Kokoro TTS and WhisperKit STT.
+# Downloads on-device ML models for Kokoro TTS, WhisperKit STT, and Pocket TTS.
 # Models are stored in phonegentic/models/ (git-ignored).
 #
 # Usage:
-#   ./scripts/download_models.sh          # download all for current platform
-#   ./scripts/download_models.sh kokoro   # Kokoro TTS only
-#   ./scripts/download_models.sh whisper  # WhisperKit STT only
-#   ./scripts/download_models.sh status   # show model status
+#   ./scripts/download_models.sh             # download all for current platform
+#   ./scripts/download_models.sh kokoro      # Kokoro TTS only
+#   ./scripts/download_models.sh whisper     # WhisperKit STT only
+#   ./scripts/download_models.sh pocket-tts  # Pocket TTS only (Linux only)
+#   ./scripts/download_models.sh status      # show model status
 #
 # Prerequisites: pip3 install huggingface_hub
 
@@ -19,6 +20,7 @@ MODELS_DIR="$PROJECT_DIR/models"
 KOKORO_DIR="$MODELS_DIR/kokoro"
 WHISPER_DIR="$MODELS_DIR/whisperkit"
 WHISPER_GGML_DIR="$MODELS_DIR/whisper-ggml"
+POCKET_TTS_DIR="$MODELS_DIR/pocket-tts-onnx"
 
 WHISPER_MODEL="openai_whisper-base"
 WHISPER_GGML_MODEL="ggml-base.en.bin"
@@ -271,7 +273,59 @@ print(f'  Converted {voice}: {pack.shape} → {npy_path}')
     ok "Kokoro TTS (ONNX) model ready at $KOKORO_DIR ($voices_converted voices)"
 }
 
+# ─── Linux: Pocket TTS (ONNX INT8) ───────────────────────────────────
+#
+# Source: KevinAHM/pocket-tts-onnx (ungated, CC-BY 4.0)
+# Downloads INT8-quantized synthesis models (~180 MB) and the tokenizer.
+# mimi_encoder.onnx (voice cloning) is intentionally omitted until Phase 3.
+
+download_pocket_tts_linux() {
+    if [ "$OS" != "Linux" ]; then
+        warn "Pocket TTS ONNX is Linux-only (use MLX on macOS). Skipping."
+        return 0
+    fi
+
+    info "Downloading Pocket TTS model (ONNX INT8, ~180 MB)..."
+    mkdir -p "$POCKET_TTS_DIR/onnx"
+
+    local sentinel="$POCKET_TTS_DIR/onnx/flow_lm_main_int8.onnx"
+    local fsize=0
+    if [ -f "$sentinel" ]; then
+        fsize=$(file_size_bytes "$sentinel")
+    fi
+
+    if [ "$fsize" -gt 1000000 ]; then
+        ok "Pocket TTS models already exist ($(dir_size_human "$POCKET_TTS_DIR")), skipping."
+    else
+        echo "    Source: KevinAHM/pocket-tts-onnx"
+        python3 -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    'KevinAHM/pocket-tts-onnx',
+    local_dir=r'''$POCKET_TTS_DIR''',
+    allow_patterns=[
+        'tokenizer.model',
+        'onnx/flow_lm_main_int8.onnx',
+        'onnx/flow_lm_flow_int8.onnx',
+        'onnx/mimi_decoder_int8.onnx',
+        'onnx/text_conditioner.onnx',
+    ],
+)
+print('Download complete.')
+" || { err "Pocket TTS download failed."; exit 1; }
+    fi
+    ok "Pocket TTS model ready at $POCKET_TTS_DIR"
+}
+
 # ─── Platform dispatch ────────────────────────────────────────────────
+
+download_pocket_tts() {
+    case "$OS" in
+        Linux)  download_pocket_tts_linux ;;
+        Darwin) warn "Pocket TTS ONNX is Linux-only. Skipping on macOS." ;;
+        *)      err "Unsupported OS: $OS"; exit 1 ;;
+    esac
+}
 
 download_kokoro() {
     case "$OS" in
@@ -345,6 +399,22 @@ show_status() {
             fi
         else
             echo "      whisper.cpp STT:     NOT DOWNLOADED"
+        fi
+    fi
+
+    # Pocket TTS — Linux ONNX
+    if [ "$OS" = "Linux" ]; then
+        local ptpath="$POCKET_TTS_DIR/onnx/flow_lm_main_int8.onnx"
+        if [ -f "$ptpath" ]; then
+            local fsize
+            fsize=$(file_size_bytes "$ptpath")
+            if [ "$fsize" -gt 1000000 ]; then
+                ok "Pocket TTS (ONNX INT8): READY ($(dir_size_human "$POCKET_TTS_DIR"))"
+            else
+                warn "Pocket TTS (ONNX INT8): CORRUPT (re-run download)"
+            fi
+        else
+            echo "      Pocket TTS:          NOT DOWNLOADED"
         fi
     fi
 
@@ -439,10 +509,15 @@ case "$target" in
         check_huggingface
         download_whisper
         ;;
+    pocket-tts)
+        check_huggingface
+        download_pocket_tts
+        ;;
     all)
         check_huggingface
         download_kokoro
         download_whisper
+        download_pocket_tts
         ;;
     status)
         show_status
@@ -453,7 +528,7 @@ case "$target" in
         exit $?
         ;;
     *)
-        echo "Usage: $0 [kokoro|whisper|all|status|preflight]"
+        echo "Usage: $0 [kokoro|whisper|pocket-tts|all|status|preflight]"
         exit 1
         ;;
 esac

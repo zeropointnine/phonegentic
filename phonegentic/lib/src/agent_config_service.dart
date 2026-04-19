@@ -145,7 +145,7 @@ class TextAgentConfig {
   }
 }
 
-enum TtsProvider { none, elevenlabs, kokoro }
+enum TtsProvider { none, elevenlabs, kokoro, pocketTts }
 
 class TtsConfig {
   final TtsProvider provider;
@@ -153,6 +153,7 @@ class TtsConfig {
   final String elevenLabsVoiceId;
   final String elevenLabsModelId;
   final String kokoroVoiceStyle;
+  final String pocketTtsVoiceClonePath;
 
   const TtsConfig({
     this.provider = TtsProvider.none,
@@ -160,6 +161,7 @@ class TtsConfig {
     this.elevenLabsVoiceId = '',
     this.elevenLabsModelId = 'eleven_flash_v2_5',
     this.kokoroVoiceStyle = 'af_heart',
+    this.pocketTtsVoiceClonePath = '',
   });
 
   bool get isConfigured {
@@ -170,6 +172,8 @@ class TtsConfig {
         return elevenLabsApiKey.isNotEmpty && elevenLabsVoiceId.isNotEmpty;
       case TtsProvider.kokoro:
         return true;
+      case TtsProvider.pocketTts:
+        return true;
     }
   }
 
@@ -179,6 +183,7 @@ class TtsConfig {
     String? elevenLabsVoiceId,
     String? elevenLabsModelId,
     String? kokoroVoiceStyle,
+    String? pocketTtsVoiceClonePath,
   }) {
     return TtsConfig(
       provider: provider ?? this.provider,
@@ -186,6 +191,7 @@ class TtsConfig {
       elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
       elevenLabsModelId: elevenLabsModelId ?? this.elevenLabsModelId,
       kokoroVoiceStyle: kokoroVoiceStyle ?? this.kokoroVoiceStyle,
+      pocketTtsVoiceClonePath: pocketTtsVoiceClonePath ?? this.pocketTtsVoiceClonePath,
     );
   }
 }
@@ -379,6 +385,8 @@ class AgentConfigService {
               'eleven_flash_v2_5',
       kokoroVoiceStyle:
           prefs.getString('${_prefix}tts_kokoro_voice') ?? 'af_heart',
+      pocketTtsVoiceClonePath:
+          prefs.getString('${_prefix}tts_pocket_clone_path') ?? '',
     );
   }
 
@@ -393,6 +401,8 @@ class AgentConfigService {
         '${_prefix}tts_elevenlabs_model', config.elevenLabsModelId);
     await prefs.setString(
         '${_prefix}tts_kokoro_voice', config.kokoroVoiceStyle);
+    await prefs.setString(
+        '${_prefix}tts_pocket_clone_path', config.pocketTtsVoiceClonePath);
   }
 
   // -- STT config (on-device WhisperKit) -------------------------------------
