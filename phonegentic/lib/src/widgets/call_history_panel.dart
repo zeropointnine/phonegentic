@@ -6,7 +6,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
-import '../agent_service.dart';
 import '../call_history_service.dart';
 import '../contact_service.dart';
 import '../demo_mode_service.dart';
@@ -27,6 +26,9 @@ class CallHistoryPanel extends StatefulWidget {
 class _CallHistoryPanelState extends State<CallHistoryPanel> {
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
+  final LayerLink _layerLink = LayerLink();
+  OverlayEntry? _suggestionsOverlay;
+  List<Map<String, String>> _suggestions = [];
 
   @override
   void initState() {
@@ -34,38 +36,159 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
     final service = context.read<CallHistoryService>();
     _searchController.text = service.searchQuery;
     _searchController.addListener(_onSearchChanged);
+    _searchFocus.addListener(_onFocusChanged);
   }
 
   @override
   void dispose() {
+    _dismissSuggestions();
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
 
-  void _onSearchChanged() {
-    final service = context.read<CallHistoryService>();
-    service.setSearchQuery(_searchController.text);
-    if (_searchController.text.trim().isEmpty) {
-      service.loadRecentCalls();
+  void _onFocusChanged() {
+    if (!_searchFocus.hasFocus) {
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (mounted && !_searchFocus.hasFocus) _dismissSuggestions();
+      });
     }
+  }
+
+  void _onSearchChanged() {
+    final text = _searchController.text;
+    final service = context.read<CallHistoryService>();
+    service.setSearchQuery(text);
+
+    if (text.trim().isEmpty) {
+      _dismissSuggestions();
+      service.loadRecentCalls();
+      return;
+    }
+
+    _fetchSuggestions(text.trim());
+  }
+
+  Future<void> _fetchSuggestions(String prefix) async {
+    if (prefix.length < 2) {
+      _dismissSuggestions();
+      return;
+    }
+    final service = context.read<CallHistoryService>();
+    final results = await service.getSuggestions(prefix);
+    if (!mounted) return;
+    setState(() => _suggestions = results);
+    if (results.isNotEmpty && _searchFocus.hasFocus) {
+      _showSuggestionsOverlay();
+    } else {
+      _dismissSuggestions();
+    }
+  }
+
+  void _showSuggestionsOverlay() {
+    _dismissSuggestions();
+    _suggestionsOverlay = OverlayEntry(builder: (_) => _buildSuggestions());
+    Overlay.of(context).insert(_suggestionsOverlay!);
+  }
+
+  void _dismissSuggestions() {
+    _suggestionsOverlay?.remove();
+    _suggestionsOverlay = null;
+  }
+
+  Widget _buildSuggestions() {
+    return Positioned(
+      width: 0,
+      child: CompositedTransformFollower(
+        link: _layerLink,
+        showWhenUnlinked: false,
+        offset: const Offset(0, 42),
+        child: Builder(builder: (context) {
+          final box = this.context.findRenderObject() as RenderBox?;
+          final panelWidth = box?.size.width ?? 400;
+          final width = panelWidth - 24 - 48;
+          return Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(10),
+              color: AppColors.surface,
+              child: Container(
+                width: width,
+                constraints: const BoxConstraints(maxHeight: 260),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.6),
+                      width: 0.5),
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  itemCount: _suggestions.length,
+                  itemBuilder: (context, index) {
+                    final s = _suggestions[index];
+                    final label = s['label'] ?? '';
+                    final phone = s['phone'] ?? '';
+                    final showPhone =
+                        phone.isNotEmpty && phone != label;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () => _selectSuggestion(label),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        child: Row(
+                          children: [
+                            Icon(Icons.person_outline_rounded,
+                                size: 14, color: AppColors.textTertiary),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(label,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textPrimary,
+                                          fontWeight: FontWeight.w500)),
+                                  if (showPhone)
+                                    Text(phone,
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            color: AppColors.textTertiary)),
+                                ],
+                              ),
+                            ),
+                            Icon(Icons.north_west_rounded,
+                                size: 11, color: AppColors.textTertiary),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  void _selectSuggestion(String label) {
+    _searchController.text = label;
+    _searchController.selection =
+        TextSelection.fromPosition(TextPosition(offset: label.length));
+    _dismissSuggestions();
+    _runSearch();
   }
 
   void _runSearch() {
+    _dismissSuggestions();
     final query = _searchController.text.trim();
     final service = context.read<CallHistoryService>();
-    if (query.isEmpty) {
-      service.loadRecentCalls();
-    } else {
-      service.naturalSearch(query);
-    }
-  }
-
-  void _askAgent() {
-    final query = _searchController.text.trim();
-    if (query.isEmpty) return;
-    final agent = context.read<AgentService>();
-    agent.sendUserMessage('Search my call history: $query');
+    service.smartSearch(query);
   }
 
   @override
@@ -205,35 +328,39 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
       child: Row(
         children: [
           Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-              ),
-              child: TextField(
-                controller: _searchController,
-                focusNode: _searchFocus,
-                style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
-                decoration: InputDecoration(
-                  hintText: 'e.g. "585" "missed today" "to Fred over 2 min"',
-                  hintStyle:
-                      TextStyle(color: AppColors.textTertiary, fontSize: 13),
-                  prefixIcon: Icon(Icons.search_rounded,
-                      size: 18, color: AppColors.textTertiary),
-                  border: InputBorder.none,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: CompositedTransformTarget(
+              link: _layerLink,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5),
                 ),
-                onSubmitted: (_) => _runSearch(),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocus,
+                  style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    hintText: 'Name, number, or "missed today"…',
+                    hintStyle:
+                        TextStyle(color: AppColors.textTertiary, fontSize: 13),
+                    prefixIcon: Icon(Icons.search_rounded,
+                        size: 18, color: AppColors.textTertiary),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                  onSubmitted: (_) => _runSearch(),
+                ),
               ),
             ),
           ),
           const SizedBox(width: 6),
           HoverButton(
             onTap: _runSearch,
-            tooltip: 'Search locally',
+            tooltip: 'Search',
             borderRadius: BorderRadius.circular(10),
             child: Container(
               width: 36,
@@ -244,24 +371,6 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
               ),
               child: Icon(Icons.search_rounded,
                   size: 16, color: AppColors.crtBlack),
-            ),
-          ),
-          const SizedBox(width: 4),
-          HoverButton(
-            onTap: _askAgent,
-            tooltip: 'Ask AI agent',
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                color: AppColors.card,
-                border: Border.all(
-                    color: AppColors.accent.withValues(alpha: 0.4), width: 0.5),
-              ),
-              child: Icon(Icons.auto_awesome,
-                  size: 16, color: AppColors.accent),
             ),
           ),
         ],
@@ -285,7 +394,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Try a different search or ask the AI agent',
+              'Try a different search — AI will kick in automatically',
               style: TextStyle(
                   fontSize: 12,
                   color: AppColors.textTertiary.withValues(alpha: 0.7)),
@@ -736,29 +845,30 @@ class _CallRecordTileState extends State<_CallRecordTile> {
   @override
   Widget build(BuildContext context) {
     final demo = context.watch<DemoModeService>();
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: widget.isExpanded
-            ? AppColors.surface
-            : AppColors.card,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      child: HoverButton(
+        onTap: widget.onTap,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: widget.isExpanded
-              ? AppColors.accent.withValues(alpha: 0.3)
-              : AppColors.border.withValues(alpha: 0.4),
-          width: 0.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          HoverButton(
-            onTap: widget.onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: Row(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: widget.isExpanded
+                ? AppColors.surface
+                : AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: widget.isExpanded
+                  ? AppColors.accent.withValues(alpha: 0.3)
+                  : AppColors.border.withValues(alpha: 0.4),
+              width: 0.5,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
               children: [
                 ContactIdenticon(seed: _name(demo), size: 34),
                 const SizedBox(width: 10),
@@ -901,7 +1011,6 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                 ),
               ],
             ),
-          ),
           if (widget.isExpanded) ...[
             const SizedBox(height: 12),
             _buildExpandedHeader(context),
@@ -910,7 +1019,9 @@ class _CallRecordTileState extends State<_CallRecordTile> {
             const SizedBox(height: 10),
             _buildTranscriptSection(),
           ],
-        ],
+          ],
+        ),
+      ),
       ),
     );
   }

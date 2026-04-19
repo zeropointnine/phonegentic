@@ -131,8 +131,10 @@ class MyApp extends StatelessWidget {
             GoogleCalendarService, AgentService>(
           create: (_) => AgentService()..sipHelper = _helper,
           update: (context, history, contacts, jobFunctions, flight, gmail,
-                  gcal, agent) =>
-              agent!
+                  gcal, agent) {
+              history.onAgentSearch = (query) =>
+                  agent!.sendUserMessage('Search my call history: $query');
+              return agent!
                 ..callHistory = history
                 ..contactService = contacts
                 ..jobFunctionService = jobFunctions
@@ -141,7 +143,8 @@ class MyApp extends StatelessWidget {
                 ..googleCalendarService = gcal
                 ..googleSearchService = context.read<GoogleSearchService>()
                 ..demoModeService = context.read<DemoModeService>()
-                ..comfortNoiseService = context.read<ComfortNoiseService>(),
+                ..comfortNoiseService = context.read<ComfortNoiseService>();
+          },
         ),
         ChangeNotifierProxyProvider<ContactService, MessagingService>(
           create: (_) => MessagingService()..start(),

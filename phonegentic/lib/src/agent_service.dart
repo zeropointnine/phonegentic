@@ -2055,7 +2055,9 @@ class AgentService extends ChangeNotifier {
       description:
           'Get a summary of recent call activity. Use when the manager '
           'asks about calls since they were away or wants a status update. '
-          'Can filter by phone number and/or time window.',
+          'Can filter by phone number, time window, direction, and status. '
+          'IMPORTANT: "missed" calls are ONLY unanswered inbound calls — '
+          'a failed outbound call is NOT missed, it is "failed".',
       inputSchema: {
         'type': 'object',
         'properties': {
@@ -2070,6 +2072,26 @@ class AgentService extends ChangeNotifier {
             'description':
                 'Filter calls by phone number (partial match). '
                 'Use when the manager asks about calls with a specific person.',
+          },
+          'direction': {
+            'type': 'string',
+            'enum': ['inbound', 'outbound'],
+            'description':
+                'Filter by call direction.',
+          },
+          'status': {
+            'type': 'string',
+            'enum': ['completed', 'missed', 'failed'],
+            'description':
+                'Filter by call status. "missed" means an inbound call '
+                'that was never answered. "failed" means a call that '
+                'could not connect (including outbound attempts).',
+          },
+          'transcript_query': {
+            'type': 'string',
+            'description':
+                'Search for calls where someone said something specific. '
+                'Searches transcript text (partial match).',
           },
         },
       },
@@ -3706,7 +3728,10 @@ class AgentService extends ChangeNotifier {
 
     final result = await callHistory!.searchAndFormat(params);
 
-    callHistory!.openHistory();
+    final queryLabel = args['contact_name'] as String? ??
+        args['direction'] as String? ??
+        '';
+    callHistory!.openHistory(query: queryLabel, keepResults: true);
 
     return result;
   }
@@ -3838,19 +3863,45 @@ class AgentService extends ChangeNotifier {
     }
 
     final phoneNumber = args['phone_number'] as String?;
+    final direction = args['direction'] as String?;
+    final status = args['status'] as String?;
+    final transcriptQuery = args['transcript_query'] as String?;
 
-    return getCallActivitySummary(since: since, phoneNumber: phoneNumber);
+    return getCallActivitySummary(
+      since: since,
+      phoneNumber: phoneNumber,
+      direction: direction,
+      status: status,
+      transcriptQuery: transcriptQuery,
+    );
   }
 
   Future<String> getCallActivitySummary({
     DateTime? since,
     String? phoneNumber,
+    String? direction,
+    String? status,
+    String? transcriptQuery,
   }) async {
-    final calls = await CallHistoryDb.searchCalls(
-      since: since,
-      contactName: phoneNumber,
-      limit: 50,
-    );
+    final List<Map<String, dynamic>> calls;
+    if (transcriptQuery != null) {
+      calls = await CallHistoryDb.searchCallsByTranscript(
+        query: transcriptQuery,
+        since: since,
+        contactName: phoneNumber,
+        direction: direction,
+        status: status,
+        limit: 50,
+      );
+    } else {
+      calls = await CallHistoryDb.searchCalls(
+        since: since,
+        contactName: phoneNumber,
+        direction: direction,
+        status: status,
+        limit: 50,
+      );
+    }
 
     if (calls.isEmpty) {
       final qualifier = since != null ? 'since then' : 'recently';
@@ -4008,7 +4059,11 @@ class AgentService extends ChangeNotifier {
             'from $wavPath');
 
         const int chunkBytes = 48000; // ~1 s at 24 kHz mono 16-bit
+        const int paceMs = 900; // slightly under 1 s to keep buffer fed
+        // Native ring buffers hold ~30 s; pre-fill a burst then pace.
+        const int burstChunks = 25;
         bool interrupted = false;
+        int chunkIndex = 0;
         for (int i = 0; i < pcm.length; i += chunkBytes) {
           if (!_callPhase.isActive) {
             interrupted = true;
@@ -4016,11 +4071,17 @@ class AgentService extends ChangeNotifier {
           }
           final end = (i + chunkBytes).clamp(0, pcm.length);
           await _whisper.playResponseAudio(pcm.sublist(i, end));
+          chunkIndex++;
+          if (chunkIndex >= burstChunks) {
+            await Future.delayed(const Duration(milliseconds: paceMs));
+          }
         }
 
-        // Wait for the native audio buffer to drain before notifying.
-        final drainMs = (durationSecs * 1000).round();
-        await Future.delayed(Duration(milliseconds: drainMs));
+        if (!interrupted) {
+          // The burst pre-filled ~25 s, subsequent chunks were paced.
+          // Wait for the ring buffer to drain (~30 s max).
+          await Future.delayed(const Duration(seconds: 30));
+        }
 
         final msg = interrupted
             ? '[SYSTEM EVENT]: Recording playback was interrupted '

@@ -46,3 +46,6 @@ A configurable max row count (default 50,000) is enforced: after each insert, if
 | `lib/src/db/call_history_db.dart` | DB version 16→17; `session_messages` table; insert/load/clear/delete/update/count methods |
 | `lib/src/agent_service.dart` | `_addMsg()` / `_removeMsgAt()` / `_updatePersistedText()` helpers; `_restoreSession()` / `loadMoreHistory()`; init flow wiring; reconnect clears DB |
 | `lib/src/widgets/agent_panel.dart` | `_MessageList` → `StatefulWidget` with `NotificationListener` for infinite scroll; loading spinner |
+| `lib/src/call_history_service.dart` | `openHistory` gains `keepResults` flag; `smartSearch` does local-first + agent fallthrough; `getSuggestions` for autocomplete; `onAgentSearch` callback |
+| `lib/src/db/call_history_db.dart` | `searchSuggestions` — distinct names/numbers from call_records + contacts for autocomplete |
+| `lib/main.dart` | Wire `onAgentSearch` callback from `CallHistoryService` to `AgentService.sendUserMessage` |

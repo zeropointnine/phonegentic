@@ -10,6 +10,7 @@ class CallSearchParams {
   final DateTime? before;
   final String? direction;
   final String? status;
+  final String? transcriptQuery;
 
   const CallSearchParams({
     this.contactName,
@@ -19,6 +20,7 @@ class CallSearchParams {
     this.before,
     this.direction,
     this.status,
+    this.transcriptQuery,
   });
 
   /// Parse a natural-language search query into structured params.
@@ -29,14 +31,25 @@ class CallSearchParams {
   ///   "missed calls today"
   ///   "outbound calls last hour"
   ///   "calls longer than 5 minutes"
+  ///   "calls a minute or longer"
+  ///   "calls from yesterday till today"
+  ///   "calls on April 15th"
+  ///   "calls on 4/15"
+  ///   "calls on Monday"
+  ///   "calls last Friday"
+  ///   "calls this month"
+  ///   "calls from April 10 to April 15"
+  ///   "calls where somebody said hello"
   factory CallSearchParams.fromQuery(String query) {
     final q = query.toLowerCase().trim();
     String? contactName;
     int? minDuration;
     int? maxDuration;
     DateTime? since;
+    DateTime? before;
     String? direction;
     String? status;
+    String? transcriptQuery;
 
     // Strip filler words for parsing
     var working = q
@@ -47,6 +60,25 @@ class CallSearchParams {
         .replaceAll(RegExp(r'\bthe\b'), '')
         .replaceAll(RegExp(r'\bmy\b'), '')
         .trim();
+
+    // Transcript content search: "where somebody/someone/they/caller said ..."
+    // or "mentioning ..." / "about ..."
+    final saidMatch = RegExp(
+            r'\bwhere\s+(?:somebody|someone|they|the\s+caller|a\s+caller)\s+(?:said|mentioned|talked\s+about)\s+"?(.+?)"?\s*$')
+        .firstMatch(working);
+    if (saidMatch != null) {
+      transcriptQuery = saidMatch.group(1)!.trim();
+      working = working.replaceAll(saidMatch.group(0)!, '').trim();
+    } else {
+      final mentioningMatch =
+          RegExp(r'\b(?:mentioning|about|containing)\s+"?(.+?)"?\s*$')
+              .firstMatch(working);
+      if (mentioningMatch != null) {
+        transcriptQuery = mentioningMatch.group(1)!.trim();
+        working =
+            working.replaceAll(mentioningMatch.group(0)!, '').trim();
+      }
+    }
 
     // Direction
     if (RegExp(r'\b(outbound|outgoing|made|dialed)\b').hasMatch(working)) {
@@ -73,57 +105,148 @@ class CallSearchParams {
       working = working.replaceAll(RegExp(r'\bcompleted\b'), '').trim();
     }
 
-    // Time: "last N hour(s)/minute(s)/min"
-    final timeMatch = RegExp(
-            r'\b(?:in\s+)?(?:the\s+)?last\s+(\d+)\s*(hours?|minutes?|mins?|days?)\b')
+    // Date range: "from X to/till/until Y"
+    final now = DateTime.now();
+    final rangeMatch = RegExp(
+            r'\b(?:from\s+)(\S+(?:\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)?)\s+(?:to|till|until|through)\s+(\S+(?:\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)?)\b')
         .firstMatch(working);
-    if (timeMatch != null) {
-      final n = int.parse(timeMatch.group(1)!);
-      final unit = timeMatch.group(2)!;
-      if (unit.startsWith('h')) {
-        since = DateTime.now().subtract(Duration(hours: n));
-      } else if (unit.startsWith('m')) {
-        since = DateTime.now().subtract(Duration(minutes: n));
-      } else if (unit.startsWith('d')) {
-        since = DateTime.now().subtract(Duration(days: n));
+    if (rangeMatch != null) {
+      final startDate = _tryParseDate(rangeMatch.group(1)!, now);
+      final endDate = _tryParseDate(rangeMatch.group(2)!, now);
+      if (startDate != null && endDate != null) {
+        since = startDate;
+        before =
+            DateTime(endDate.year, endDate.month, endDate.day, 23, 59, 59);
+        working = working.replaceAll(rangeMatch.group(0)!, '').trim();
       }
-      working = working.replaceAll(timeMatch.group(0)!, '').trim();
-    } else if (RegExp(r'\b(?:in\s+)?(?:the\s+)?last\s+hour\b')
-        .hasMatch(working)) {
-      since = DateTime.now().subtract(const Duration(hours: 1));
-      working = working
-          .replaceAll(
-              RegExp(r'\b(?:in\s+)?(?:the\s+)?last\s+hour\b'), '')
-          .trim();
-    } else if (RegExp(r'\btoday\b').hasMatch(working)) {
-      final now = DateTime.now();
-      since = DateTime(now.year, now.month, now.day);
-      working = working.replaceAll(RegExp(r'\btoday\b'), '').trim();
-    } else if (RegExp(r'\byesterday\b').hasMatch(working)) {
-      final now = DateTime.now();
-      since = DateTime(now.year, now.month, now.day - 1);
-      working = working.replaceAll(RegExp(r'\byesterday\b'), '').trim();
-    } else if (RegExp(r'\b(?:this|last)\s+week\b').hasMatch(working)) {
-      since = DateTime.now().subtract(const Duration(days: 7));
-      working = working
-          .replaceAll(RegExp(r'\b(?:this|last)\s+week\b'), '')
-          .trim();
+    }
+
+    // Time / date expressions (only if range didn't already set since)
+    if (since == null) {
+      final timeMatch = RegExp(
+              r'\b(?:in\s+)?(?:the\s+)?last\s+(\d+)\s*(hours?|minutes?|mins?|days?)\b')
+          .firstMatch(working);
+      if (timeMatch != null) {
+        final n = int.parse(timeMatch.group(1)!);
+        final unit = timeMatch.group(2)!;
+        if (unit.startsWith('h')) {
+          since = now.subtract(Duration(hours: n));
+        } else if (unit.startsWith('m')) {
+          since = now.subtract(Duration(minutes: n));
+        } else if (unit.startsWith('d')) {
+          since = now.subtract(Duration(days: n));
+        }
+        working = working.replaceAll(timeMatch.group(0)!, '').trim();
+      } else if (RegExp(r'\b(?:in\s+)?(?:the\s+)?last\s+hour\b')
+          .hasMatch(working)) {
+        since = now.subtract(const Duration(hours: 1));
+        working = working
+            .replaceAll(
+                RegExp(r'\b(?:in\s+)?(?:the\s+)?last\s+hour\b'), '')
+            .trim();
+      } else {
+        // "on April 15", "on 4/15", "on Monday", "April 15th", "4/15/2026"
+        final onDateMatch = RegExp(
+                r'\b(?:on\s+)?(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b')
+            .firstMatch(working);
+        // "on April 15th" / "April 15" / "on March 3rd, 2026"
+        final namedDateMatch = RegExp(
+                r'\b(?:on\s+)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b')
+            .firstMatch(working);
+        // "on Monday", "last Tuesday", "this Wednesday"
+        final dowMatch = RegExp(
+                r'\b(?:on\s+|last\s+|this\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b')
+            .firstMatch(working);
+
+        if (namedDateMatch != null) {
+          final month = _parseMonth(namedDateMatch.group(1)!);
+          final day = int.parse(namedDateMatch.group(2)!);
+          final year = namedDateMatch.group(3) != null
+              ? int.parse(namedDateMatch.group(3)!)
+              : now.year;
+          since = DateTime(year, month, day);
+          before = DateTime(year, month, day, 23, 59, 59);
+          working =
+              working.replaceAll(namedDateMatch.group(0)!, '').trim();
+        } else if (onDateMatch != null) {
+          final parts = onDateMatch.group(1)!.split('/');
+          final month = int.parse(parts[0]);
+          final day = int.parse(parts[1]);
+          final year = parts.length > 2 ? _parseYear(parts[2]) : now.year;
+          since = DateTime(year, month, day);
+          before = DateTime(year, month, day, 23, 59, 59);
+          working = working.replaceAll(onDateMatch.group(0)!, '').trim();
+        } else if (dowMatch != null) {
+          final target = _parseDayOfWeek(dowMatch.group(1)!);
+          final prefix = dowMatch.group(0)!.toLowerCase();
+          final isThis = prefix.startsWith('this');
+          var date = now;
+          // Walk backwards to find the most recent matching weekday
+          for (var i = isThis ? 0 : 1; i <= 7; i++) {
+            final d = now.subtract(Duration(days: i));
+            if (d.weekday == target) {
+              date = d;
+              break;
+            }
+          }
+          since = DateTime(date.year, date.month, date.day);
+          before = DateTime(date.year, date.month, date.day, 23, 59, 59);
+          working = working.replaceAll(dowMatch.group(0)!, '').trim();
+        } else if (RegExp(r'\btoday\b').hasMatch(working)) {
+          since = DateTime(now.year, now.month, now.day);
+          working = working.replaceAll(RegExp(r'\btoday\b'), '').trim();
+        } else if (RegExp(r'\byesterday\b').hasMatch(working)) {
+          since = DateTime(now.year, now.month, now.day - 1);
+          working =
+              working.replaceAll(RegExp(r'\byesterday\b'), '').trim();
+        } else if (RegExp(r'\b(?:this|last)\s+month\b').hasMatch(working)) {
+          final isLast =
+              RegExp(r'\blast\s+month\b').hasMatch(working);
+          if (isLast) {
+            final prev = DateTime(now.year, now.month - 1);
+            since = DateTime(prev.year, prev.month, 1);
+            before = DateTime(now.year, now.month, 1)
+                .subtract(const Duration(seconds: 1));
+          } else {
+            since = DateTime(now.year, now.month, 1);
+          }
+          working = working
+              .replaceAll(RegExp(r'\b(?:this|last)\s+month\b'), '')
+              .trim();
+        } else if (RegExp(r'\b(?:this|last)\s+week\b').hasMatch(working)) {
+          since = now.subtract(const Duration(days: 7));
+          working = working
+              .replaceAll(RegExp(r'\b(?:this|last)\s+week\b'), '')
+              .trim();
+        }
+      }
     }
 
     // Duration: "over/longer than/more than N min(utes)/sec(onds)"
+    // Also handles "a minute or longer", "an hour or more", etc.
+    final durArticleMatch = RegExp(
+            r'\b(?:over|longer\s+than|more\s+than|>=?|(?:at\s+least\s+)?)\s*(?:an?\s+)(minutes?|mins?|seconds?|secs?|hours?|hrs?)\s*(?:or\s+(?:longer|more))?\b')
+        .firstMatch(working);
     final durMatch = RegExp(
             r'\b(?:over|longer\s+than|more\s+than|>=?)\s*(\d+)\s*(minutes?|mins?|seconds?|secs?|hours?|hrs?)\b')
         .firstMatch(working);
-    if (durMatch != null) {
+    final durOrLongerMatch = RegExp(
+            r'\b(\d+)\s*(minutes?|mins?|seconds?|secs?|hours?|hrs?)\s+or\s+(?:longer|more)\b')
+        .firstMatch(working);
+
+    if (durArticleMatch != null && durMatch == null) {
+      final unit = durArticleMatch.group(1)!;
+      minDuration = _unitToSeconds(unit, 1);
+      working = working.replaceAll(durArticleMatch.group(0)!, '').trim();
+    } else if (durOrLongerMatch != null) {
+      final n = int.parse(durOrLongerMatch.group(1)!);
+      final unit = durOrLongerMatch.group(2)!;
+      minDuration = _unitToSeconds(unit, n);
+      working = working.replaceAll(durOrLongerMatch.group(0)!, '').trim();
+    } else if (durMatch != null) {
       final n = int.parse(durMatch.group(1)!);
       final unit = durMatch.group(2)!;
-      if (unit.startsWith('h')) {
-        minDuration = n * 3600;
-      } else if (unit.startsWith('m')) {
-        minDuration = n * 60;
-      } else {
-        minDuration = n;
-      }
+      minDuration = _unitToSeconds(unit, n);
       working = working.replaceAll(durMatch.group(0)!, '').trim();
     }
 
@@ -134,20 +257,14 @@ class CallSearchParams {
     if (durMaxMatch != null) {
       final n = int.parse(durMaxMatch.group(1)!);
       final unit = durMaxMatch.group(2)!;
-      if (unit.startsWith('h')) {
-        maxDuration = n * 3600;
-      } else if (unit.startsWith('m')) {
-        maxDuration = n * 60;
-      } else {
-        maxDuration = n;
-      }
+      maxDuration = _unitToSeconds(unit, n);
       working = working.replaceAll(durMaxMatch.group(0)!, '').trim();
     }
 
     // Whatever remains is the contact name / number search term.
     // Clean up filler prepositions and "in number"/"with number" etc.
     working = working
-        .replaceAll(RegExp(r'\b(to|from|with|for|in|number|named?)\b'), '')
+        .replaceAll(RegExp(r'\b(to|from|with|for|in|on|number|named?|that|are|or|longer|more|least|at|during)\b'), '')
         .replaceAll(RegExp(r'\s{2,}'), ' ')
         .trim();
 
@@ -160,9 +277,101 @@ class CallSearchParams {
       minDurationSeconds: minDuration,
       maxDurationSeconds: maxDuration,
       since: since,
+      before: before,
       direction: direction,
       status: status,
+      transcriptQuery: transcriptQuery,
     );
+  }
+
+  static int _unitToSeconds(String unit, int n) {
+    if (unit.startsWith('h')) return n * 3600;
+    if (unit.startsWith('m')) return n * 60;
+    return n;
+  }
+
+  /// Try to parse a date token like "today", "yesterday", "monday",
+  /// "april 15", "4/15", "4/15/2026".
+  static DateTime? _tryParseDate(String token, DateTime now) {
+    final t = token.trim().toLowerCase();
+    if (t == 'today') return DateTime(now.year, now.month, now.day);
+    if (t == 'yesterday') return DateTime(now.year, now.month, now.day - 1);
+
+    // Day-of-week
+    final dow = _tryParseDayOfWeek(t);
+    if (dow != null) {
+      for (var i = 0; i <= 7; i++) {
+        final d = now.subtract(Duration(days: i));
+        if (d.weekday == dow) return DateTime(d.year, d.month, d.day);
+      }
+    }
+
+    // M/D or M/D/YYYY
+    final slashMatch =
+        RegExp(r'^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?$').firstMatch(t);
+    if (slashMatch != null) {
+      final m = int.parse(slashMatch.group(1)!);
+      final d = int.parse(slashMatch.group(2)!);
+      final y = slashMatch.group(3) != null
+          ? _parseYear(slashMatch.group(3)!)
+          : now.year;
+      return DateTime(y, m, d);
+    }
+
+    // "month day" e.g. "april 15" or "apr 15th"
+    final namedMatch = RegExp(
+            r'^(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$')
+        .firstMatch(t);
+    if (namedMatch != null) {
+      final m = _parseMonth(namedMatch.group(1)!);
+      final d = int.parse(namedMatch.group(2)!);
+      final y = namedMatch.group(3) != null
+          ? int.parse(namedMatch.group(3)!)
+          : now.year;
+      return DateTime(y, m, d);
+    }
+
+    return null;
+  }
+
+  static int _parseMonth(String m) {
+    const months = {
+      'jan': 1, 'january': 1,
+      'feb': 2, 'february': 2,
+      'mar': 3, 'march': 3,
+      'apr': 4, 'april': 4,
+      'may': 5,
+      'jun': 6, 'june': 6,
+      'jul': 7, 'july': 7,
+      'aug': 8, 'august': 8,
+      'sep': 9, 'sept': 9, 'september': 9,
+      'oct': 10, 'october': 10,
+      'nov': 11, 'november': 11,
+      'dec': 12, 'december': 12,
+    };
+    return months[m.toLowerCase()] ?? 1;
+  }
+
+  static int _parseYear(String y) {
+    final n = int.parse(y);
+    return n < 100 ? 2000 + n : n;
+  }
+
+  static int _parseDayOfWeek(String d) {
+    return _tryParseDayOfWeek(d) ?? DateTime.monday;
+  }
+
+  static int? _tryParseDayOfWeek(String d) {
+    const days = {
+      'mon': 1, 'monday': 1,
+      'tue': 2, 'tues': 2, 'tuesday': 2,
+      'wed': 3, 'wednesday': 3,
+      'thu': 4, 'thur': 4, 'thurs': 4, 'thursday': 4,
+      'fri': 5, 'friday': 5,
+      'sat': 6, 'saturday': 6,
+      'sun': 7, 'sunday': 7,
+    };
+    return days[d.toLowerCase()];
   }
 }
 
@@ -255,11 +464,16 @@ class CallHistoryService extends ChangeNotifier {
   // UI state
   // ---------------------------------------------------------------------------
 
-  void openHistory({String? query}) {
+  void openHistory({String? query, bool keepResults = false}) {
     _isOpen = true;
     if (query != null) _searchQuery = query;
     notifyListeners();
-    loadRecentCalls();
+    if (keepResults) return;
+    if (query != null && query.isNotEmpty) {
+      naturalSearch(query);
+    } else {
+      loadRecentCalls();
+    }
   }
 
   void closeHistory() {
@@ -296,6 +510,28 @@ class CallHistoryService extends ChangeNotifier {
     await search(params);
   }
 
+  /// Callback set by AgentService so we can escalate to AI without a
+  /// circular dependency.
+  void Function(String query)? onAgentSearch;
+
+  /// Unified search: runs a local DB search first. If it finds results,
+  /// displays them immediately. If not, falls through to the AI agent.
+  Future<void> smartSearch(String query) async {
+    if (query.trim().isEmpty) {
+      await loadRecentCalls();
+      return;
+    }
+    _searchQuery = query;
+    await naturalSearch(query);
+    if (_searchResults.isEmpty && onAgentSearch != null) {
+      onAgentSearch!(query);
+    }
+  }
+
+  Future<List<Map<String, String>>> getSuggestions(String prefix) {
+    return CallHistoryDb.searchSuggestions(prefix);
+  }
+
   Future<void> loadRecentCalls() async {
     _isLoading = true;
     notifyListeners();
@@ -315,15 +551,29 @@ class CallHistoryService extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
-      final results = await CallHistoryDb.searchCalls(
-        contactName: params.contactName,
-        minDurationSeconds: params.minDurationSeconds,
-        maxDurationSeconds: params.maxDurationSeconds,
-        since: params.since,
-        before: params.before,
-        direction: params.direction,
-        status: params.status,
-      );
+      final List<Map<String, dynamic>> results;
+      if (params.transcriptQuery != null) {
+        results = await CallHistoryDb.searchCallsByTranscript(
+          query: params.transcriptQuery!,
+          contactName: params.contactName,
+          minDurationSeconds: params.minDurationSeconds,
+          maxDurationSeconds: params.maxDurationSeconds,
+          since: params.since,
+          before: params.before,
+          direction: params.direction,
+          status: params.status,
+        );
+      } else {
+        results = await CallHistoryDb.searchCalls(
+          contactName: params.contactName,
+          minDurationSeconds: params.minDurationSeconds,
+          maxDurationSeconds: params.maxDurationSeconds,
+          since: params.since,
+          before: params.before,
+          direction: params.direction,
+          status: params.status,
+        );
+      }
       _searchResults
         ..clear()
         ..addAll(results);

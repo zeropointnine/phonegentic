@@ -564,6 +564,67 @@ class CallHistoryDb {
     );
   }
 
+  /// Search for calls whose transcripts contain [query].
+  /// All other filters from [searchCalls] are also applied.
+  static Future<List<Map<String, dynamic>>> searchCallsByTranscript({
+    required String query,
+    String? contactName,
+    int? minDurationSeconds,
+    int? maxDurationSeconds,
+    DateTime? since,
+    DateTime? before,
+    String? direction,
+    String? status,
+    int limit = 50,
+  }) async {
+    final db = await database;
+
+    final where = <String>['ct.text LIKE ?'];
+    final args = <dynamic>['%$query%'];
+
+    if (contactName != null && contactName.isNotEmpty) {
+      where.add(
+          '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ?)');
+      args.addAll(['%$contactName%', '%$contactName%']);
+    }
+    if (minDurationSeconds != null) {
+      where.add('cr.duration_seconds >= ?');
+      args.add(minDurationSeconds);
+    }
+    if (maxDurationSeconds != null) {
+      where.add('cr.duration_seconds <= ?');
+      args.add(maxDurationSeconds);
+    }
+    if (since != null) {
+      where.add('cr.started_at >= ?');
+      args.add(since.toIso8601String());
+    }
+    if (before != null) {
+      where.add('cr.started_at <= ?');
+      args.add(before.toIso8601String());
+    }
+    if (direction != null) {
+      where.add('cr.direction = ?');
+      args.add(direction);
+    }
+    if (status != null && status != 'active') {
+      where.add('cr.status = ?');
+      args.add(status);
+    }
+    if (status == null) {
+      where.add("cr.status != 'active'");
+    }
+
+    return db.rawQuery('''
+      SELECT DISTINCT cr.*
+      FROM call_records cr
+      INNER JOIN call_transcripts ct ON ct.call_record_id = cr.id
+      WHERE ${where.join(' AND ')}
+      ORDER BY cr.started_at DESC
+      LIMIT ?
+    ''', [...args, limit]);
+  }
+
   static Future<List<Map<String, dynamic>>> getRecentCalls({
     int limit = 50,
   }) async {
@@ -574,6 +635,60 @@ class CallHistoryDb {
       orderBy: 'started_at DESC',
       limit: limit,
     );
+  }
+
+  /// Distinct caller names and numbers for autocomplete suggestions.
+  /// Returns rows with `label` (display name or number) and `phone` fields,
+  /// ordered by most recent call first, limited to [limit] entries.
+  static Future<List<Map<String, String>>> searchSuggestions(
+      String prefix, {int limit = 12}) async {
+    final db = await database;
+    final like = '%$prefix%';
+
+    final rows = await db.rawQuery('''
+      SELECT DISTINCT
+        COALESCE(NULLIF(cr.remote_display_name, ''), cr.remote_identity) AS label,
+        cr.remote_identity AS phone
+      FROM call_records cr
+      WHERE cr.status != 'active'
+        AND (cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ?)
+      GROUP BY label
+      ORDER BY MAX(cr.started_at) DESC
+      LIMIT ?
+    ''', [like, like, limit]);
+
+    // Merge in contacts that haven't called yet
+    final contactRows = await db.query(
+      'contacts',
+      columns: ['display_name', 'phone_number'],
+      where: 'display_name LIKE ? OR phone_number LIKE ?',
+      whereArgs: [like, like],
+      orderBy: 'display_name ASC',
+      limit: limit,
+    );
+
+    final seen = <String>{};
+    final results = <Map<String, String>>[];
+
+    for (final r in rows) {
+      final label = r['label'] as String? ?? '';
+      if (label.isEmpty || seen.contains(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      results.add({
+        'label': label,
+        'phone': r['phone'] as String? ?? '',
+      });
+    }
+    for (final c in contactRows) {
+      final name = c['display_name'] as String? ?? '';
+      final phone = c['phone_number'] as String? ?? '';
+      final key = name.isNotEmpty ? name.toLowerCase() : phone.toLowerCase();
+      if (key.isEmpty || seen.contains(key)) continue;
+      seen.add(key);
+      results.add({'label': name.isNotEmpty ? name : phone, 'phone': phone});
+    }
+
+    return results.take(limit).toList();
   }
 
   // ---------------------------------------------------------------------------

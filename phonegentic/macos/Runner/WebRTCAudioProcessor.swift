@@ -236,6 +236,9 @@ final class WebRTCAudioProcessor: NSObject {
         NSLog("[WebRTCAudioProcessor] clearTTSBuffers — all TTS rings reset")
     }
 
+    private var lastTTSDropLogTime: Double = 0
+    private var suppressedTTSDropCount: Int = 0
+
     /// Feed AI TTS audio (PCM16, 24 kHz mono) into the ring buffers.
     /// Stored at native 24 kHz; processors resample to pipeline rate on read.
     func feedTTS(pcm16Data: Data) {
@@ -257,9 +260,20 @@ final class WebRTCAudioProcessor: NSObject {
         ttsRecordingRing.write(floatBuf, count: sampleCount)
 
         if capWritten < sampleCount || renWritten < sampleCount {
-            NSLog("[WebRTCAudioProcessor] TTS DROP: wanted=%d capWrote=%d renWrote=%d capAvail=%d renAvail=%d",
-                  sampleCount, capWritten, renWritten,
-                  ttsCaptureRing.availableToRead, ttsRenderRing.availableToRead)
+            let now = CACurrentMediaTime()
+            if now - lastTTSDropLogTime >= 1.0 {
+                let extra = suppressedTTSDropCount > 0
+                    ? " (suppressed \(suppressedTTSDropCount) prior)"
+                    : ""
+                NSLog("[WebRTCAudioProcessor] TTS DROP: wanted=%d capWrote=%d renWrote=%d capAvail=%d renAvail=%d%@",
+                      sampleCount, capWritten, renWritten,
+                      ttsCaptureRing.availableToRead, ttsRenderRing.availableToRead,
+                      extra)
+                lastTTSDropLogTime = now
+                suppressedTTSDropCount = 0
+            } else {
+                suppressedTTSDropCount += 1
+            }
         }
     }
 
