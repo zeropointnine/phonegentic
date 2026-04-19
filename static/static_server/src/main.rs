@@ -37,11 +37,12 @@ const DEFAULT_SMS_LOG: &str = "/var/log/sms_submissions.log";
 const DEFAULT_HELP_LOG: &str = "/var/log/help_submissions.log";
 const MAX_MESSAGE_LEN: usize = 5000;
 
-/// Shared state: broadcast channel for relaying Telnyx call-control webhook
-/// events to connected WebSocket clients (the Flutter app).
+/// Shared state: broadcast channels for relaying Telnyx webhook events to
+/// connected WebSocket clients.
 #[derive(Clone)]
 struct AppState {
     call_control_tx: broadcast::Sender<String>,
+    messaging_tx: broadcast::Sender<String>,
 }
 
 fn sms_log_path() -> String {
@@ -114,7 +115,11 @@ async fn main() {
         .init();
 
     let (call_control_tx, _) = broadcast::channel::<String>(64);
-    let state = AppState { call_control_tx };
+    let (messaging_tx, _) = broadcast::channel::<String>(64);
+    let state = AppState {
+        call_control_tx,
+        messaging_tx,
+    };
 
     let root = web_root();
     let app = router(root.clone(), state);
@@ -138,6 +143,7 @@ fn router(web_root: String, state: AppState) -> Router {
         .route("/web_hooks/telnyx", post(telnyx_webhook_handler))
         .route("/web_hooks/telnyx_fail", post(telnyx_fail_handler))
         .route("/ws/call_control", get(ws_call_control_handler))
+        .route("/ws/messaging", get(ws_messaging_handler))
         .fallback_service(ServeDir::new(web_root))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -158,20 +164,60 @@ async fn telnyx_webhook_handler(
 
     tracing::info!(event_type, "Telnyx webhook received");
 
-    let forward = match event_type {
-        "call.initiated" | "call.answered" | "call.bridged" | "call.hangup"
-        | "conference.participant.joined" | "conference.participant.left" => true,
-        _ => false,
-    };
+    let is_call_control = matches!(
+        event_type,
+        "call.initiated"
+            | "call.answered"
+            | "call.bridged"
+            | "call.hangup"
+            | "conference.participant.joined"
+            | "conference.participant.left"
+    );
 
-    if forward {
-        let msg = payload.to_string();
+    let is_messaging = event_type.starts_with("message.");
+
+    let msg = payload.to_string();
+
+    if is_call_control {
         let receivers = state.call_control_tx.receiver_count();
         if receivers > 0 {
-            if let Err(e) = state.call_control_tx.send(msg) {
-                tracing::warn!("WS broadcast failed: {}", e);
+            if let Err(e) = state.call_control_tx.send(msg.clone()) {
+                tracing::warn!("WS call_control broadcast failed: {}", e);
             } else {
-                tracing::info!(event_type, receivers, "broadcast to WS clients");
+                tracing::info!(event_type, receivers, "broadcast to call_control WS");
+            }
+        }
+    }
+
+    if is_messaging {
+        let from = payload
+            .pointer("/data/payload/from/phone_number")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let to = payload
+            .pointer("/data/payload/to/0/phone_number")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let text = payload
+            .pointer("/data/payload/text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let preview = if text.len() > 80 { &text[..80] } else { text };
+
+        tracing::info!(
+            event_type,
+            from,
+            to,
+            text = preview,
+            "messaging event"
+        );
+
+        let receivers = state.messaging_tx.receiver_count();
+        if receivers > 0 {
+            if let Err(e) = state.messaging_tx.send(msg) {
+                tracing::warn!("WS messaging broadcast failed: {}", e);
+            } else {
+                tracing::info!(event_type, receivers, "broadcast to messaging WS");
             }
         }
     }
@@ -217,6 +263,44 @@ async fn ws_call_control_session(socket: WebSocket, state: AppState) {
     }
 
     tracing::info!("WS call_control client disconnected");
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: messaging events
+// ---------------------------------------------------------------------------
+
+async fn ws_messaging_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Response {
+    tracing::info!("WebSocket upgrade request for /ws/messaging");
+    ws.on_upgrade(move |socket| ws_messaging_session(socket, state))
+}
+
+async fn ws_messaging_session(socket: WebSocket, state: AppState) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut rx = state.messaging_tx.subscribe();
+
+    tracing::info!("WS messaging client connected");
+
+    let send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let recv_task = tokio::spawn(async move {
+        while let Some(Ok(_)) = ws_rx.next().await {}
+    });
+
+    tokio::select! {
+        _ = send_task => {},
+        _ = recv_task => {},
+    }
+
+    tracing::info!("WS messaging client disconnected");
 }
 
 fn env_email(key: &str) -> Option<String> {

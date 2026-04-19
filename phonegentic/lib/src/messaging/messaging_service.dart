@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../contact_service.dart';
 import '../db/call_history_db.dart';
@@ -42,6 +44,14 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   bool _windowFocused = true;
   Timer? _readTimer;
   String? _lastError;
+
+  // WebSocket relay for real-time Telnyx messaging events
+  static const _wsRelayUrl = 'wss://phonegentic.ai/ws/messaging';
+  WebSocketChannel? _wsChannel;
+  StreamSubscription? _wsSub;
+  Timer? _wsReconnectTimer;
+  int _wsReconnectDelay = 2;
+  bool _wsIntentionalClose = false;
 
   // Engagement heuristic: how long (ms) after focus before auto-marking read
   static const _readDelayMs = 30000;
@@ -85,6 +95,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> reconfigure() async {
+    _disconnectMessagingWs();
     await _webhookListener?.stop();
     _webhookListener = null;
     await _provider?.disconnect();
@@ -165,6 +176,68 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
       );
       await _webhookListener!.start();
     }
+
+    if (_provider is TelnyxMessagingProvider) {
+      _connectMessagingWs();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // WebSocket relay (real-time messaging events from Rust server)
+  // ---------------------------------------------------------------------------
+
+  void _connectMessagingWs() {
+    if (_provider is! TelnyxMessagingProvider) return;
+    _disconnectMessagingWs();
+    _wsIntentionalClose = false;
+
+    try {
+      _wsChannel = WebSocketChannel.connect(Uri.parse(_wsRelayUrl));
+      debugPrint('[MessagingWS] Connecting to $_wsRelayUrl');
+
+      _wsSub = _wsChannel!.stream.listen(
+        (data) {
+          _wsReconnectDelay = 2;
+          try {
+            final json = jsonDecode(data as String) as Map<String, dynamic>;
+            final eventType = json['data']?['event_type'] as String? ?? '';
+            debugPrint('[MessagingWS] Event: $eventType');
+            (_provider as TelnyxMessagingProvider).handleWebhookPayload(json);
+          } catch (e) {
+            debugPrint('[MessagingWS] Parse error: $e');
+          }
+        },
+        onDone: () {
+          debugPrint('[MessagingWS] Disconnected');
+          _scheduleWsReconnect();
+        },
+        onError: (e) {
+          debugPrint('[MessagingWS] Error: $e');
+          _scheduleWsReconnect();
+        },
+      );
+    } catch (e) {
+      debugPrint('[MessagingWS] Connect failed: $e');
+      _scheduleWsReconnect();
+    }
+  }
+
+  void _scheduleWsReconnect() {
+    if (_wsIntentionalClose) return;
+    _wsReconnectTimer?.cancel();
+    final delay = _wsReconnectDelay;
+    _wsReconnectDelay = (_wsReconnectDelay * 2).clamp(2, 60);
+    debugPrint('[MessagingWS] Reconnecting in ${delay}s');
+    _wsReconnectTimer = Timer(Duration(seconds: delay), _connectMessagingWs);
+  }
+
+  void _disconnectMessagingWs() {
+    _wsIntentionalClose = true;
+    _wsReconnectTimer?.cancel();
+    _wsSub?.cancel();
+    _wsSub = null;
+    _wsChannel?.sink.close();
+    _wsChannel = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -383,6 +456,9 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
 
   static String _friendlyError(Object e) {
     final s = e.toString();
+    if (s.contains('Image too large')) return s;
+    if (s.contains('File not found')) return 'Attached file no longer exists — it may have been moved or deleted.';
+    if (s.contains('40317')) return 'MMS content invalid — image may be too large (max 1 MB) or in an unsupported format.';
     if (s.contains('40305')) return 'Invalid "from" number — check Settings.';
     if (s.contains('40310')) return 'Invalid "to" number — check the phone number.';
     if (s.contains('40300')) return 'Message rejected — check your Telnyx account.';
@@ -564,6 +640,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _disconnectMessagingWs();
     _readTimer?.cancel();
     _incomingSub?.cancel();
     _inboundController.close();

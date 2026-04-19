@@ -25,6 +25,12 @@ Or if you only changed `main.rs`:
 scp static/static_server/src/main.rs root@phonegentic.ai:/root/phonegentic/static/static_server/src/main.rs
 ```
 
+Tail server
+```
+ssh root@phonegentic.ai "journalctl -u static_server -f"
+```
+
+
 ### 2 — SSH in, build release, and restart
 
 > `cargo` isn't on `PATH` in non-interactive SSH sessions — always source the rustup env first.
@@ -176,6 +182,7 @@ ssh root@phonegentic.ai "journalctl -u static_server -f"
 | POST   | `/web_hooks/telnyx`     | Telnyx call-control events (B-leg discovery)         |
 | POST   | `/web_hooks/telnyx_fail`| Telnyx failure webhook                               |
 | GET    | `/ws/call_control`      | WebSocket relay — streams call events to Flutter app |
+| GET    | `/ws/messaging`         | WebSocket relay — streams messaging events (message.received, etc.) |
 | POST   | `/api/sms-opt-in`       | SMS opt-in form                                      |
 | POST   | `/api/sms-opt-out`      | SMS opt-out form                                     |
 | POST   | `/api/help`             | Help/contact form                                    |

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 
 import 'messaging_provider.dart';
 import 'models/sms_message.dart';
@@ -53,6 +55,67 @@ class TwilioMessagingProvider implements MessagingProvider {
   }
 
   // ---------------------------------------------------------------------------
+  // Media upload (local file → Twilio-hosted URL)
+  // ---------------------------------------------------------------------------
+
+  static const _maxMmsBytes = 1000000; // 1 MB MMS limit
+
+  /// Upload a local file to Twilio Media and return the public URL.
+  Future<String> _uploadLocalFile(String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      throw TwilioApiException(0, 'File not found: $filePath');
+    }
+
+    final fileSize = file.lengthSync();
+    if (fileSize > _maxMmsBytes) {
+      throw TwilioApiException(
+        422,
+        'Image too large (${(fileSize / 1024).toStringAsFixed(0)} KB). '
+            'MMS attachments must be under 1 MB.',
+      );
+    }
+
+    final uri = Uri.parse('$_accountPath/Media.json');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers['Authorization'] = _basicAuth();
+    request.files
+        .add(await http.MultipartFile.fromPath('MediaContent', filePath));
+
+    debugPrint(
+        '[TwilioMessaging] Uploading media: ${p.basename(filePath)} ($fileSize bytes)');
+
+    final streamed = await request.send();
+    final resp = await http.Response.fromStream(streamed);
+
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      debugPrint(
+          '[TwilioMessaging] Media upload failed ${resp.statusCode}: ${resp.body}');
+      throw TwilioApiException(resp.statusCode, resp.body);
+    }
+
+    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final sid = data['sid'] as String;
+    final mediaUrl =
+        'https://api.twilio.com$_accountPath/Media/$sid';
+    debugPrint('[TwilioMessaging] Media uploaded → $mediaUrl');
+    return mediaUrl;
+  }
+
+  /// Resolve any local file paths in [urls] by uploading them.
+  Future<List<String>> _resolveMediaUrls(List<String> urls) async {
+    final resolved = <String>[];
+    for (final url in urls) {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        resolved.add(url);
+      } else {
+        resolved.add(await _uploadLocalFile(url));
+      }
+    }
+    return resolved;
+  }
+
+  // ---------------------------------------------------------------------------
   // Send
   // ---------------------------------------------------------------------------
 
@@ -66,12 +129,18 @@ class TwilioMessagingProvider implements MessagingProvider {
     final normalizedFrom = ensureE164(from);
     final normalizedTo = ensureE164(to);
 
+    // Upload local files so Twilio gets publicly-accessible URLs.
+    List<String>? resolvedMedia = mediaUrls;
+    if (mediaUrls != null && mediaUrls.isNotEmpty) {
+      resolvedMedia = await _resolveMediaUrls(mediaUrls);
+    }
+
     final pairs = <MapEntry<String, String>>[
       MapEntry('To', normalizedTo),
       MapEntry('From', normalizedFrom),
       MapEntry('Body', text),
     ];
-    for (final u in mediaUrls ?? const <String>[]) {
+    for (final u in resolvedMedia ?? const <String>[]) {
       pairs.add(MapEntry('MediaUrl', u));
     }
 

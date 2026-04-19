@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 
 import 'messaging_provider.dart';
 import 'models/sms_message.dart';
@@ -37,6 +39,67 @@ class TelnyxMessagingProvider implements MessagingProvider {
       };
 
   // ---------------------------------------------------------------------------
+  // Media upload (local file → Telnyx-hosted URL)
+  // ---------------------------------------------------------------------------
+
+  static const _maxMmsBytes = 1000000; // 1 MB Telnyx MMS limit
+
+  /// Upload a local file to Telnyx Media Storage and return the download URL.
+  Future<String> _uploadLocalFile(String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      throw TelnyxApiException(0, 'File not found: $filePath');
+    }
+
+    final fileSize = file.lengthSync();
+    if (fileSize > _maxMmsBytes) {
+      throw TelnyxApiException(
+        422,
+        'Image too large (${(fileSize / 1024).toStringAsFixed(0)} KB). '
+            'MMS attachments must be under 1 MB.',
+      );
+    }
+
+    final request =
+        http.MultipartRequest('POST', Uri.parse('$_baseUrl/media'));
+    request.headers['Authorization'] = 'Bearer $apiKey';
+    request.fields['ttl_secs'] = '3600';
+    request.fields['media_name'] = 'mms-${DateTime.now().millisecondsSinceEpoch}-${p.basename(filePath)}';
+    request.files.add(await http.MultipartFile.fromPath('media', filePath));
+
+    debugPrint(
+        '[TelnyxMessaging] Uploading media: ${p.basename(filePath)} ($fileSize bytes)');
+
+    final streamed = await request.send();
+    final resp = await http.Response.fromStream(streamed);
+
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      debugPrint(
+          '[TelnyxMessaging] Media upload failed ${resp.statusCode}: ${resp.body}');
+      throw TelnyxApiException(resp.statusCode, resp.body);
+    }
+
+    final data = jsonDecode(resp.body)['data'] as Map<String, dynamic>;
+    final mediaName = data['media_name'] as String;
+    final downloadUrl = '$_baseUrl/media/$mediaName/download';
+    debugPrint('[TelnyxMessaging] Media uploaded → $downloadUrl');
+    return downloadUrl;
+  }
+
+  /// Resolve any local file paths in [urls] by uploading them to Telnyx.
+  Future<List<String>> _resolveMediaUrls(List<String> urls) async {
+    final resolved = <String>[];
+    for (final url in urls) {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        resolved.add(url);
+      } else {
+        resolved.add(await _uploadLocalFile(url));
+      }
+    }
+    return resolved;
+  }
+
+  // ---------------------------------------------------------------------------
   // Send
   // ---------------------------------------------------------------------------
 
@@ -50,8 +113,12 @@ class TelnyxMessagingProvider implements MessagingProvider {
     final normalizedFrom = ensureE164(from);
     final normalizedTo = ensureE164(to);
 
-    // Look up the messaging profile automatically if not configured or
-    // the user entered a name instead of a UUID.
+    // Upload local files so Telnyx gets publicly-accessible URLs.
+    List<String>? resolvedMedia = mediaUrls;
+    if (mediaUrls != null && mediaUrls.isNotEmpty) {
+      resolvedMedia = await _resolveMediaUrls(mediaUrls);
+    }
+
     String? profileId = messagingProfileId;
     if (profileId == null || profileId.isEmpty || !_looksLikeUuid(profileId)) {
       profileId = await _resolveMessagingProfileId(normalizedFrom);
@@ -65,8 +132,8 @@ class TelnyxMessagingProvider implements MessagingProvider {
     if (profileId != null && profileId.isNotEmpty) {
       body['messaging_profile_id'] = profileId;
     }
-    if (mediaUrls != null && mediaUrls.isNotEmpty) {
-      body['media_urls'] = mediaUrls;
+    if (resolvedMedia != null && resolvedMedia.isNotEmpty) {
+      body['media_urls'] = resolvedMedia;
       body['type'] = 'MMS';
     }
 
