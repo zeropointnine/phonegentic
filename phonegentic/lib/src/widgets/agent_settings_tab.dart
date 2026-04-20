@@ -10,6 +10,7 @@ import '../comfort_noise_service.dart';
 import '../elevenlabs_api_service.dart';
 import '../kokoro_tts_service.dart';
 import '../build_config.dart';
+import '../whisperkit_stt_service.dart';
 import '../pocket_tts_service.dart';
 import '../settings_port_service.dart';
 import '../theme_provider.dart';
@@ -47,6 +48,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
 
+
+  bool _whisperModelAvailable = false;
 
   List<ElevenLabsVoice>? _voiceList;
   bool _voiceListLoading = false;
@@ -111,6 +114,11 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _ttsVoiceIdCtrl.text = tts.elevenLabsVoiceId;
       _loaded = true;
     });
+    if (OnDeviceConfig.isSupported) {
+      final available = await WhisperKitSttService.isModelAvailable(
+          modelSize: stt.whisperKitModelSize);
+      if (mounted) setState(() => _whisperModelAvailable = available);
+    }
     if (tts.elevenLabsApiKey.isNotEmpty) {
       _fetchVoiceList();
     }
@@ -1042,7 +1050,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       title: 'Speech Recognition',
       subtitle: isWhisperKit ? 'WhisperKit (On-Device)' : 'OpenAI Realtime',
       enabled: true,
-      configured: true,
+      configured: isWhisperKit ? _whisperModelAvailable : true,
       onToggle: (_) {},
       children: [
         Padding(
@@ -1076,7 +1084,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                         width: 0.5,
                       ),
                     ),
-                    if (BuildConfig.onDeviceModelsSupported)
+                    if (BuildConfig.onDeviceModelsSupported && _whisperModelAvailable)
                       ChoiceChip(
                         label: const Text('WhisperKit (On-Device)', style: TextStyle(fontSize: 12)),
                         selected: _stt.provider == SttProvider.whisperKit,
