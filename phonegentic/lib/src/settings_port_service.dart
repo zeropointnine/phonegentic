@@ -824,6 +824,8 @@ class SettingsPortService {
       'manager': {
         'phone_number': mgr.phoneNumber,
         'name': mgr.name,
+        'brand_name': mgr.brandName,
+        'brand_website': mgr.brandWebsite,
       },
     };
   }
@@ -991,6 +993,8 @@ class SettingsPortService {
       await UserConfigService.saveAgentManagerConfig(AgentManagerConfig(
         phoneNumber: mgr['phone_number'] as String? ?? '',
         name: mgr['name'] as String? ?? '',
+        brandName: mgr['brand_name'] as String? ?? '',
+        brandWebsite: mgr['brand_website'] as String? ?? '',
       ));
     }
   }

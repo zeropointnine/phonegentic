@@ -1465,6 +1465,21 @@ class AgentService extends ChangeNotifier {
           '\n\nDo NOT apply inbound-caller restrictions to this person.');
     }
 
+    final brandName = _agentManagerConfig.brandName;
+    final brandWebsite = _agentManagerConfig.brandWebsite;
+    if (brandName.isNotEmpty || brandWebsite.isNotEmpty) {
+      buf.write('\n\n## Brand Identity');
+      if (brandName.isNotEmpty) {
+        buf.write('\nYou represent **$brandName**. When answering calls or '
+            'introducing yourself, identify as an assistant for $brandName.');
+      }
+      if (brandWebsite.isNotEmpty) {
+        buf.write('\nThe official website is $brandWebsite — direct callers '
+            'there when they need more information, support resources, or '
+            'online services.');
+      }
+    }
+
     buf.write('\n\n## Conference Calling');
     buf.write(
         '\nYou can set up a conference call, but ONLY to bring the manager '

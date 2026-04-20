@@ -47,15 +47,29 @@ class DemoModeConfig {
 class AgentManagerConfig {
   final String phoneNumber;
   final String name;
+  final String brandName;
+  final String brandWebsite;
 
-  const AgentManagerConfig({this.phoneNumber = '', this.name = ''});
+  const AgentManagerConfig({
+    this.phoneNumber = '',
+    this.name = '',
+    this.brandName = '',
+    this.brandWebsite = '',
+  });
 
   bool get isConfigured => phoneNumber.isNotEmpty;
 
-  AgentManagerConfig copyWith({String? phoneNumber, String? name}) {
+  AgentManagerConfig copyWith({
+    String? phoneNumber,
+    String? name,
+    String? brandName,
+    String? brandWebsite,
+  }) {
     return AgentManagerConfig(
       phoneNumber: phoneNumber ?? this.phoneNumber,
       name: name ?? this.name,
+      brandName: brandName ?? this.brandName,
+      brandWebsite: brandWebsite ?? this.brandWebsite,
     );
   }
 }
@@ -109,6 +123,9 @@ class UserConfigService {
       phoneNumber:
           prefs.getString('${_prefix}agent_manager_phone') ?? '',
       name: prefs.getString('${_prefix}agent_manager_name') ?? '',
+      brandName: prefs.getString('${_prefix}agent_manager_brand_name') ?? '',
+      brandWebsite:
+          prefs.getString('${_prefix}agent_manager_brand_website') ?? '',
     );
   }
 
@@ -119,6 +136,10 @@ class UserConfigService {
         '${_prefix}agent_manager_phone', config.phoneNumber);
     await prefs.setString(
         '${_prefix}agent_manager_name', config.name);
+    await prefs.setString(
+        '${_prefix}agent_manager_brand_name', config.brandName);
+    await prefs.setString(
+        '${_prefix}agent_manager_brand_website', config.brandWebsite);
   }
 
   static Future<AwayReturnConfig> loadAwayReturnConfig() async {

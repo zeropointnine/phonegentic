@@ -257,6 +257,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
 
   final _agentManagerPhoneCtrl = TextEditingController();
   final _agentManagerNameCtrl = TextEditingController();
+  final _agentManagerBrandNameCtrl = TextEditingController();
+  final _agentManagerBrandWebsiteCtrl = TextEditingController();
 
   final _flightNumberCtrl = TextEditingController();
   final _originCtrl = TextEditingController();
@@ -274,6 +276,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     _fakeNumberCtrl.dispose();
     _agentManagerPhoneCtrl.dispose();
     _agentManagerNameCtrl.dispose();
+    _agentManagerBrandNameCtrl.dispose();
+    _agentManagerBrandWebsiteCtrl.dispose();
     _telnyxMsgKeyCtrl.dispose();
     _telnyxMsgFromCtrl.dispose();
     _telnyxMsgProfileCtrl.dispose();
@@ -323,6 +327,8 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _fakeNumberCtrl.text = d.fakeNumber;
       _agentManagerPhoneCtrl.text = am.phoneNumber;
       _agentManagerNameCtrl.text = am.name;
+      _agentManagerBrandNameCtrl.text = am.brandName;
+      _agentManagerBrandWebsiteCtrl.text = am.brandWebsite;
       _telnyxMsgKeyCtrl.text = t.apiKey;
       _telnyxMsgFromCtrl.text = t.fromNumber;
       _telnyxMsgProfileCtrl.text = t.messagingProfileId;
@@ -1360,6 +1366,84 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                         ),
                         onChanged: (val) => _updateAgentManager(
                             _agentManager.copyWith(phoneNumber: val)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 100,
+                      child: Text('Brand',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _agentManagerBrandNameCtrl,
+                        autocorrect: false,
+                        textCapitalization: TextCapitalization.words,
+                        style: TextStyle(
+                            fontSize: 14, color: AppColors.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: 'Acme Corp',
+                          hintStyle: TextStyle(
+                              fontSize: 13, color: AppColors.textTertiary),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onChanged: (val) => _updateAgentManager(
+                            _agentManager.copyWith(brandName: val)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 100,
+                      child: Text('Website',
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _agentManagerBrandWebsiteCtrl,
+                        autocorrect: false,
+                        keyboardType: TextInputType.url,
+                        style: TextStyle(
+                            fontSize: 14, color: AppColors.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: 'https://acme.com',
+                          hintStyle: TextStyle(
+                              fontSize: 13, color: AppColors.textTertiary),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onChanged: (val) => _updateAgentManager(
+                            _agentManager.copyWith(brandWebsite: val)),
                       ),
                     ),
                   ],
