@@ -47,8 +47,8 @@ class PocketTtsOnnxEngine {
   bool encode_voice(const int16_t* pcm_data, size_t n_samples,
                     const std::string& voice_id);
 
-  /// Serialize a previously encoded voice embedding to a binary blob
-  /// (same format as default_voice.bin). Returns empty on failure.
+  /// Serialize a previously encoded voice embedding to a binary blob.
+  /// Returns empty on failure.
   std::vector<uint8_t> export_voice_embedding(const std::string& voice_id);
 
   /// Deserialize and store a voice embedding. Returns false on format error.

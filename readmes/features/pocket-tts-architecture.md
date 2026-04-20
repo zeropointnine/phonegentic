@@ -10,7 +10,7 @@ This document covers the Linux implementation, which is complete. A macOS implem
 is forthcoming. The ONNX-based inference pipeline is platform-agnostic C++, so the engine
 layer transfers directly; only the Flutter plugin channel layer (currently GObject/GLib)
 requires a macOS-native equivalent. At RTF ~0.17 on M-series CPU (as benchmarked by
-Kyutai), and with the streaming architecture already in place, macOS latency will be
+Kyutai), and with the streaming architecture already in p<!--  -->lace, macOS latency will be
 competitive without requiring MLX acceleration, though an MLX backend remains an option
 for future optimization on Apple Silicon.
 
@@ -102,7 +102,7 @@ Pocket TTS appears as a provider chip in the Voice Output card, visible only on 
 (`Platform.isLinux`) when `OnDeviceConfig.isSupported` is true.
 
 When Pocket TTS is selected, a **Voice clone** row is shown:
-- Displays the basename of the currently configured clone file, or "None".
+- Displays the basename of the currently configured clone file, or "Default" when none is set.
 - **Browse** opens a file picker restricted to: `wav`, `mp3`, `m4a`, `ogg`, `flac`, `aac`.
 - On file selection, `PocketTtsService.getAudioDurationSeconds` is called. If the duration
   exceeds **30 seconds**, the file is rejected with a floating SnackBar:
@@ -188,11 +188,8 @@ All under `models/pocket-tts-onnx/` (bundled at `data/flutter_assets/models/pock
 | `onnx/flow_lm_flow_int8.onnx` | INT8 | Flow matching: maps noise → latent via Euler integration |
 | `onnx/mimi_decoder_int8.onnx` | INT8 | Mimi audio codec: latent frames → float PCM |
 | `tokenizer.model` | SentencePiece | BPE tokenizer vocabulary |
-| `default_voice.bin` | Custom binary | Pre-computed voice embedding; see format below |
+| `reference_sample.wav` | WAV audio | Reference voice sample; encoded at startup into the `"default"` voice embedding |
 | `onnx/mimi_encoder.onnx` | FP32 | Voice encoder (lazy-loaded on first `encodeVoice` call) |
-
-`default_voice.bin` format: `int32 n_frames | int32 n_dims | float32[n_frames × 1024]`.
-The embedding dimension is always 1024.
 
 Presence of `onnx/flow_lm_main_int8.onnx` is used as the sentinel for `isModelAvailable`.
 
@@ -274,8 +271,7 @@ Cloned and default voice embeddings are stored as `std::pair<int64_t, std::vecto
 where the `int64_t` is the number of frames and the vector holds `n_frames × 1024` floats.
 Cloned voices are kept in `std::map<std::string, ...> cloned_voices` guarded by a mutex.
 
-Export/import binary format: `int32 n_frames | int32 n_dims | float32[n_frames × 1024]` —
-the same layout as `default_voice.bin`.
+Export/import binary format: `int32 n_frames | int32 n_dims | float32[n_frames × 1024]`.
 
 ---
 

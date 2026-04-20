@@ -282,8 +282,7 @@ print(f'  Converted {voice}: {pack.shape} → {npy_path}')
 # ─── Linux: Pocket TTS (ONNX INT8) ───────────────────────────────────
 #
 # Source: KevinAHM/pocket-tts-onnx (ungated, CC-BY 4.0)
-# Downloads INT8-quantized synthesis models (~180 MB) and the tokenizer.
-# mimi_encoder.onnx (voice cloning) is intentionally omitted until Phase 3.
+# Downloads INT8-quantized synthesis models (~180 MB), the tokenizer, encoder, and reference voice sample.
 
 download_pocket_tts_linux() {
     if [ "$OS" != "Linux" ]; then
@@ -294,15 +293,29 @@ download_pocket_tts_linux() {
     info "Downloading Pocket TTS model (ONNX INT8, ~180 MB)..."
     mkdir -p "$POCKET_TTS_DIR/onnx"
 
-    local sentinel="$POCKET_TTS_DIR/onnx/flow_lm_main_int8.onnx"
-    local fsize=0
-    if [ -f "$sentinel" ]; then
-        fsize=$(file_size_bytes "$sentinel")
-    fi
+    local required_files=(
+        "onnx/flow_lm_main_int8.onnx"
+        "onnx/flow_lm_flow_int8.onnx"
+        "onnx/mimi_decoder_int8.onnx"
+        "onnx/text_conditioner.onnx"
+        "onnx/mimi_encoder.onnx"
+        "tokenizer.model"
+        "reference_sample.wav"
+    )
 
-    if [ "$fsize" -gt 1000000 ]; then
-        ok "Pocket TTS models already exist ($(dir_size_human "$POCKET_TTS_DIR")), skipping."
-    else
+    local missing=0
+    for f in "${required_files[@]}"; do
+        local fpath="$POCKET_TTS_DIR/$f"
+        local fsize=0
+        if [ -f "$fpath" ]; then fsize=$(file_size_bytes "$fpath"); fi
+        if [ "$fsize" -gt 1000 ]; then
+            ok "$f already exists, skipping."
+        else
+            missing=$((missing + 1))
+        fi
+    done
+
+    if [ "$missing" -gt 0 ]; then
         echo "    Source: KevinAHM/pocket-tts-onnx"
         python3 -c "
 from huggingface_hub import snapshot_download
@@ -311,10 +324,12 @@ snapshot_download(
     local_dir=r'''$POCKET_TTS_DIR''',
     allow_patterns=[
         'tokenizer.model',
+        'reference_sample.wav',
         'onnx/flow_lm_main_int8.onnx',
         'onnx/flow_lm_flow_int8.onnx',
         'onnx/mimi_decoder_int8.onnx',
         'onnx/text_conditioner.onnx',
+        'onnx/mimi_encoder.onnx',
     ],
 )
 print('Download complete.')

@@ -114,7 +114,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _ttsVoiceIdCtrl.text = tts.elevenLabsVoiceId;
       _loaded = true;
     });
-    if (OnDeviceConfig.isSupported) {
+    if (BuildConfig.onDeviceModelsSupported) {
       final available = await WhisperKitSttService.isModelAvailable(
           modelSize: stt.whisperKitModelSize);
       if (mounted) setState(() => _whisperModelAvailable = available);
@@ -976,7 +976,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           ),
           Expanded(
             child: Text(
-              hasClone ? p.basename(clonePath) : 'None',
+              hasClone ? p.basename(clonePath) : 'Default',
               style: TextStyle(
                 fontSize: 13,
                 color: hasClone ? AppColors.textPrimary : AppColors.textSecondary,

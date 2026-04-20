@@ -61,9 +61,6 @@ struct PocketTtsOnnxEngine::Impl {
   Ort::SessionOptions   session_opts;
   Ort::AllocatorWithDefaultOptions allocator;
 
-  // Pre-loaded default voice embeddings [n_frames × 1024].
-  std::vector<float> default_voice_data;
-  int64_t default_voice_frames = 0;
   static const int64_t kVoiceDim = 1024;
 
   // Cloned voices: voiceId → (n_frames, float embeddings [n_frames × 1024]).
@@ -347,33 +344,6 @@ bool PocketTtsOnnxEngine::initialize(const std::string& models_dir) {
     fprintf(stderr, "[PocketTTS] SentencePiece load failed: %s — %s\n",
             sp_path.c_str(), status.ToString().c_str());
     return false;
-  }
-
-  // ── 5. Load default voice embeddings ─────────────────────────────────────
-  std::string voice_bin_path = models_dir + "/default_voice.bin";
-  FILE* vf = fopen(voice_bin_path.c_str(), "rb");
-  if (!vf) {
-    fprintf(stderr, "[PocketTTS] WARNING: default_voice.bin not found at %s — "
-            "voice conditioning disabled (audio will be low quality)\n",
-            voice_bin_path.c_str());
-  } else {
-    int32_t hdr[2] = {0, 0};
-    fread(hdr, sizeof(int32_t), 2, vf);
-    impl_->default_voice_frames = hdr[0];
-    int64_t expected_dim = hdr[1];
-    size_t n_elems = static_cast<size_t>(hdr[0]) * static_cast<size_t>(hdr[1]);
-    impl_->default_voice_data.resize(n_elems);
-    size_t read = fread(impl_->default_voice_data.data(), sizeof(float), n_elems, vf);
-    fclose(vf);
-    if (read != n_elems || expected_dim != Impl::kVoiceDim) {
-      fprintf(stderr, "[PocketTTS] WARNING: default_voice.bin corrupt (read=%zu expected=%zu dim=%lld)\n",
-              read, n_elems, (long long)expected_dim);
-      impl_->default_voice_data.clear();
-      impl_->default_voice_frames = 0;
-    } else {
-      fprintf(stderr, "[PocketTTS] Voice embeddings loaded: %lld frames × %lld dims\n",
-              (long long)impl_->default_voice_frames, (long long)Impl::kVoiceDim);
-    }
   }
 
   // ── Diagnostic: dump I/O names for all sessions ──────────────────────────
@@ -665,22 +635,20 @@ void PocketTtsOnnxEngine::synthesize_impl(
 
     main_states = impl_->init_states(*impl_->flow_lm_main);
 
-    // Resolve voice embedding: cloned voice > default voice.
-    // Copy under lock so the synthesis thread has a stable snapshot.
+    // Resolve voice embedding. All voices (including "default") are stored in
+    // cloned_voices; "default" is populated from reference_sample.wav at init.
     std::vector<float> voice_data_copy;
     int64_t voice_frames = 0;
     {
+      std::string lookup = (voice_name.empty() || voice_name == "default")
+                               ? "default" : voice_name;
       std::lock_guard<std::mutex> lock(impl_->cloned_voices_mutex);
-      if (!voice_name.empty() && voice_name != "default") {
-        auto it = impl_->cloned_voices.find(voice_name);
-        if (it != impl_->cloned_voices.end()) {
-          voice_frames   = it->second.first;
-          voice_data_copy = it->second.second;
-        }
-      }
-      if (voice_data_copy.empty() && !impl_->default_voice_data.empty()) {
-        voice_frames   = impl_->default_voice_frames;
-        voice_data_copy = impl_->default_voice_data;
+      auto it = impl_->cloned_voices.find(lookup);
+      if (it == impl_->cloned_voices.end() && lookup != "default")
+        it = impl_->cloned_voices.find("default");
+      if (it != impl_->cloned_voices.end()) {
+        voice_frames    = it->second.first;
+        voice_data_copy = it->second.second;
       }
     }
 

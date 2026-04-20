@@ -34,7 +34,7 @@ class PocketTtsService implements LocalTtsService {
   final TtsConfig _config;
   bool _initialized = false;
   bool _generating = false;
-  late String _currentVoice = _config.kokoroVoiceStyle;
+  late String _currentVoice = 'default';
 
   final TextSegmenter _segmenter = TextSegmenter();
   final List<String> _sentenceQueue = [];
@@ -84,7 +84,15 @@ class PocketTtsService implements LocalTtsService {
         onError: (e) {
           debugPrint('[PocketTTS] Audio event error: $e');
         },
-      );/*  */
+      );
+
+      if (_initialized) {
+        final binaryDir = File(Platform.resolvedExecutable).parent.path;
+        final refWav =
+            '$binaryDir/data/flutter_assets/models/pocket-tts-onnx/reference_sample.wav';
+        final ok = await cloneVoiceFromFile(refWav, 'default');
+        debugPrint('[PocketTTS] Default voice encoded: $ok');
+      }
 
       debugPrint('[PocketTTS] Initialized: $_initialized');
     } on PlatformException catch (e) {
