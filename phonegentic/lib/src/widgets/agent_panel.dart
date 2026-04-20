@@ -1598,7 +1598,7 @@ class _ConferenceCallBar extends StatelessWidget {
                 const SizedBox(width: 6),
                 Text(
                   hasConference
-                      ? 'Conference (${legs.length} parties)'
+                      ? 'Conference (${legs.length}/${conf.config.effectiveMaxParticipants})'
                       : '${legs.length} ongoing calls',
                   style: TextStyle(
                     fontSize: 11,
@@ -1626,28 +1626,71 @@ class _ConferenceCallBar extends StatelessWidget {
               ],
             ),
           ),
-          // Leg rows with merge connector
-          for (int i = 0; i < legs.length; i++) ...[
-            _CallLegRow(
-              leg: legs[i],
-              isFocused: legs[i].sipCallId == conf.focusedLegId,
-              demo: demo,
-              onTap: () => conf.focusLeg(legs[i].sipCallId),
-              onHold: () {
-                if (legs[i].state == LegState.held) {
-                  conf.unholdLeg(legs[i].sipCallId);
-                } else {
-                  conf.holdLeg(legs[i].sipCallId);
-                }
-              },
-            ),
-            // Merge connector between legs (only when not yet merged)
-            if (i < legs.length - 1 && !hasConference)
-              _MergeConnector(
-                canMerge: conf.canMerge && !conf.isMerging,
-                onMerge: conf.merge,
+          if (hasConference)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(
+                        left: 14, top: 4, bottom: 4),
+                    child: Container(
+                      width: 2,
+                      decoration: BoxDecoration(
+                        color: AppColors.accent,
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (int i = 0; i < legs.length; i++)
+                          _CallLegRow(
+                            leg: legs[i],
+                            isFocused:
+                                legs[i].sipCallId == conf.focusedLegId,
+                            inMergedConference: true,
+                            demo: demo,
+                            onTap: () =>
+                                conf.focusLeg(legs[i].sipCallId),
+                            onHold: () {
+                              if (legs[i].state == LegState.held) {
+                                conf.unholdLeg(legs[i].sipCallId);
+                              } else {
+                                conf.holdLeg(legs[i].sipCallId);
+                              }
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-          ],
+            )
+          else
+            // Not merged: leg rows with merge connectors between them
+            for (int i = 0; i < legs.length; i++) ...[
+              _CallLegRow(
+                leg: legs[i],
+                isFocused: legs[i].sipCallId == conf.focusedLegId,
+                demo: demo,
+                onTap: () => conf.focusLeg(legs[i].sipCallId),
+                onHold: () {
+                  if (legs[i].state == LegState.held) {
+                    conf.unholdLeg(legs[i].sipCallId);
+                  } else {
+                    conf.holdLeg(legs[i].sipCallId);
+                  }
+                },
+              ),
+              if (i < legs.length - 1)
+                _MergeConnector(
+                  canMerge: conf.canMerge && !conf.isMerging,
+                  onMerge: conf.merge,
+                ),
+            ],
           const SizedBox(height: 4),
         ],
       ),
@@ -1658,6 +1701,7 @@ class _ConferenceCallBar extends StatelessWidget {
 class _CallLegRow extends StatelessWidget {
   final ConferenceCallLeg leg;
   final bool isFocused;
+  final bool inMergedConference;
   final DemoModeService demo;
   final VoidCallback onTap;
   final VoidCallback onHold;
@@ -1665,6 +1709,7 @@ class _CallLegRow extends StatelessWidget {
   const _CallLegRow({
     required this.leg,
     required this.isFocused,
+    this.inMergedConference = false,
     required this.demo,
     required this.onTap,
     required this.onHold,
@@ -1715,9 +1760,9 @@ class _CallLegRow extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(14, 6, 10, 6),
         decoration: BoxDecoration(
           color: isFocused
-              ? AppColors.accent.withValues(alpha: 0.06)
+              ? AppColors.accent.withValues(alpha: 0.10)
               : Colors.transparent,
-          border: isFocused
+          border: isFocused && !inMergedConference
               ? Border(left: BorderSide(color: AppColors.accent, width: 2))
               : null,
         ),

@@ -47,6 +47,9 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     /// How long (seconds) after the last TTS chunk to keep suppressing mic audio in call mode.
     private static let callModeTTSSuppression: TimeInterval = 2.0
 
+    /// Latest remote-party RMS from the flush cycle, for UI speech indicators.
+    private(set) var lastRemoteRMS: Double = 0
+
     /// Tracks which audio source was dominant over a sliding window.
     /// "host" = mic, "remote" = remote party, "unknown" = neither or silence.
     private(set) var dominantSpeaker: String = "unknown"
@@ -116,6 +119,10 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "setConferenceMode":
             let args = call.arguments as? [String: Any] ?? [:]
             let active = args["active"] as? Bool ?? false
+            let slotCount = args["slotCount"] as? Int ?? 10
+            if active {
+                WebRTCAudioProcessor.shared.confSlotCount = max(2, min(slotCount, 10))
+            }
             setAPMConferenceMode(active)
             result(nil)
         case "playAudioResponse":
@@ -187,6 +194,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "stopVoiceSample":
             stopVoiceSample()
             result(nil)
+        case "getConferenceAudioLevels":
+            let rms = WebRTCAudioProcessor.shared.confSlotRMS
+            result(rms.map { Double($0) })
+        case "getRemoteAudioLevel":
+            result(lastRemoteRMS)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -772,6 +784,8 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             } else {
                 flushDominant = "unknown"
             }
+
+            lastRemoteRMS = remoteRMS
 
             dominantHistory.append(flushDominant)
             if dominantHistory.count > AudioTapChannel.dominantWindowSize {

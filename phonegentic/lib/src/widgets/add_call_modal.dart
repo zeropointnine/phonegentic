@@ -409,9 +409,7 @@ class _AddCallModalState extends State<AddCallModal> {
           const SizedBox(height: 4),
           Expanded(
             child: Align(
-              alignment: _placing
-                  ? const Alignment(0, -0.4)
-                  : Alignment.center,
+              alignment: Alignment.center,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 360),
                 child: _phase == _ModalPhase.connected
@@ -434,12 +432,12 @@ class _AddCallModalState extends State<AddCallModal> {
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Add2CallIcon(size: 22, color: AppColors.accent),
-        const SizedBox(width: 6),
+        Add2CallIcon(size: 28, color: AppColors.accent),
+        const SizedBox(width: 8),
         Text(
           'Add Call',
           style: TextStyle(
-            fontSize: 16,
+            fontSize: 18,
             fontWeight: FontWeight.w600,
             color: AppColors.accent,
             letterSpacing: -0.3,

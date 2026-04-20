@@ -436,7 +436,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                           const SizedBox(height: 2),
                           Text(
                             isOnDevice
-                                ? 'Mix audio locally across two SIP calls'
+                                ? 'Mix audio locally across SIP calls'
                                 : isBasic
                                     ? 'Merge calls via SIP REFER'
                                     : 'Conference calling disabled',
@@ -474,6 +474,62 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   ],
                 ),
               ),
+              if (isActive) ...[
+                Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Max participants',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              isBasic
+                                  ? 'SIP REFER limited to 2'
+                                  : 'Remote call legs in conference',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textTertiary),
+                            ),
+                          ],
+                        ),
+                      ),
+                      DropdownButton<int>(
+                        value: _conf.effectiveMaxParticipants,
+                        dropdownColor: AppColors.card,
+                        underline: const SizedBox.shrink(),
+                        style: TextStyle(
+                            fontSize: 13, color: AppColors.textPrimary),
+                        items: [
+                          for (int n = 2; n <= (isBasic ? 2 : 10); n++)
+                            DropdownMenuItem(
+                              value: n,
+                              child: Text('$n'),
+                            ),
+                        ],
+                        onChanged: isBasic
+                            ? null
+                            : (v) {
+                                if (v == null) return;
+                                _updateConference(
+                                    _conf.copyWith(maxParticipants: v));
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               if (isBasic) ...[
                 Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
                 _buildBasicConfToggle(

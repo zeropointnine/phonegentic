@@ -133,29 +133,37 @@ final class WebRTCAudioProcessor: NSObject {
     var micMuted = false
 
     /// When true, the render/capture processors cross-route audio between
-    /// PeerConnections via the double-slot mechanism and TTS is mixed through
-    /// a snapshot buffer (so both PCs share a single ring read per tick).
+    /// PeerConnections via the N-slot mechanism and TTS is mixed through
+    /// a snapshot buffer (so all PCs share a single ring read per tick).
     var conferenceMode = false
 
-    // MARK: - Conference Cross-Inject (double-slot)
+    // MARK: - Conference Cross-Inject (N-slot)
     //
-    // Two fixed-size frame buffers. RenderPreProc alternates writing to slot 0/1;
-    // CapturePostProc alternates reading from the OPPOSITE slot. This ensures
-    // each PeerConnection's capture gets the OTHER PC's render audio.
+    // N frame buffers (one per PeerConnection). RenderPreProc writes to
+    // confSlots[confRenderIndex], incrementing each call. CapturePostProc
+    // reads and sums ALL slots EXCEPT confSlots[confCaptureIndex] (the
+    // current PC's own render), achieving cross-routing for N parties.
     //
-    //   Render PC_A → slot0   |   Capture PC_A reads slot1 (B's audio)
-    //   Render PC_B → slot1   |   Capture PC_B reads slot0 (A's audio)
+    //   Render PC_0 → slot[0]   |  Capture PC_0 reads slot[1..N-1]
+    //   Render PC_1 → slot[1]   |  Capture PC_1 reads slot[0], slot[2..N-1]
+    //   ...
 
-    private var confSlot0: UnsafeMutablePointer<Float> = .allocate(capacity: 960)
-    private var confSlot1: UnsafeMutablePointer<Float> = .allocate(capacity: 960)
+    /// Number of PeerConnections in the conference. Set from Flutter via
+    /// setConferenceMode(active:, slotCount:) whenever legs change.
+    /// Render/capture indices wrap at this value.
+    var confSlotCount: Int = 2
+
+    private static let confMaxSlots = 10
+    private(set) var confSlots: [UnsafeMutablePointer<Float>] = []
+    private var confSlotFrames: [Int] = []
+    private var confSlotRates: [Int] = []
     private var confSlotCapacity: Int = 960  // 10ms at 96kHz max
-    private(set) var confSlot0Frames: Int = 0
-    private(set) var confSlot1Frames: Int = 0
-    private var confSlotRate: Int = 48000
-    private var confRenderToggle = false     // false = write slot0, true = write slot1
-    private var confCaptureToggle = false    // false = read slot1, true = read slot0
+    private(set) var confRenderIndex: Int = 0
+    private(set) var confCaptureIndex: Int = 0
     private let confCrossGain: Float = 0.7
 
+    /// Per-slot RMS of the most recent render frame, for speech detection.
+    var confSlotRMS: [Float] = []
 
     /// Logarithmic waveshaping compressor applied to remote audio in the
     /// render path. Levels out volume differences between speakers so quiet
@@ -316,76 +324,97 @@ final class WebRTCAudioProcessor: NSObject {
     // MARK: - Conference Cross-Inject Methods
 
     func confResetSlots() {
-        confSlot0Frames = 0
-        confSlot1Frames = 0
-        confRenderToggle = false
-        confCaptureToggle = false
+        for slot in confSlots { slot.deallocate() }
+        confSlots = []
+        confSlotFrames = []
+        confSlotRMS = []
+        confRenderIndex = 0
+        confCaptureIndex = 0
     }
 
-    /// Called by RenderPreProc to store the current render frame for cross-injection.
-    /// Alternates between slot 0 and slot 1 on each invocation.
+    /// Ensure we have enough slot buffers for the current `confSlotCount`.
+    private func confEnsureSlots(frameCapacity: Int) {
+        let needed = min(confSlotCount, Self.confMaxSlots)
+        if confSlots.count < needed || frameCapacity > confSlotCapacity {
+            let cap = max(frameCapacity, confSlotCapacity)
+            for slot in confSlots { slot.deallocate() }
+            confSlots = (0..<needed).map { _ in
+                let p = UnsafeMutablePointer<Float>.allocate(capacity: cap)
+                p.initialize(repeating: 0, count: cap)
+                return p
+            }
+            confSlotFrames = [Int](repeating: 0, count: needed)
+            confSlotRates = [Int](repeating: 48000, count: needed)
+            confSlotRMS = [Float](repeating: 0, count: needed)
+            confSlotCapacity = cap
+            NSLog("[WebRTCAudioProcessor] confSlots reallocated: count=%d cap=%d", needed, cap)
+        }
+    }
+
+    /// Called by RenderPreProc to store the current render frame for
+    /// cross-injection. Each render callback gets the next slot in sequence,
+    /// wrapping at confSlotCount. WebRTC fires R_0, C_0, R_1, C_1, ...
+    /// so render and capture indices stay in lock-step per-PC.
     func confRenderStore(_ buf: UnsafeMutablePointer<Float>, frames: Int, rate: Int) {
-        confSlotRate = rate
+        confEnsureSlots(frameCapacity: frames)
 
-        if frames > confSlotCapacity {
-            confSlot0.deallocate()
-            confSlot1.deallocate()
-            confSlotCapacity = frames
-            confSlot0 = .allocate(capacity: frames)
-            confSlot1 = .allocate(capacity: frames)
-            confSlot0Frames = 0
-            confSlot1Frames = 0
-            NSLog("[WebRTCAudioProcessor] confSlots resized to %d", frames)
+        let idx = confRenderIndex % confSlotCount
+        guard idx < confSlots.count else { return }
+        memcpy(confSlots[idx], buf, frames * MemoryLayout<Float>.size)
+        confSlotFrames[idx] = frames
+        confSlotRates[idx] = rate
+
+        if idx < confSlotRMS.count {
+            var sumSq: Float = 0
+            for i in 0..<frames { sumSq += buf[i] * buf[i] }
+            confSlotRMS[idx] = sqrtf(sumSq / Float(max(frames, 1)))
         }
 
-        if !confRenderToggle {
-            memcpy(confSlot0, buf, frames * MemoryLayout<Float>.size)
-            confSlot0Frames = frames
-        } else {
-            memcpy(confSlot1, buf, frames * MemoryLayout<Float>.size)
-            confSlot1Frames = frames
-        }
-        confRenderToggle = !confRenderToggle
+        confRenderIndex += 1
+        if confRenderIndex >= confSlotCount { confRenderIndex = 0 }
     }
 
-    /// Called by CapturePostProc to mix the OTHER PeerConnection's render audio
-    /// into the outgoing capture buffer. Reads the opposite slot from what the
-    /// render toggle would suggest, achieving the cross-routing.
+    /// Called by CapturePostProc to mix ALL OTHER PeerConnections' render audio
+    /// into the outgoing capture buffer. Each capture callback gets the next
+    /// slot index; it reads from every *other* slot, achieving cross-routing.
     func confCaptureMix(into buf: UnsafeMutablePointer<Float>, frames: Int, rate: Int) {
-        let slot: UnsafeMutablePointer<Float>
-        let slotFrames: Int
-
-        if !confCaptureToggle {
-            slot = confSlot1
-            slotFrames = confSlot1Frames
-        } else {
-            slot = confSlot0
-            slotFrames = confSlot0Frames
-        }
-        confCaptureToggle = !confCaptureToggle
-
-        guard slotFrames > 0 else { return }
-
-        let srcRate = confSlotRate
+        let n = confSlotCount
+        guard n > 0 else { return }
+        let myIdx = confCaptureIndex % n
         let dstRate = rate
-        let gain = confCrossGain
+        let otherCount = max(n - 1, 1)
+        let gain = confCrossGain / Float(otherCount)
 
-        if srcRate == dstRate {
-            let count = min(frames, slotFrames)
-            for i in 0..<count {
-                buf[i] = max(-32768.0, min(32767.0, buf[i] + slot[i] * gain))
+        for s in 0..<n {
+            if s == myIdx { continue }
+            guard s < confSlots.count else { continue }
+            let slotFrames = confSlotFrames[s]
+            guard slotFrames > 0 else { continue }
+            let slot = confSlots[s]
+            let srcRate = s < confSlotRates.count ? confSlotRates[s] : dstRate
+
+            if srcRate == dstRate {
+                let count = min(frames, slotFrames)
+                for i in 0..<count {
+                    buf[i] = max(-32768.0, min(32767.0, buf[i] + slot[i] * gain))
+                }
+            } else {
+                let ratio = Double(srcRate) / Double(dstRate)
+                for i in 0..<frames {
+                    let srcIdx = Double(i) * ratio
+                    let idx0 = Int(srcIdx)
+                    let frac = Float(srcIdx - Double(idx0))
+                    let s0 = idx0 < slotFrames ? slot[idx0] : Float(0)
+                    let s1 = (idx0 + 1) < slotFrames ? slot[idx0 + 1] : s0
+                    let sample = s0 + (s1 - s0) * frac
+                    buf[i] = max(-32768.0, min(32767.0, buf[i] + sample * gain))
+                }
             }
-        } else {
-            let ratio = Double(srcRate) / Double(dstRate)
-            for i in 0..<frames {
-                let srcIdx = Double(i) * ratio
-                let idx0 = Int(srcIdx)
-                let frac = Float(srcIdx - Double(idx0))
-                let s0 = idx0 < slotFrames ? slot[idx0] : Float(0)
-                let s1 = (idx0 + 1) < slotFrames ? slot[idx0 + 1] : s0
-                let sample = s0 + (s1 - s0) * frac
-                buf[i] = max(-32768.0, min(32767.0, buf[i] + sample * gain))
-            }
+        }
+
+        confCaptureIndex += 1
+        if confCaptureIndex >= n {
+            confCaptureIndex = 0
         }
     }
 
@@ -666,10 +695,10 @@ final class RenderPreProcessor: NSObject, ExternalAudioProcessingDelegate {
             var rms: Float = 0
             for i in 0..<frames { rms += buf[i] * buf[i] }
             rms = sqrtf(rms / Float(frames))
-            NSLog("[RenderPreProc] #%llu frames=%d rate=%d remoteRMS=%.1f ttsAvail=%d conf=%@ slot0=%d slot1=%d",
+            NSLog("[RenderPreProc] #%llu frames=%d rate=%d remoteRMS=%.1f ttsAvail=%d conf=%@ slotCount=%d renderIdx=%d",
                   diagCounter, frames, rate, rms, ttsAvail,
                   inConference ? "YES" : "NO",
-                  owner.confSlot0Frames, owner.confSlot1Frames)
+                  owner.confSlotCount, owner.confRenderIndex)
         }
 
         // Store raw render audio for conference cross-injection BEFORE gain

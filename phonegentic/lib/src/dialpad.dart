@@ -1934,7 +1934,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
         });
         conf.addLeg(call, isOutbound: !isIncoming);
         if (isConferenceLeg) {
-          _tapChannel.invokeMethod('setConferenceMode', {'active': true});
+          _tapChannel.invokeMethod('setConferenceMode', {
+            'active': true,
+            'slotCount': conf.legs.length,
+          });
           _startConferenceTimeout(call.id!);
         }
         if (isIncoming && !isForkReplacement) {
@@ -2028,6 +2031,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
         if (_calls.length <= 1) {
           Future.microtask(() =>
               _tapChannel.invokeMethod('setConferenceMode', {'active': false}));
+        } else {
+          _tapChannel.invokeMethod('setConferenceMode', {
+            'active': true,
+            'slotCount': _calls.length,
+          });
         }
         if (wasConferenceLeg && _calls.length == 1) {
           final remaining = _calls.values.first;

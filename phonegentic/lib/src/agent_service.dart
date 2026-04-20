@@ -3270,6 +3270,7 @@ class AgentService extends ChangeNotifier {
       if (event.isFinal) {
         debugPrint('[AgentService] Response suppressed during dial-pending: '
             '"${event.text.length > 60 ? event.text.substring(0, 60) : event.text}..."');
+        _activeTtsEndGeneration();
       }
       return;
     }
@@ -3282,6 +3283,10 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] Stripped hallucinated CALL_STATE from LLM output');
       if (cleaned.isEmpty) {
         debugPrint('[AgentService] Entire response was hallucinated CALL_STATE — discarding');
+        _ttsInterrupted = true;
+        _activeTtsEndGeneration();
+        _whisper.stopResponseAudio();
+        _whisper.clearTTSQueue();
         return;
       }
       _appendStreamingResponse(ResponseTextEvent(text: cleaned, isFinal: true));
@@ -4984,6 +4989,11 @@ class AgentService extends ChangeNotifier {
     if (sipHelper == null) return 'SIP helper not available.';
     final number = args['number'] as String?;
     if (number == null || number.isEmpty) return 'No number provided.';
+    if (conferenceService != null && conferenceService!.atCapacity) {
+      final max = conferenceService!.config.effectiveMaxParticipants;
+      return 'Conference is at capacity ($max participants). '
+          'Cannot add more participants.';
+    }
     final active = sipHelper!.activeCall;
     if (active == null) return 'No active call to conference with.';
 
