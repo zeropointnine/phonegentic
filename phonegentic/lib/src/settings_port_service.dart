@@ -763,6 +763,7 @@ class SettingsPortService {
       'require_hd_codecs': prefs.getBool('require_hd_codecs') ?? false,
       'conference': {
         'provider': conf.provider.index,
+        'max_participants': conf.maxParticipants,
         'basic_supports_update': conf.basicSupportsUpdate,
         'basic_renegotiate_media': conf.basicRenegotiateMedia,
       },
@@ -915,6 +916,7 @@ class SettingsPortService {
       await AgentConfigService.saveConferenceConfig(ConferenceConfig(
         provider: ConferenceProviderType
             .values[providerIdx.clamp(0, ConferenceProviderType.values.length - 1)],
+        maxParticipants: conf['max_participants'] as int? ?? 5,
         basicSupportsUpdate: conf['basic_supports_update'] as bool? ?? false,
         basicRenegotiateMedia: conf['basic_renegotiate_media'] as bool? ?? false,
       ));

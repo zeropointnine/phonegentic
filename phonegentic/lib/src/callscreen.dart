@@ -72,6 +72,7 @@ class CallScreenWidget extends StatefulWidget {
 }
 
 class _MyCallScreenWidget extends State<CallScreenWidget>
+    with TickerProviderStateMixin
     implements SipUaHelperListener {
   RTCVideoRenderer? _localRenderer = RTCVideoRenderer();
   RTCVideoRenderer? _remoteRenderer = RTCVideoRenderer();
@@ -103,6 +104,18 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   int _recSeconds = 0;
   String _recLabel = '0:00';
   int? _endingCallRecordId;
+
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulseAnimation;
+
+  Timer? _confLevelTimer;
+  List<double> _confSlotLevels = [];
+  List<double> _smoothedLevels = [];
+  static const double _speechThreshold = 200;
+  static const double _rmsMax = 3000;
+
+  Timer? _singleLevelTimer;
+  double _smoothedSingleRms = 0;
 
   // Voice sample capture for ElevenLabs voice cloning
   bool _isSampling = false;
@@ -181,6 +194,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _pulseAnimation = CurvedAnimation(
+      parent: _pulseController,
+      curve: Curves.easeInOutSine,
+      reverseCurve: Curves.easeInOutSine,
+    );
     _initRenderers();
     helper!.addSipUaHelperListener(this);
     _startTimer();
@@ -234,11 +256,79 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   void deactivate() {
+    _pulseController.dispose();
+    _confLevelTimer?.cancel();
+    _singleLevelTimer?.cancel();
     super.deactivate();
     _addCallGraceTimer?.cancel();
     _callConfirmTimer?.cancel();
     helper!.removeSipUaHelperListener(this);
     _deferDisposeRenderers();
+  }
+
+  void _startConfLevelPolling() {
+    if (_confLevelTimer != null) return;
+    _confLevelTimer =
+        Timer.periodic(const Duration(milliseconds: 80), (_) async {
+      try {
+        final result =
+            await _tapChannel.invokeMethod('getConferenceAudioLevels');
+        if (result is List && mounted) {
+          final raw = result.cast<num>().map((n) => n.toDouble()).toList();
+          setState(() {
+            _confSlotLevels = raw;
+            while (_smoothedLevels.length < raw.length) {
+              _smoothedLevels.add(0);
+            }
+            for (int i = 0; i < raw.length; i++) {
+              final target = raw[i];
+              final current = _smoothedLevels[i];
+              final k = target > current ? 0.35 : 0.15;
+              _smoothedLevels[i] = current + (target - current) * k;
+            }
+          });
+        }
+      } catch (_) {}
+    });
+  }
+
+  void _stopConfLevelPolling() {
+    _confLevelTimer?.cancel();
+    _confLevelTimer = null;
+    if (_confSlotLevels.isNotEmpty) {
+      setState(() {
+        _confSlotLevels = [];
+        _smoothedLevels = [];
+      });
+    }
+  }
+
+  void _startSingleLevelPolling() {
+    if (_singleLevelTimer != null) return;
+    _singleLevelTimer =
+        Timer.periodic(const Duration(milliseconds: 80), (_) async {
+      try {
+        final result =
+            await _tapChannel.invokeMethod('getRemoteAudioLevel');
+        if (result is num && mounted) {
+          final raw = result.toDouble();
+          setState(() {
+            final k = raw > _smoothedSingleRms ? 0.35 : 0.15;
+            _smoothedSingleRms += (raw - _smoothedSingleRms) * k;
+          });
+        }
+      } catch (_) {}
+    });
+  }
+
+  void _stopSingleLevelPolling() {
+    _singleLevelTimer?.cancel();
+    _singleLevelTimer = null;
+    if (_smoothedSingleRms > 0) {
+      setState(() {
+        _smoothedSingleRms = 0;
+      });
+    }
   }
 
   void _startTimer() {
@@ -1295,37 +1385,179 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     );
   }
 
+  Widget _buildSingleCallAvatar(String seed, String? thumbnailPath) {
+    final isSpeaking = _smoothedSingleRms > _speechThreshold;
+    final intensity = isSpeaking
+        ? ((_smoothedSingleRms - _speechThreshold) /
+                (_rmsMax - _speechThreshold))
+            .clamp(0.0, 1.0)
+        : 0.0;
+
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (context, child) {
+        final v = _pulseAnimation.value;
+        final vInv = 1.0 - v;
+        return Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: intensity > 0
+                ? [
+                    BoxShadow(
+                      color: AppColors.green
+                          .withValues(alpha: 0.12 + 0.18 * intensity),
+                      blurRadius: 6 + 10 * intensity,
+                      spreadRadius: 1 + 3 * intensity,
+                    ),
+                    BoxShadow(
+                      color: AppColors.green.withValues(
+                          alpha: (0.08 + 0.22 * intensity) * v),
+                      blurRadius: 18 + 16 * v * intensity,
+                      spreadRadius: 3 + 8 * v * intensity,
+                    ),
+                    BoxShadow(
+                      color: AppColors.green.withValues(
+                          alpha: (0.04 + 0.10 * intensity) * vInv),
+                      blurRadius: 28 + 14 * vInv * intensity,
+                      spreadRadius: 5 + 10 * vInv * intensity,
+                    ),
+                  ]
+                : null,
+          ),
+          child: child,
+        );
+      },
+      child: ContactIdenticon(
+        seed: seed,
+        size: 88,
+        thumbnailPath: thumbnailPath,
+      ),
+    );
+  }
+
   Widget _buildConferenceAvatars(
     ConferenceService conf,
     ContactService contactService,
     DemoModeService demoMode,
   ) {
+    final legs = conf.legs;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
-      children: conf.legs.map((leg) {
-        final match = leg.remoteNumber.isNotEmpty
-            ? contactService.lookupByPhone(leg.remoteNumber)
-            : null;
-        final rawName =
-            match?['display_name'] as String? ?? leg.displayName;
-        final seed = rawName ?? leg.remoteNumber;
-        final label = rawName != null
-            ? demoMode.maskDisplayName(rawName)
-            : demoMode.maskPhone(leg.remoteNumber);
+      children: [
+        for (int i = 0; i < legs.length; i++) ...[
+          () {
+            final leg = legs[i];
+            final match = leg.remoteNumber.isNotEmpty
+                ? contactService.lookupByPhone(leg.remoteNumber)
+                : null;
+            final rawNameRaw =
+                match?['display_name'] as String? ?? leg.displayName;
+            final rawName =
+                (rawNameRaw != null && rawNameRaw.trim().isNotEmpty)
+                    ? rawNameRaw
+                    : null;
+            final seed = rawName ?? leg.remoteNumber;
+            final nameIsPhone = rawName != null &&
+                rawName.replaceAll(RegExp(r'[^\d]'), '').length >= 7 &&
+                RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(rawName);
+            final hasRealName = rawName != null && !nameIsPhone;
+            final label = hasRealName
+                ? demoMode.maskDisplayName(rawName)
+                : demoMode.maskPhone(leg.remoteNumber);
+            final phoneLabel = hasRealName
+                ? demoMode.maskPhone(leg.remoteNumber)
+                : null;
 
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Tooltip(
-            message: label,
-            child: ContactIdenticon(
-              seed: seed,
-              size: 56,
-              thumbnailPath: match?['thumbnail_path'] as String?,
-            ),
-          ),
-        );
-      }).toList(),
+            final smoothRms = i < _smoothedLevels.length
+                ? _smoothedLevels[i]
+                : 0.0;
+            final isSpeaking = smoothRms > _speechThreshold;
+            final intensity = isSpeaking
+                ? ((smoothRms - _speechThreshold) /
+                        (_rmsMax - _speechThreshold))
+                    .clamp(0.0, 1.0)
+                : 0.0;
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedBuilder(
+                    animation: _pulseAnimation,
+                    builder: (context, child) {
+                      final v = _pulseAnimation.value;
+                      final vInv = 1.0 - v;
+                      return Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          boxShadow: intensity > 0
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.green.withValues(
+                                        alpha: 0.12 + 0.18 * intensity),
+                                    blurRadius: 4 + 8 * intensity,
+                                    spreadRadius: 1 + 2 * intensity,
+                                  ),
+                                  BoxShadow(
+                                    color: AppColors.green.withValues(
+                                        alpha:
+                                            (0.08 + 0.22 * intensity) * v),
+                                    blurRadius: 14 + 14 * v * intensity,
+                                    spreadRadius: 2 + 6 * v * intensity,
+                                  ),
+                                  BoxShadow(
+                                    color: AppColors.green.withValues(
+                                        alpha: (0.04 + 0.10 * intensity) *
+                                            vInv),
+                                    blurRadius:
+                                        22 + 10 * vInv * intensity,
+                                    spreadRadius:
+                                        4 + 8 * vInv * intensity,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: child,
+                      );
+                    },
+                    child: ContactIdenticon(
+                      seed: seed,
+                      size: 76,
+                      thumbnailPath: match?['thumbnail_path'] as String?,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                      if (phoneLabel != null)
+                        Text(
+                          phoneLabel,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textTertiary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }(),
+        ],
+      ],
     );
   }
 
@@ -1361,7 +1593,19 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final contactService = context.read<ContactService>();
       final demoMode = context.watch<DemoModeService>();
       final conf = context.watch<ConferenceService>();
-      final isConference = conf.hasConference || conf.legCount >= 2;
+      final isConference = conf.legCount >= 2;
+
+      if (isConference) {
+        _startConfLevelPolling();
+        _stopSingleLevelPolling();
+      } else {
+        _stopConfLevelPolling();
+        if (_callConfirmed && !_hold) {
+          _startSingleLevelPolling();
+        } else {
+          _stopSingleLevelPolling();
+        }
+      }
 
       final matchedContact = remoteIdentity != null
           ? contactService.lookupByPhone(remoteIdentity!)
@@ -1388,10 +1632,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      _stateLabel +
-                          (_hold
-                              ? ' by ${_holdOriginator?.name ?? 'unknown'}'
-                              : ''),
+                      isConference && conf.hasConference
+                          ? 'In Conference'
+                          : _stateLabel +
+                              (_hold
+                                  ? ' by ${_holdOriginator?.name ?? 'unknown'}'
+                                  : ''),
                       style: TextStyle(
                         fontSize: 13,
                         color: AppColors.textTertiary,
@@ -1422,11 +1668,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 if (isConference)
                   _buildConferenceAvatars(conf, contactService, demoMode)
                 else
-                  ContactIdenticon(
-                    seed: rawContactName ?? remoteIdentity ?? '?',
-                    size: 88,
-                    thumbnailPath:
-                        matchedContact?['thumbnail_path'] as String?,
+                  _buildSingleCallAvatar(
+                    rawContactName ?? remoteIdentity ?? '?',
+                    matchedContact?['thumbnail_path'] as String?,
                   ),
                 const SizedBox(height: 20),
                 if (!isConference) ...[
@@ -1509,6 +1753,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   Widget _buildActionButtons() {
     if (_showNumPad) return _buildDtmfPad();
 
+    final conf = context.watch<ConferenceService>();
     final actions = <Widget>[];
     final bottomRow = <Widget>[];
 
@@ -1539,9 +1784,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             onLongPress: _muteAudio,
           ),
           ActionButton(
-            title: _hold ? 'Resume' : 'Hold',
-            icon: _hold ? Icons.play_arrow : Icons.pause,
-            checked: _hold,
+            title: (conf.hasConference ? false : _hold) ? 'Resume' : 'Hold',
+            icon: (conf.hasConference ? false : _hold)
+                ? Icons.play_arrow
+                : Icons.pause,
+            checked: conf.hasConference ? false : _hold,
             onPressed: _handleHold,
           ),
           if (voiceOnly)
@@ -1575,7 +1822,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ActionButton(
             title: 'Add Call',
             iconWidget: Add2CallIcon(color: AppColors.textSecondary),
-            onPressed: _addCallReady ? _handleAddCall : null,
+            onPressed: _addCallReady && !conf.atCapacity
+                ? _handleAddCall
+                : null,
           ),
         ]);
         // Row 2: Contact - Keypad - [Hangup] - Clone - Message

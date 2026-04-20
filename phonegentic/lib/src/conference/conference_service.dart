@@ -73,6 +73,8 @@ class ConferenceService extends ChangeNotifier {
       (_config.provider == ConferenceProviderType.basic ||
           _config.provider == ConferenceProviderType.onDevice);
 
+  bool get atCapacity => _legs.length >= _config.effectiveMaxParticipants;
+
   ConferenceCallLeg? get focusedLeg {
     if (_focusedLegId == null) return null;
     try {
@@ -94,6 +96,11 @@ class ConferenceService extends ChangeNotifier {
 
   void addLeg(Call call, {String? displayName, bool isOutbound = true}) {
     if (_legs.any((l) => l.sipCallId == call.id)) return;
+    if (_legs.length >= _config.effectiveMaxParticipants) {
+      debugPrint('[ConferenceService] addLeg rejected — at capacity '
+          '(${_legs.length}/${_config.effectiveMaxParticipants})');
+      return;
+    }
     _legs.add(ConferenceCallLeg(
       sipCallId: call.id!,
       remoteNumber: call.remote_identity ?? '',
@@ -109,7 +116,7 @@ class ConferenceService extends ChangeNotifier {
     if (_focusedLegId == sipCallId) {
       _focusedLegId = _legs.isNotEmpty ? _legs.first.sipCallId : null;
     }
-    if (_legs.isEmpty) {
+    if (_legs.length < 2) {
       _conferenceId = null;
       _conferenceName = null;
     }
@@ -225,19 +232,8 @@ class ConferenceService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      for (final leg in _legs) {
-        final call = sipHelper?.findCall(leg.sipCallId);
-        if (call != null && call.state == CallStateEnum.HOLD) {
-          debugPrint(
-            '[ConferenceService] On-device merge: unholding ${leg.sipCallId} '
-            '(${leg.remoteNumber})',
-          );
-          call.unhold();
-          leg.state = LegState.active;
-        }
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      // Unhold all held legs and wait for the SIP re-INVITE to land.
+      await _unholdAllLegs();
 
       if (_onConferenceModeChanged != null) {
         _onConferenceModeChanged!(true);
@@ -253,12 +249,49 @@ class ConferenceService extends ChangeNotifier {
         '[ConferenceService] On-device conference active with '
         '${_legs.length} legs',
       );
+
+      // Post-merge sweep: if a re-INVITE collision or SIP race put any leg
+      // back on hold, unhold it again.
+      await _unholdAllLegs();
     } catch (e) {
       _mergeError = e.toString();
       debugPrint('[ConferenceService] on-device merge failed: $e');
     } finally {
       _merging = false;
       notifyListeners();
+    }
+  }
+
+  /// Sends unhold for every held leg and polls until the SIP state
+  /// leaves HOLD (or a timeout of 3 seconds is reached per leg).
+  Future<void> _unholdAllLegs() async {
+    bool anyUnheld = false;
+    for (final leg in _legs) {
+      final call = sipHelper?.findCall(leg.sipCallId);
+      if (call != null && call.state == CallStateEnum.HOLD) {
+        debugPrint(
+          '[ConferenceService] Unholding ${leg.sipCallId} '
+          '(${leg.remoteNumber})',
+        );
+        call.unhold();
+        leg.state = LegState.active;
+        anyUnheld = true;
+      }
+    }
+    if (!anyUnheld) return;
+
+    // Poll until all legs leave HOLD (100ms intervals, up to 3s).
+    for (int attempt = 0; attempt < 30; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      bool allClear = true;
+      for (final leg in _legs) {
+        final call = sipHelper?.findCall(leg.sipCallId);
+        if (call != null && call.state == CallStateEnum.HOLD) {
+          allClear = false;
+          break;
+        }
+      }
+      if (allClear) break;
     }
   }
 

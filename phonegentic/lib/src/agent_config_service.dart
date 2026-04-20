@@ -484,6 +484,8 @@ class AgentConfigService {
     return ConferenceConfig(
       provider: ConferenceProviderType
           .values[idx.clamp(0, ConferenceProviderType.values.length - 1)],
+      maxParticipants:
+          prefs.getInt('${_prefix}conf_max_participants') ?? 5,
       basicSupportsUpdate:
           prefs.getBool('${_prefix}conf_basic_supports_update') ?? false,
       basicRenegotiateMedia:
@@ -494,6 +496,8 @@ class AgentConfigService {
   static Future<void> saveConferenceConfig(ConferenceConfig config) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('${_prefix}conf_provider', config.provider.index);
+    await prefs.setInt(
+        '${_prefix}conf_max_participants', config.maxParticipants);
     await prefs.setBool(
         '${_prefix}conf_basic_supports_update', config.basicSupportsUpdate);
     await prefs.setBool('${_prefix}conf_basic_renegotiate_media',

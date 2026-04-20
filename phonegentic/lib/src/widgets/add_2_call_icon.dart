@@ -7,7 +7,7 @@ class Add2CallIcon extends StatelessWidget {
 
   const Add2CallIcon({
     super.key,
-    this.size = 40,
+    this.size = 48,
     required this.color,
   });
 

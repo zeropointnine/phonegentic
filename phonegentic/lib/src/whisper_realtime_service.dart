@@ -691,7 +691,9 @@ class WhisperRealtimeService {
             'Add a new participant to the call by dialing a second number. '
                 'The current call is automatically placed on hold while the '
                 'new leg connects. Use merge_conference afterwards to bridge '
-                'all participants together.',
+                'all participants together. The conference has a configurable '
+                'max participant limit; this tool will return an error if '
+                'the conference is already at capacity.',
         'parameters': {
           'type': 'object',
           'properties': {
@@ -709,7 +711,8 @@ class WhisperRealtimeService {
         'name': 'merge_conference',
         'description':
             'Merge all active call legs into a single conference call. '
-                'Requires at least two call legs (use add_conference_participant first).',
+                'Requires at least two call legs (use add_conference_participant first). '
+                'Supports up to the configured max participants.',
         'parameters': {
           'type': 'object',
           'properties': {},
