@@ -108,6 +108,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     }
 
     private func modelDirectoryName(for modelSize: String) -> String {
+        if modelSize == "large-v3-turbo" { return "openai_whisper-large-v3_turbo" }
         return "openai_whisper-\(modelSize)"
     }
 

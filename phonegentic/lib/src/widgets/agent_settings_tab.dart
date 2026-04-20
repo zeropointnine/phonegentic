@@ -1113,6 +1113,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               'tiny': 'Tiny (~75 MB, fastest)',
               'base': 'Base (~140 MB, balanced)',
               'small': 'Small (~460 MB, best accuracy)',
+              'large-v3-turbo': 'Large v3 Turbo (~1.6 GB, most accurate)',
             },
             (v) => _updateStt(_stt.copyWith(whisperKitModelSize: v)),
           ),

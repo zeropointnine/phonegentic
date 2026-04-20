@@ -136,10 +136,13 @@ static std::string get_binary_dir() {
 }
 
 static std::string get_model_path(const char* model_size) {
+  std::string size(model_size);
+  // Large models don't have an .en variant — they use plain .bin
+  bool is_large = size.rfind("large", 0) == 0;
   return get_binary_dir()
     + "data/flutter_assets/models/whisper-ggml/ggml-"
-    + model_size
-    + ".en.bin";
+    + size
+    + (is_large ? ".bin" : ".en.bin");
 }
 
 // ─── Inference data (passed to worker thread) ─────────────────────────────────
