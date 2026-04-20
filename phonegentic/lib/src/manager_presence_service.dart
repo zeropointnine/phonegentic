@@ -363,16 +363,7 @@ class ManagerPresenceService extends ChangeNotifier
       _scheduledReminderTimers.remove(id)?.cancel();
     });
 
-    if (upcoming.isNotEmpty && _agent != null) {
-      final buf = StringBuffer('[UPCOMING REMINDERS] ');
-      for (final row in upcoming) {
-        final title = row['title'] as String? ?? 'Reminder';
-        final remindAt = DateTime.parse(row['remind_at'] as String).toLocal();
-        final mins = remindAt.difference(DateTime.now()).inMinutes;
-        buf.write('"$title" in $mins min. ');
-      }
-      _agent!.sendSystemEvent(buf.toString());
-    }
+    notifyListeners();
   }
 
   /// Called externally (e.g. after creating a reminder) to immediately

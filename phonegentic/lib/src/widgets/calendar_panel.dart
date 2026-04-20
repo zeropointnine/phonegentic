@@ -128,15 +128,25 @@ class _CalendarPanelState extends State<CalendarPanel> {
         children: [
           Icon(Icons.calendar_month_rounded,
               size: 18, color: AppColors.accent),
+          const SizedBox(width: 8),
+          Text(
+            'Calendar',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.3,
+            ),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               title,
               style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.3,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textSecondary,
+                letterSpacing: -0.2,
               ),
             ),
           ),

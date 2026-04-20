@@ -28,15 +28,15 @@
 		33CC10F62044A3C60003C045 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = 33CC10F42044A3C60003C045 /* MainMenu.xib */; };
 		33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33CC11122044BFA00003C045 /* MainFlutterWindow.swift */; };
 		8C22601088434A6BB1FE95FC /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B56D1DAD0955A41B5C16AD2D /* Pods_Runner.framework */; };
+		A0B1C2D300000002NAC00002 /* NativeActionsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */; };
 		A1B2C3D400000002ADC00001 /* AudioDeviceChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000001ADC00001 /* AudioDeviceChannel.swift */; };
 		B2C3D4E500000002ATC00002 /* AudioTapChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */; };
 		CD1CE2D52F88D88D00F1B019 /* models in Resources */ = {isa = PBXBuildFile; fileRef = CD1CE2D42F88D88D00F1B019 /* models */; };
 		D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */; };
 		E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */; };
-		F0A1B2C300000002SCM00002 /* SimpleCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */; };
-		A0B1C2D300000002NAC00002 /* NativeActionsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */; };
 		E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E5F6A7B800000004FLA00002 /* FluidAudio */; };
 		E8C4A047BF41B4A2D0635957 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */; };
+		F0A1B2C300000002SCM00002 /* SimpleCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */; };
 		F1A2B3C400000002KTC00001 /* KokoroTtsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */; };
 		F1A2B3C400000002WKC00001 /* WhisperKitChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */; };
 		F1A2B3C400000003KSW00001 /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = F1A2B3C400000004KSW00002 /* KokoroSwift */; };
@@ -96,6 +96,7 @@
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		7C00792A8801F453D35B5D1F /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeActionsChannel.swift; sourceTree = "<group>"; };
 		A1B2C3D400000001ADC00001 /* AudioDeviceChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeviceChannel.swift; sourceTree = "<group>"; };
 		B2C3D4E500000001ATC00002 /* AudioTapChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTapChannel.swift; sourceTree = "<group>"; };
 		B56D1DAD0955A41B5C16AD2D /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -103,11 +104,10 @@
 		CD1CE2D42F88D88D00F1B019 /* models */ = {isa = PBXFileReference; lastKnownFileType = folder; name = models; path = ../models; sourceTree = "<group>"; };
 		D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCAudioProcessor.swift; sourceTree = "<group>"; };
 		E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerIdentifier.swift; sourceTree = "<group>"; };
-		F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCompressor.swift; sourceTree = "<group>"; };
-		A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeActionsChannel.swift; sourceTree = "<group>"; };
 		E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC906358CFE0C48974F10E54 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		ECBD98B4B52730466C82DC36 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCompressor.swift; sourceTree = "<group>"; };
 		F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroTtsChannel.swift; sourceTree = "<group>"; };
 		F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitChannel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -625,9 +625,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = JMJQ88X87H;
+				DEVELOPMENT_TEAM = 29LJ953TG9;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -772,9 +773,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = JMJQ88X87H;
+				DEVELOPMENT_TEAM = 29LJ953TG9;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -807,9 +809,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = JMJQ88X87H;
+				DEVELOPMENT_TEAM = 29LJ953TG9;
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				LD_RUNPATH_SEARCH_PATHS = (

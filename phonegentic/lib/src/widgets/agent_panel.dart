@@ -203,6 +203,7 @@ class _AgentPanelState extends State<AgentPanel> {
                         onDismiss: agent.clearPipelineError,
                       ),
                     const _CalendarEventBanner(),
+                    const _UpcomingReminderBanner(),
                     const _AwayCallSummaryBanner(),
                     Consumer<TearSheetService>(
                       builder: (context, tearSheet, _) {
@@ -853,6 +854,122 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
                   fontWeight: FontWeight.w600,
                   color: AppColors.accent,
                 ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Upcoming Reminder Countdown Banner
+// ---------------------------------------------------------------------------
+
+class _UpcomingReminderBanner extends StatefulWidget {
+  const _UpcomingReminderBanner();
+
+  @override
+  State<_UpcomingReminderBanner> createState() =>
+      _UpcomingReminderBannerState();
+}
+
+class _UpcomingReminderBannerState extends State<_UpcomingReminderBanner> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final presence = context.watch<ManagerPresenceService>();
+    final reminders = presence.upcomingReminders;
+    if (reminders.isEmpty) return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final nearest = reminders.first;
+    final title = nearest['title'] as String? ?? 'Reminder';
+    final remindAt = DateTime.parse(nearest['remind_at'] as String).toLocal();
+    final diff = remindAt.difference(now);
+
+    if (diff.isNegative) return const SizedBox.shrink();
+
+    final mins = diff.inMinutes;
+    final secs = diff.inSeconds % 60;
+    final isImminent = mins < 2;
+
+    final timeText = mins >= 60
+        ? '${mins ~/ 60}h ${mins % 60}m'
+        : mins > 0
+            ? '${mins}m ${secs.toString().padLeft(2, '0')}s'
+            : '${secs}s';
+
+    final bgColor = isImminent
+        ? AppColors.accent.withValues(alpha: 0.08)
+        : AppColors.surface;
+    final highlightColor =
+        isImminent ? AppColors.accent : AppColors.textTertiary;
+
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: bgColor,
+        border: Border(
+          bottom: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.notifications_active_rounded,
+              size: 12, color: highlightColor),
+          const SizedBox(width: 8),
+          Text(
+            'In $timeText',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              fontFamily: AppColors.timerFontFamily,
+              fontFamilyFallback: AppColors.timerFontFamilyFallback,
+              color: highlightColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text('–',
+              style: TextStyle(fontSize: 11, color: AppColors.textTertiary)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+          if (reminders.length > 1) ...[
+            const SizedBox(width: 6),
+            Text(
+              '+${reminders.length - 1} more',
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textTertiary,
               ),
             ),
           ],

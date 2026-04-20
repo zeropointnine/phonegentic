@@ -31,6 +31,7 @@ import 'widgets/dialpad_contact_preview.dart';
 import 'widgets/glass_plate_modal.dart';
 import 'widgets/audio_device_sheet.dart';
 import 'widgets/phonegentic_logo.dart';
+import 'widgets/add_2_call_icon.dart';
 import 'widgets/voice_clone_modal.dart';
 
 class CallScreenWidget extends StatefulWidget {
@@ -1294,6 +1295,40 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     );
   }
 
+  Widget _buildConferenceAvatars(
+    ConferenceService conf,
+    ContactService contactService,
+    DemoModeService demoMode,
+  ) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: conf.legs.map((leg) {
+        final match = leg.remoteNumber.isNotEmpty
+            ? contactService.lookupByPhone(leg.remoteNumber)
+            : null;
+        final rawName =
+            match?['display_name'] as String? ?? leg.displayName;
+        final seed = rawName ?? leg.remoteNumber;
+        final label = rawName != null
+            ? demoMode.maskDisplayName(rawName)
+            : demoMode.maskPhone(leg.remoteNumber);
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Tooltip(
+            message: label,
+            child: ContactIdenticon(
+              seed: seed,
+              size: 56,
+              thumbnailPath: match?['thumbnail_path'] as String?,
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   Widget _buildContent() {
     final stackWidgets = <Widget>[];
 
@@ -1325,6 +1360,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (voiceOnly || !_callConfirmed) {
       final contactService = context.read<ContactService>();
       final demoMode = context.watch<DemoModeService>();
+      final conf = context.watch<ConferenceService>();
+      final isConference = conf.hasConference || conf.legCount >= 2;
+
       final matchedContact = remoteIdentity != null
           ? contactService.lookupByPhone(remoteIdentity!)
           : null;
@@ -1338,7 +1376,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final formattedRemote =
           remoteIdentity != null ? demoMode.maskPhone(remoteIdentity!) : null;
 
-      // Center: status + timer + avatar + name + phone (grouped)
       stackWidgets.add(
         Center(
           child: SingleChildScrollView(
@@ -1382,39 +1419,46 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                   ],
                 ),
                 const SizedBox(height: 24),
-                ContactIdenticon(
-                  seed: rawContactName ?? remoteIdentity ?? '?',
-                  size: 88,
-                ),
+                if (isConference)
+                  _buildConferenceAvatars(conf, contactService, demoMode)
+                else
+                  ContactIdenticon(
+                    seed: rawContactName ?? remoteIdentity ?? '?',
+                    size: 88,
+                    thumbnailPath:
+                        matchedContact?['thumbnail_path'] as String?,
+                  ),
                 const SizedBox(height: 20),
-                if (contactName != null) ...[
-                  Text(
-                    contactName,
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.5,
+                if (!isConference) ...[
+                  if (contactName != null) ...[
+                    Text(
+                      contactName,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.5,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    formattedRemote ?? '',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: AppColors.textSecondary,
+                    const SizedBox(height: 4),
+                    Text(
+                      formattedRemote ?? '',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
-                  ),
-                ] else
-                  Text(
-                    formattedRemote ?? 'Unknown',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.5,
+                  ] else
+                    Text(
+                      formattedRemote ?? 'Unknown',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.5,
+                      ),
                     ),
-                  ),
+                ],
               ],
             ),
           ),
@@ -1530,7 +1574,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ),
           ActionButton(
             title: 'Add Call',
-            icon: Icons.person_add,
+            iconWidget: Add2CallIcon(color: AppColors.textSecondary),
             onPressed: _addCallReady ? _handleAddCall : null,
           ),
         ]);

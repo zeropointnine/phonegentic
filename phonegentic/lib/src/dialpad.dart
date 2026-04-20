@@ -217,9 +217,35 @@ class _MyDialPadWidget extends State<DialPadWidget>
       return true;
     }
 
-    if (inTextField) return false;
-
     if (event.logicalKey == LogicalKeyboardKey.escape) {
+      // Close open overlay panels first, even from within panel text fields.
+      final messaging = context.read<MessagingService>();
+      final calendar = context.read<CalendarSyncService>();
+      final contacts = context.read<ContactService>();
+      final history = context.read<CallHistoryService>();
+      if (contacts.isQuickAddOpen) {
+        contacts.closeQuickAdd();
+        return true;
+      }
+      if (messaging.isOpen) {
+        messaging.close();
+        return true;
+      }
+      if (calendar.isOpen) {
+        calendar.close();
+        return true;
+      }
+      if (contacts.isOpen) {
+        contacts.closeContacts();
+        return true;
+      }
+      if (history.isOpen) {
+        history.closeHistory();
+        return true;
+      }
+
+      if (inTextField) return false;
+
       if (_dropdownOpen) {
         final hadNoSelection = _selectedContact == null;
         setState(() {
@@ -242,6 +268,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
       }
       return false;
     }
+
+    if (inTextField) return false;
 
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
       final String text = _textController!.text;
@@ -1681,6 +1709,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
                                   ? display
                                   : _selectedContact!['display_name'] as String,
                               size: 36,
+                              thumbnailPath: _selectedContact!['thumbnail_path']
+                                  as String?,
                             ),
                             const SizedBox(width: 10),
                             Flexible(

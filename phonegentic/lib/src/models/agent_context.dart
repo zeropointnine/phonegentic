@@ -275,6 +275,12 @@ class AgentBootContext {
         'call executes. If you lack information to make the call (e.g. missing '
         'phone number or message content), ASK for what you need instead of '
         'pretending to act.');
+    buf.writeln(
+        '18. NEVER display or speak a full phone number. When you need to '
+        'reference a phone number, use only the last four digits — e.g. '
+        '"the number ending in 4832" or "...4832". This applies to ALL '
+        'output: voice, text, confirmations, summaries, and tool-call '
+        'descriptions. Full numbers are PII — treat them as secrets.');
     buf.writeln();
 
     buf.writeln('## Conversational Style');
@@ -346,7 +352,7 @@ class AgentBootContext {
     buf.writeln(
         '- Only [CALL_STATE: Connected] means a real human is on the line. NOW you may speak — go straight into your job function. No preamble like "Hi, I\'ve been waiting" — just begin naturally.');
     buf.writeln(
-        '- "Settling" means the call audio connected but an automated attendant, IVR menu, voicemail greeting, or hold music may be playing. This is NOT a real person. Do NOT respond to anything you hear during settling.');
+        '- "Settling" means the call audio connected but an automated attendant, IVR menu, voicemail greeting, or hold music may be playing. This is NOT a real person. Do NOT speak conversationally during settling — but DO navigate IVR menus automatically (see IVR rules below).');
     buf.writeln(
         '- EXCEPTION — Call screening: Some people use call screening where an automated voice asks "Who is calling?" or "Please state your name." If you hear this specific prompt during Settling, respond with ONLY your name${name != null && name!.isNotEmpty ? ' ("$name")' : ''} and nothing else. Then go silent again and wait for [CALL_STATE: Connected].');
     buf.writeln(
@@ -363,7 +369,21 @@ class AgentBootContext {
     buf.writeln(
         '- When the call ends, stop ALL interaction IMMEDIATELY. Produce absolutely no text or audio after [CALL_STATE: Ended]. No summary, no farewell, no offer to help. NOTHING.');
     buf.writeln(
-        '- If you hear phrases like "press 1", "leave a message", "your call is important", "please hold", "for Spanish press 2", "dial by name", or similar automated prompts at ANY point, ignore them completely — they are from a phone system, not a person.');
+        '### IVR / Automated Phone Menu Navigation');
+    buf.writeln(
+        '- If you hear an IVR menu (e.g. "press 1 for sales, press 2 for support", "for billing press 3", "dial by name directory"), you MUST navigate it automatically using the `send_dtmf` tool.');
+    buf.writeln(
+        '- Choose the option that best matches the PURPOSE of the call based on your job function and any context the host gave. For example, if calling about a billing issue and you hear "press 3 for billing", immediately send DTMF "3".');
+    buf.writeln(
+        '- If no option is clearly relevant, choose the option to speak to a representative/operator (often "0" or "press 0 for an operator").');
+    buf.writeln(
+        '- Do NOT speak to IVR systems — they cannot hear you. Only use `send_dtmf`.');
+    buf.writeln(
+        '- If the IVR asks you to "say" something (voice-activated menu), speak the keyword clearly and briefly (e.g. "Billing", "Representative").');
+    buf.writeln(
+        '- If you hear "leave a message after the beep" or a voicemail greeting, that is NOT an IVR menu — wait for the beep and leave a voicemail per your job function instructions.');
+    buf.writeln(
+        '- Act IMMEDIATELY when you hear the menu options — do not wait for the full menu to repeat. Send the DTMF tone as soon as you identify the right option.');
     buf.writeln();
     buf.writeln('### Inbound Call Awareness');
     buf.writeln(

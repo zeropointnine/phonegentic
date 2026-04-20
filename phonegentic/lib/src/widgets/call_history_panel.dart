@@ -210,7 +210,6 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
             child: Column(
               children: [
                 _buildHeader(service),
-                _buildSearchBar(),
                 Expanded(child: _buildResultsList(service)),
               ],
             ),
@@ -222,7 +221,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
 
   Widget _buildHeader(CallHistoryService service) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 28, 8, 12),
+      padding: const EdgeInsets.fromLTRB(12, 28, 8, 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border:
@@ -231,9 +230,9 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
       child: Row(
         children: [
           Icon(Icons.history_rounded, size: 18, color: AppColors.accent),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Text(
-            'Call History',
+            'History',
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
@@ -241,18 +240,53 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
               letterSpacing: -0.3,
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 10),
+          Expanded(
+            child: CompositedTransformTarget(
+              link: _layerLink,
+              child: Container(
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.4),
+                      width: 0.5),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocus,
+                  style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    hintText: 'calls to Lee, missed today, last hour...',
+                    hintStyle:
+                        TextStyle(color: AppColors.textTertiary, fontSize: 12),
+                    prefixIcon: Icon(Icons.search_rounded,
+                        size: 16, color: AppColors.textTertiary),
+                    prefixIconConstraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 0),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  onSubmitted: (_) => _runSearch(),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           if (service.isLoading)
-            SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: AppColors.accent,
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: AppColors.accent,
+                ),
               ),
             ),
           if (service.searchResults.isNotEmpty) ...[
-            const SizedBox(width: 6),
             HoverButton(
               onTap: () {
                 final tearSheet =
@@ -294,8 +328,8 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
                 ),
               ),
             ),
+            const SizedBox(width: 6),
           ],
-          const SizedBox(width: 8),
           HoverButton(
             onTap: service.closeHistory,
             borderRadius: BorderRadius.circular(8),
@@ -310,67 +344,6 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
               ),
               child: Icon(Icons.close_rounded,
                   size: 16, color: AppColors.textSecondary),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        border:
-            Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: CompositedTransformTarget(
-              link: _layerLink,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                      color: AppColors.border.withValues(alpha: 0.5),
-                      width: 0.5),
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocus,
-                  style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
-                  decoration: InputDecoration(
-                    hintText: 'Name, number, or "missed today"…',
-                    hintStyle:
-                        TextStyle(color: AppColors.textTertiary, fontSize: 13),
-                    prefixIcon: Icon(Icons.search_rounded,
-                        size: 18, color: AppColors.textTertiary),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                  ),
-                  onSubmitted: (_) => _runSearch(),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          HoverButton(
-            onTap: _runSearch,
-            tooltip: 'Search',
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                color: AppColors.accent,
-              ),
-              child: Icon(Icons.search_rounded,
-                  size: 16, color: AppColors.crtBlack),
             ),
           ),
         ],
@@ -471,13 +444,36 @@ class _CallRecordTileState extends State<_CallRecordTile> {
       RegExp(r'^[\d\s\+\-\(\)\.]+$').hasMatch(s);
 
   String _name(DemoModeService demo) {
+    final contactName = widget.record['contact_name'] as String? ?? '';
     final displayName = widget.record['remote_display_name'] as String? ?? '';
     final identity = widget.record['remote_identity'] as String? ?? '';
+    if (contactName.isNotEmpty) return demo.maskDisplayName(contactName);
     final hasName = displayName.isNotEmpty && !_looksLikePhone(displayName);
     if (hasName) return demo.maskDisplayName(displayName);
     final number = identity.isNotEmpty ? identity : displayName;
     if (number.isEmpty) return 'Unknown';
     return demo.maskPhone(number);
+  }
+
+  String? get _thumbnailPath {
+    final identity = widget.record['remote_identity'] as String? ?? '';
+    if (identity.isEmpty) return null;
+    final contacts = context.read<ContactService>();
+    final match = contacts.lookupByPhone(identity);
+    return match?['thumbnail_path'] as String?;
+  }
+
+  String _phone(DemoModeService demo) {
+    final identity = widget.record['remote_identity'] as String? ?? '';
+    if (identity.isEmpty) return '';
+    return demo.maskPhone(identity);
+  }
+
+  bool get _hasContactName {
+    final contactName = widget.record['contact_name'] as String? ?? '';
+    final displayName = widget.record['remote_display_name'] as String? ?? '';
+    if (contactName.isNotEmpty) return true;
+    return displayName.isNotEmpty && !_looksLikePhone(displayName);
   }
 
   bool get _isOutbound => widget.record['direction'] == 'outbound';
@@ -870,7 +866,11 @@ class _CallRecordTileState extends State<_CallRecordTile> {
             children: [
               Row(
               children: [
-                ContactIdenticon(seed: _name(demo), size: 34),
+                ContactIdenticon(
+                  seed: _name(demo),
+                  size: 34,
+                  thumbnailPath: _thumbnailPath,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -904,6 +904,18 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                           ),
                         ],
                       ),
+                      if (_hasContactName) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          _phone(demo),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textTertiary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                       const SizedBox(height: 3),
                       Row(
                         children: [

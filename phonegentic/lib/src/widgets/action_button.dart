@@ -5,6 +5,7 @@ class ActionButton extends StatefulWidget {
   final String? title;
   final String subTitle;
   final IconData? icon;
+  final Widget? iconWidget;
   final bool checked;
   final bool number;
   final Color? fillColor;
@@ -17,6 +18,7 @@ class ActionButton extends StatefulWidget {
     this.title,
     this.subTitle = '',
     this.icon,
+    this.iconWidget,
     this.onPressed,
     this.onLongPress,
     this.checked = false,
@@ -192,7 +194,7 @@ class _ActionButtonState extends State<ActionButton> {
                             ]
                           : null),
                 ),
-                child: Icon(widget.icon, size: 24, color: iconColor),
+                child: widget.iconWidget ?? Icon(widget.icon, size: 24, color: iconColor),
               ),
             ),
           ),

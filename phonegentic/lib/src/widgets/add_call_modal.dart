@@ -1,15 +1,18 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../conference/conference_service.dart';
 import '../contact_service.dart';
-import '../db/call_history_db.dart';
 import '../demo_mode_service.dart';
+import '../messaging/messaging_service.dart';
 import '../phone_formatter.dart';
 import '../theme_provider.dart';
 import 'action_button.dart';
+import 'add_2_call_icon.dart';
+import 'dialpad_autocomplete_overlay.dart';
 import 'dialpad_contact_preview.dart';
 
 /// Full-height modal overlay with an integrated keypad and contact search.
@@ -34,11 +37,14 @@ enum _ModalPhase { dialing, ringing, connected, failed }
 
 class _AddCallModalState extends State<AddCallModal> {
   final TextEditingController _controller = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
-  List<Map<String, dynamic>> _searchResults = [];
-  Timer? _searchDebounce;
   bool _placing = false;
   String _placedNumber = '';
+
+  // Autocomplete state (mirrors main dialpad behavior)
+  List<Map<String, dynamic>> _autocompleteMatches = [];
+  bool _dropdownOpen = false;
+  int _highlightedIndex = -1;
+  Map<String, dynamic>? _selectedContact;
 
   _ModalPhase _phase = _ModalPhase.dialing;
   Timer? _callTimer;
@@ -51,65 +57,248 @@ class _AddCallModalState extends State<AddCallModal> {
   void initState() {
     super.initState();
     _controller.addListener(_onTextChanged);
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
   }
 
   @override
   void dispose() {
-    _searchDebounce?.cancel();
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     _callTimer?.cancel();
     _failDismissTimer?.cancel();
     _placingFailSafe?.cancel();
     _controller.dispose();
-    _focusNode.dispose();
     super.dispose();
   }
 
   void _onTextChanged() {
     final text = _controller.text;
+    final contacts = Provider.of<ContactService>(context, listen: false);
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(text);
+
+    if (_selectedContact != null) {
+      final selectedDigits =
+          (_selectedContact!['phone_number'] as String? ?? '')
+              .replaceAll(RegExp(r'[^\d+]'), '');
+      if (text != selectedDigits) {
+        setState(() => _selectedContact = null);
+      }
+    }
+
+    if (_selectedContact == null && !hasLetters && text.length >= 7) {
+      final match = contacts.lookupByPhone(text);
+      if (match != null) {
+        setState(() => _selectedContact = match);
+      }
+    }
+
     if (text.isEmpty) {
-      setState(() => _searchResults = []);
+      if (_autocompleteMatches.isNotEmpty ||
+          _dropdownOpen ||
+          _selectedContact != null) {
+        setState(() {
+          _selectedContact = null;
+          _autocompleteMatches = [];
+          _dropdownOpen = false;
+          _highlightedIndex = -1;
+        });
+      }
       return;
     }
 
-    if (RegExp(r'[a-zA-Z]').hasMatch(text)) {
-      _searchDebounce?.cancel();
-      _searchDebounce = Timer(const Duration(milliseconds: 200), () async {
-        final results = await CallHistoryDb.searchContacts(text);
-        if (mounted) {
-          setState(() => _searchResults = results);
+    // Only run autocomplete search for letter input (name search).
+    // Digit-only input resolves contacts passively via lookupByPhone above.
+    if (!hasLetters) {
+      if (_dropdownOpen) {
+        setState(() {
+          _dropdownOpen = false;
+          _autocompleteMatches = [];
+          _highlightedIndex = -1;
+        });
+      }
+      return;
+    }
+
+    final List<Map<String, dynamic>> matches;
+    if (text.length < 2) {
+      if (_dropdownOpen) {
+        matches = contacts.contacts.take(8).toList();
+      } else {
+        return;
+      }
+    } else {
+      matches = contacts.autocompleteSearch(text);
+    }
+
+    if (!_listEquals(matches, _autocompleteMatches)) {
+      setState(() {
+        _autocompleteMatches = matches;
+        _highlightedIndex = -1;
+        if (matches.isEmpty && _dropdownOpen) {
+          _dropdownOpen = false;
+        } else if (matches.isNotEmpty && !_dropdownOpen) {
+          _dropdownOpen = true;
         }
       });
-    } else {
-      setState(() => _searchResults = []);
+    } else if (matches.isNotEmpty && !_dropdownOpen) {
+      setState(() => _dropdownOpen = true);
     }
   }
 
+  bool _listEquals(List<Map<String, dynamic>> a, List<Map<String, dynamic>> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i]['id'] != b[i]['id']) return false;
+    }
+    return true;
+  }
+
+  bool _handleKeyEvent(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    if (_phase != _ModalPhase.dialing) return false;
+
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      widget.onClose();
+      return true;
+    }
+
+    if (_dropdownOpen && _autocompleteMatches.isNotEmpty) {
+      final len = _autocompleteMatches.length;
+      final key = event.logicalKey;
+      if (key == LogicalKeyboardKey.arrowDown ||
+          (key == LogicalKeyboardKey.tab &&
+              !HardwareKeyboard.instance.isShiftPressed)) {
+        setState(() => _highlightedIndex = (_highlightedIndex + 1) % len);
+        return true;
+      }
+      if (key == LogicalKeyboardKey.arrowUp ||
+          (key == LogicalKeyboardKey.tab &&
+              HardwareKeyboard.instance.isShiftPressed)) {
+        setState(
+            () => _highlightedIndex = (_highlightedIndex - 1 + len) % len);
+        return true;
+      }
+      if (key == LogicalKeyboardKey.enter && _highlightedIndex >= 0) {
+        _onAutocompleteSelect(_autocompleteMatches[_highlightedIndex]);
+        return true;
+      }
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.enter) {
+      _placeCall();
+      return true;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.backspace) {
+      _handleBackspace();
+      return true;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.slash) {
+      _toggleSearchDropdown();
+      return true;
+    }
+
+    final character = event.character;
+    if (character == null || character.isEmpty) return false;
+
+    const dialChars = '0123456789*#+';
+    if (dialChars.contains(character)) {
+      _handleNum(character);
+      return true;
+    }
+
+    if (RegExp(r'^[a-zA-Z ]$').hasMatch(character)) {
+      setState(() => _controller.text += character);
+      return true;
+    }
+
+    return false;
+  }
+
   void _handleNum(String digit) {
-    _controller.text += digit;
-    _controller.selection =
-        TextSelection.collapsed(offset: _controller.text.length);
+    setState(() {
+      _controller.text += digit;
+      _controller.selection =
+          TextSelection.collapsed(offset: _controller.text.length);
+    });
     HapticFeedback.lightImpact();
   }
 
   void _handleBackspace() {
     final text = _controller.text;
     if (text.isNotEmpty) {
-      _controller.text = text.substring(0, text.length - 1);
-      _controller.selection =
-          TextSelection.collapsed(offset: _controller.text.length);
+      setState(() {
+        _controller.text = text.substring(0, text.length - 1);
+        _controller.selection =
+            TextSelection.collapsed(offset: _controller.text.length);
+      });
     }
   }
 
-  void _selectContact(Map<String, dynamic> contact) {
-    if (_placing) return;
-    final phone = contact['phone'] as String? ?? '';
-    if (phone.isNotEmpty) {
+  void _onAutocompleteSelect(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    final digits = phone.replaceAll(RegExp(r'[^\d+]'), '');
+    setState(() {
+      _selectedContact = contact;
+      _controller.text = digits;
+      _dropdownOpen = false;
+      _highlightedIndex = -1;
+    });
+  }
+
+  void _onAutocompleteCall(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    final digits = phone.replaceAll(RegExp(r'[^\d+]'), '');
+    setState(() {
+      _controller.text = digits;
+      _dropdownOpen = false;
+      _autocompleteMatches = [];
+    });
+    _placeCall();
+  }
+
+  void _onAutocompleteMessage(Map<String, dynamic> contact) {
+    final phone = contact['phone_number'] as String? ?? '';
+    if (phone.isEmpty) return;
+    setState(() => _dropdownOpen = false);
+    final messaging = context.read<MessagingService>();
+    messaging.openToConversation(phone);
+  }
+
+  void _dismissAutocomplete() {
+    if (_dropdownOpen) {
       setState(() {
-        _placing = true;
-        _placedNumber = phone;
+        _dropdownOpen = false;
+        _highlightedIndex = -1;
+        _autocompleteMatches = [];
       });
-      _startPlacingFailSafe();
-      widget.onCall(phone);
+    }
+  }
+
+  void _toggleSearchDropdown() {
+    final opening = !_dropdownOpen;
+    final hadNoSelection = _selectedContact == null;
+    setState(() {
+      _dropdownOpen = opening;
+      if (!opening && hadNoSelection) {
+        _controller.text = '';
+        _autocompleteMatches = [];
+      }
+    });
+    if (opening) {
+      if (_autocompleteMatches.isEmpty) {
+        final contacts = Provider.of<ContactService>(context, listen: false);
+        final text = _controller.text;
+        final matches = text.length >= 2
+            ? contacts.autocompleteSearch(text)
+            : contacts.contacts.take(8).toList();
+        if (matches.isNotEmpty) {
+          setState(() => _autocompleteMatches = matches);
+        }
+      }
     }
   }
 
@@ -122,6 +311,9 @@ class _AddCallModalState extends State<AddCallModal> {
       _placing = true;
       _placedNumber = number;
       _controller.clear();
+      _dropdownOpen = false;
+      _autocompleteMatches = [];
+      _selectedContact = null;
     });
     _startPlacingFailSafe();
     widget.onCall(number);
@@ -158,8 +350,6 @@ class _AddCallModalState extends State<AddCallModal> {
     final leg = _findPlacedLeg(conf);
     if (leg != null) _legEverSeen = true;
     if (leg == null) {
-      // Leg disappeared after we saw it, or was never seen because the call
-      // failed between frames (rapid Telnyx rejection).
       if (_legEverSeen ||
           _phase == _ModalPhase.ringing ||
           _phase == _ModalPhase.connected) {
@@ -215,36 +405,22 @@ class _AddCallModalState extends State<AddCallModal> {
       padding: const EdgeInsets.fromLTRB(28, 44, 28, 44),
       child: Column(
         children: [
-          _buildHeader(heldCount),
+          _buildHeader(conf, heldCount),
           const SizedBox(height: 4),
           Expanded(
-            child: Center(
+            child: Align(
+              alignment: _placing
+                  ? const Alignment(0, -0.4)
+                  : Alignment.center,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 360),
                 child: _phase == _ModalPhase.connected
                     ? _buildConnectedView()
                     : _phase == _ModalPhase.failed
                         ? _buildFailedView()
-                        : _searchResults.isNotEmpty
-                            ? _buildSearchResults()
-                            : ScrollConfiguration(
-                                behavior: ScrollConfiguration.of(context)
-                                    .copyWith(scrollbars: false),
-                                child: SingleChildScrollView(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      _buildNumberDisplay(),
-                                      const SizedBox(height: 14),
-                                      if (_phase == _ModalPhase.dialing) ...[
-                                        _buildNumPad(),
-                                        const SizedBox(height: 10),
-                                      ],
-                                      _buildCallRow(),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                        : _placing
+                            ? _buildCallingView()
+                            : _buildDialingView(),
               ),
             ),
           ),
@@ -253,17 +429,17 @@ class _AddCallModalState extends State<AddCallModal> {
     );
   }
 
-  Widget _buildHeader(int heldCount) {
+  Widget _buildHeader(ConferenceService conf, int heldCount) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.add_ic_call_rounded, size: 20, color: AppColors.accent),
+        Add2CallIcon(size: 22, color: AppColors.accent),
         const SizedBox(width: 6),
         Text(
           'Add Call',
           style: TextStyle(
-            fontSize: 15,
+            fontSize: 16,
             fontWeight: FontWeight.w600,
             color: AppColors.accent,
             letterSpacing: -0.3,
@@ -273,112 +449,217 @@ class _AddCallModalState extends State<AddCallModal> {
     );
   }
 
-  Widget _buildNumberDisplay() {
-    final raw = _controller.text;
-    final display = raw.isEmpty ? '' : PhoneFormatter.format(raw);
+  Widget _buildDialingView() {
+    final showDropdown = _dropdownOpen && _autocompleteMatches.isNotEmpty;
 
-    return Column(
+    return Stack(
       children: [
-        SizedBox(
-          height: 52,
-          child: raw.isEmpty
-              ? Text(
-                  'Enter number',
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.w200,
-                    color: AppColors.textTertiary,
-                    letterSpacing: 1,
-                  ),
-                )
-              : FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    display,
-                    style: TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.w300,
-                      color: AppColors.textPrimary,
-                      letterSpacing: 2,
-                      shadows: [
-                        Shadow(
-                          color: AppColors.phosphor.withValues(alpha: 0.35),
-                          blurRadius: 12,
+        if (showDropdown)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _dismissAutocomplete,
+            ),
+          ),
+        ScrollConfiguration(
+          behavior:
+              ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildNumberDisplay(),
+                SizedBox(
+                  width: double.infinity,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(height: 14),
+                          _buildNumPad(),
+                          const SizedBox(height: 10),
+                          _buildCallRow(),
+                        ],
+                      ),
+                      if (showDropdown)
+                        Positioned(
+                          top: -0.5,
+                          left: 0,
+                          right: 0,
+                          child: DialpadAutocompleteDropdown(
+                            matches: _autocompleteMatches,
+                            highlightedIndex: _highlightedIndex,
+                            onSelect: _onAutocompleteSelect,
+                            onCall: _onAutocompleteCall,
+                            onMessage: _onAutocompleteMessage,
+                            onDismiss: _dismissAutocomplete,
+                          ),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
                 ),
+              ],
+            ),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildSearchResults() {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _searchResults.length,
-      itemBuilder: (context, index) {
-        final contact = _searchResults[index];
-        final name = contact['name'] as String? ?? 'Unknown';
-        final phone = contact['phone'] as String? ?? '';
-        final company = contact['company'] as String? ?? '';
+  Widget _buildNumberDisplay() {
+    final raw = _controller.text;
+    final demoMode = context.watch<DemoModeService>();
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(raw);
+    final showDropdown = _dropdownOpen && _autocompleteMatches.isNotEmpty;
+    final hasSearchResults = _autocompleteMatches.isNotEmpty;
+    final display = raw.isEmpty
+        ? ''
+        : hasLetters
+            ? raw
+            : demoMode.enabled
+                ? demoMode.maskPhone(raw)
+                : PhoneFormatter.format(raw);
+    final borderColor = AppColors.border.withValues(alpha: 0.5);
+    const borderWidth = 0.5;
 
-        return InkWell(
-          onTap: () => _selectContact(contact),
-          borderRadius: BorderRadius.circular(10),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: AppColors.accent.withValues(alpha: 0.12),
-                  ),
-                  child: Center(
-                    child: Text(
-                      name.isNotEmpty ? name[0].toUpperCase() : '?',
+    return Container(
+      width: showDropdown ? double.infinity : null,
+      decoration: showDropdown
+          ? BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.40),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(14),
+                topRight: Radius.circular(14),
+              ),
+              border: Border(
+                top: BorderSide(color: borderColor, width: borderWidth),
+                left: BorderSide(color: borderColor, width: borderWidth),
+                right: BorderSide(color: borderColor, width: borderWidth),
+                bottom: BorderSide(color: borderColor, width: borderWidth),
+              ),
+            )
+          : null,
+      padding: showDropdown ? const EdgeInsets.only(top: 8, bottom: 8) : null,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Center(
+            child: SizedBox(
+              height: 48,
+              child: raw.isEmpty
+                  ? Text(
+                      'Enter number or name',
                       style: TextStyle(
-                        color: AppColors.accent,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w200,
+                        color: AppColors.textTertiary,
+                        letterSpacing: 0.5,
                       ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textPrimary,
+                    )
+                  : _selectedContact != null
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ContactIdenticon(
+                              seed: (_selectedContact!['display_name']
+                                              as String? ??
+                                          '')
+                                      .isEmpty
+                                  ? display
+                                  : _selectedContact!['display_name'] as String,
+                              size: 36,
+                            ),
+                            const SizedBox(width: 10),
+                            Flexible(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    demoMode.maskDisplayName(
+                                        _selectedContact!['display_name']
+                                                as String? ??
+                                            display),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
+                                      letterSpacing: -0.3,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    display,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w400,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            display,
+                            style: TextStyle(
+                              fontSize: hasLetters ? 28 : 34,
+                              fontWeight: hasLetters
+                                  ? FontWeight.w400
+                                  : FontWeight.w300,
+                              color: AppColors.textPrimary,
+                              letterSpacing: hasLetters ? -0.3 : 2,
+                              shadows: hasLetters
+                                  ? null
+                                  : [
+                                      Shadow(
+                                        color: AppColors.phosphor
+                                            .withValues(alpha: 0.35),
+                                        blurRadius: 12,
+                                      ),
+                                    ],
+                            ),
+                          ),
                         ),
-                      ),
-                      Text(
-                        company.isNotEmpty ? '$phone  ·  $company' : phone,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textTertiary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.phone_rounded,
-                    size: 18, color: AppColors.green.withValues(alpha: 0.7)),
-              ],
             ),
           ),
-        );
-      },
+          if (hasSearchResults)
+            Positioned(
+              top: 6,
+              right: 10,
+              child: GestureDetector(
+                onTap: _toggleSearchDropdown,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: _dropdownOpen
+                        ? AppColors.burntAmber.withValues(alpha: 0.18)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.search_rounded,
+                    size: 24,
+                    color: _dropdownOpen
+                        ? AppColors.burntAmber
+                        : AppColors.burntAmber.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -429,7 +710,14 @@ class _AddCallModalState extends State<AddCallModal> {
     );
   }
 
-  Widget _buildConnectedView() {
+  /// Resolve contact metadata for [_placedNumber].
+  ({
+    Map<String, dynamic>? contact,
+    String? rawName,
+    String? displayName,
+    String formattedRemote,
+    String? thumbnailPath,
+  }) _resolveContact() {
     final contactService = context.read<ContactService>();
     final demoMode = context.watch<DemoModeService>();
     final matchedContact = contactService.lookupByPhone(_placedNumber);
@@ -441,6 +729,66 @@ class _AddCallModalState extends State<AddCallModal> {
         ? demoMode.maskDisplayName(rawContactName)
         : null;
     final formattedRemote = demoMode.maskPhone(_placedNumber);
+    final thumb = matchedContact?['thumbnail_path'] as String?;
+    return (
+      contact: matchedContact,
+      rawName: rawContactName,
+      displayName: contactName,
+      formattedRemote: formattedRemote,
+      thumbnailPath: thumb,
+    );
+  }
+
+  Widget _buildCallingView() {
+    final c = _resolveContact();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Calling...',
+          style: TextStyle(fontSize: 13, color: AppColors.phosphor),
+        ),
+        const SizedBox(height: 24),
+        ContactIdenticon(
+          seed: c.rawName ?? _placedNumber,
+          size: 80,
+          thumbnailPath: c.thumbnailPath,
+        ),
+        const SizedBox(height: 20),
+        if (c.displayName != null) ...[
+          Text(
+            c.displayName!,
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            PhoneFormatter.format(c.formattedRemote),
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ] else
+          Text(
+            PhoneFormatter.format(c.formattedRemote),
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textPrimary,
+              letterSpacing: -0.5,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildConnectedView() {
+    final c = _resolveContact();
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -469,13 +817,14 @@ class _AddCallModalState extends State<AddCallModal> {
         ),
         const SizedBox(height: 24),
         ContactIdenticon(
-          seed: rawContactName ?? _placedNumber,
+          seed: c.rawName ?? _placedNumber,
           size: 80,
+          thumbnailPath: c.thumbnailPath,
         ),
         const SizedBox(height: 20),
-        if (contactName != null) ...[
+        if (c.displayName != null) ...[
           Text(
-            contactName,
+            c.displayName!,
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.w600,
@@ -485,7 +834,7 @@ class _AddCallModalState extends State<AddCallModal> {
           ),
           const SizedBox(height: 4),
           Text(
-            PhoneFormatter.format(formattedRemote),
+            PhoneFormatter.format(c.formattedRemote),
             style: TextStyle(
               fontSize: 14,
               color: AppColors.textSecondary,
@@ -493,7 +842,7 @@ class _AddCallModalState extends State<AddCallModal> {
           ),
         ] else
           Text(
-            PhoneFormatter.format(formattedRemote),
+            PhoneFormatter.format(c.formattedRemote),
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.w500,
@@ -501,18 +850,111 @@ class _AddCallModalState extends State<AddCallModal> {
               letterSpacing: -0.5,
             ),
           ),
-        const SizedBox(height: 32),
-        SizedBox(
-          width: 56,
-          height: 56,
-          child: Material(
-            color: AppColors.red.withValues(alpha: 0.15),
-            shape: const CircleBorder(),
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: widget.onClose,
-              child: Icon(Icons.call_end_rounded, color: AppColors.red, size: 26),
+        const SizedBox(height: 28),
+        _buildConnectedActions(),
+      ],
+    );
+  }
+
+  Widget _buildConnectedActions() {
+    final conf = context.watch<ConferenceService>();
+    final placedLeg = _findPlacedLeg(conf);
+    final isHeld = placedLeg?.state == LegState.held;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ActionButton(
+              title: isHeld ? 'Resume' : 'Hold',
+              icon: isHeld ? Icons.play_arrow : Icons.pause,
+              checked: isHeld,
+              onPressed: () {
+                if (placedLeg == null) return;
+                if (isHeld) {
+                  conf.unholdLeg(placedLeg.sipCallId);
+                } else {
+                  conf.holdLeg(placedLeg.sipCallId);
+                }
+              },
             ),
+            ActionButton(
+              title: 'Merge',
+              icon: Icons.merge_type_rounded,
+              onPressed: conf.canMerge
+                  ? () {
+                      conf.merge();
+                      widget.onClose();
+                    }
+                  : null,
+            ),
+            ActionButton(
+              title: 'Message',
+              icon: Icons.message_rounded,
+              onPressed: () {
+                if (_placedNumber.isNotEmpty) {
+                  context
+                      .read<MessagingService>()
+                      .openToConversation(_placedNumber);
+                }
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ActionButton(
+              title: 'Contact',
+              icon: Icons.person_outline_rounded,
+              onPressed: () {
+                if (_placedNumber.isNotEmpty) {
+                  context
+                      .read<ContactService>()
+                      .openContactForPhone(_placedNumber);
+                }
+              },
+            ),
+            _buildHangupButton(),
+            ActionButton(
+              title: 'Keypad',
+              icon: Icons.dialpad,
+              onPressed: () {
+                // DTMF handled at callscreen level
+              },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHangupButton() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        HoverButton(
+          onTap: widget.onClose,
+          borderRadius: BorderRadius.circular(32),
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.red,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.red.withValues(alpha: 0.35),
+                  blurRadius: 16,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+            child: Icon(Icons.call_end_rounded,
+                color: AppColors.onAccent, size: 26),
           ),
         ),
       ],
@@ -552,31 +994,6 @@ class _AddCallModalState extends State<AddCallModal> {
 
   Widget _buildCallRow() {
     final text = _controller.text;
-
-    if (_placing) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Calling ${PhoneFormatter.format(_placedNumber)}...',
-            style: TextStyle(
-              color: AppColors.phosphor,
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: AppColors.phosphor.withValues(alpha: 0.6),
-            ),
-          ),
-        ],
-      );
-    }
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -690,8 +1107,8 @@ class _ConferenceCallButtonState extends State<_ConferenceCallButton>
                       ),
                   ],
                 ),
-                child: Icon(
-                    Icons.phone, size: 30, color: AppColors.crtBlack),
+                child:
+                    Icon(Icons.phone, size: 30, color: AppColors.crtBlack),
               );
             },
           ),

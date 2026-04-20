@@ -189,7 +189,11 @@ class _ContactCardState extends State<ContactCard> {
         children: [
           const SizedBox(height: 24),
           // Avatar
-          ContactIdenticon(seed: _rawDisplayName, size: 72),
+          ContactIdenticon(
+            seed: _rawDisplayName,
+            size: 72,
+            thumbnailPath: widget.contact['thumbnail_path'] as String?,
+          ),
           const SizedBox(height: 12),
           // Name
           FractionallySizedBox(

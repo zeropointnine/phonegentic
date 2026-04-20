@@ -1,7 +1,43 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 import 'db/call_history_db.dart';
+
+class ImportConflict {
+  final Map<String, dynamic> localContact;
+  final String macosContactId;
+  final String macosDisplayName;
+  final String macosPhone;
+  final String? macosEmail;
+  final String? macosCompany;
+  final String? macosThumbnailPath;
+
+  const ImportConflict({
+    required this.localContact,
+    required this.macosContactId,
+    required this.macosDisplayName,
+    required this.macosPhone,
+    this.macosEmail,
+    this.macosCompany,
+    this.macosThumbnailPath,
+  });
+}
+
+class ImportResult {
+  final int newCount;
+  final int updatedCount;
+  final int conflictCount;
+
+  const ImportResult({
+    required this.newCount,
+    required this.updatedCount,
+    required this.conflictCount,
+  });
+}
 
 class ContactService extends ChangeNotifier {
   List<Map<String, dynamic>> _contacts = [];
@@ -14,6 +50,14 @@ class ContactService extends ChangeNotifier {
   String? _importError;
   bool _autoFocusName = false;
   String? _multipleMatchMessage;
+
+  // Merge review state
+  List<ImportConflict> _conflicts = [];
+  bool _isReviewMode = false;
+  int _selectedConflictIndex = -1;
+  int _importedNewCount = 0;
+  int _importedUpdatedCount = 0;
+  int _resolvedCount = 0;
 
   /// Cached phone->contact lookup (normalized phone -> contact map).
   final Map<String, Map<String, dynamic>> _phoneCache = {};
@@ -28,6 +72,18 @@ class ContactService extends ChangeNotifier {
   String? get importError => _importError;
   bool get autoFocusName => _autoFocusName;
   String? get multipleMatchMessage => _multipleMatchMessage;
+
+  // Merge review getters
+  List<ImportConflict> get conflicts => _conflicts;
+  bool get isReviewMode => _isReviewMode;
+  int get selectedConflictIndex => _selectedConflictIndex;
+  ImportConflict? get selectedConflict =>
+      _selectedConflictIndex >= 0 && _selectedConflictIndex < _conflicts.length
+          ? _conflicts[_selectedConflictIndex]
+          : null;
+  int get importedNewCount => _importedNewCount;
+  int get importedUpdatedCount => _importedUpdatedCount;
+  int get resolvedCount => _resolvedCount;
 
   ContactService() {
     loadAll();
@@ -256,6 +312,9 @@ class ContactService extends ChangeNotifier {
     _selectedContact = null;
     _autoFocusName = false;
     _multipleMatchMessage = null;
+    _isReviewMode = false;
+    _conflicts = [];
+    _selectedConflictIndex = -1;
     notifyListeners();
   }
 
@@ -267,71 +326,259 @@ class ContactService extends ChangeNotifier {
     }
   }
 
-  /// Import contacts from macOS Contacts.app.
-  /// Returns the number of contacts imported/updated, or -1 on error.
-  Future<int> importFromMacOS() async {
+  /// Import contacts from macOS Contacts.app with three-tier categorization:
+  /// - Linked: already has macos_contact_id → auto-update
+  /// - New: no local phone match → auto-import
+  /// - Conflict: phone match but no macos_contact_id link → queue for review
+  ///
+  /// Returns null on error, or an [ImportResult] with counts.
+  Future<ImportResult?> importFromMacOS() async {
     _importError = null;
     _isImporting = true;
+    _conflicts = [];
+    _selectedConflictIndex = -1;
+    _isReviewMode = false;
+    _importedNewCount = 0;
+    _importedUpdatedCount = 0;
+    _resolvedCount = 0;
     notifyListeners();
 
     try {
-      final status = await FlutterContacts.permissions.request(
-        PermissionType.read,
-      );
-      if (status != PermissionStatus.granted) {
+      late final List<Contact> nativeContacts;
+      try {
+        nativeContacts = await FlutterContacts.getAll(
+          properties: {
+            ContactProperty.name,
+            ContactProperty.phone,
+            ContactProperty.email,
+            ContactProperty.organization,
+            ContactProperty.photoThumbnail,
+          },
+        );
+      } catch (e) {
+        debugPrint('[ContactService] getAll failed (permission?): $e');
         _importError = 'Contacts permission denied. '
             'Open System Settings > Privacy & Security > Contacts to grant access.';
         _isImporting = false;
         notifyListeners();
         FlutterContacts.permissions.openSettings();
-        return -1;
+        return null;
       }
 
-      final nativeContacts = await FlutterContacts.getAll(
-        properties: {
-          ContactProperty.name,
-          ContactProperty.phone,
-          ContactProperty.email,
-          ContactProperty.organization,
-        },
-      );
+      final thumbDir = await _thumbnailDir();
+      await thumbDir.create(recursive: true);
 
-      int imported = 0;
+      await loadAll();
+      final localUnlinked = <String, Map<String, dynamic>>{};
+      for (final c in _contacts) {
+        if (c['macos_contact_id'] != null) continue;
+        final phone = c['phone_number'] as String? ?? '';
+        if (phone.isEmpty) continue;
+        final norm = CallHistoryDb.normalizePhone(phone);
+        if (norm.isNotEmpty) localUnlinked[norm] = c;
+      }
+
+      int newCount = 0;
+      int updatedCount = 0;
+      final pendingConflicts = <ImportConflict>[];
+
       for (final c in nativeContacts) {
-        final id = c.id;
-        if (id == null) continue;
+        final macId = c.id;
+        if (macId == null) continue;
         final displayName = c.displayName ?? '';
         if (displayName.isEmpty) continue;
 
-        final phone =
-            c.phones.isNotEmpty ? c.phones.first.number : '';
-        final email =
-            c.emails.isNotEmpty ? c.emails.first.address : null;
-        final company = c.organizations.isNotEmpty
-            ? c.organizations.first.name
+        final phone = c.phones.isNotEmpty ? c.phones.first.number : '';
+        final email = c.emails.isNotEmpty ? c.emails.first.address : null;
+        final company =
+            c.organizations.isNotEmpty ? c.organizations.first.name : null;
+
+        String? thumbnailPath;
+        final thumbBytes = c.photo?.thumbnail;
+        if (thumbBytes != null && thumbBytes.isNotEmpty) {
+          try {
+            final file = File(p.join(thumbDir.path, '$macId.jpg'));
+            await file.writeAsBytes(thumbBytes);
+            thumbnailPath = file.path;
+          } catch (e) {
+            debugPrint('[ContactService] thumbnail save failed for $macId: $e');
+          }
+        }
+
+        // Tier 1: already linked by macos_contact_id → auto-update
+        final existingLinked = _contacts.any(
+            (lc) => lc['macos_contact_id'] == macId);
+        if (existingLinked) {
+          await CallHistoryDb.upsertByMacosContactId(
+            macosContactId: macId,
+            displayName: displayName,
+            phoneNumber: phone,
+            email: email,
+            company: company,
+            thumbnailPath: thumbnailPath,
+          );
+          updatedCount++;
+          continue;
+        }
+
+        // Tier 2/3: check for phone match among unlinked local contacts
+        final normalizedPhone = phone.isNotEmpty
+            ? CallHistoryDb.normalizePhone(phone)
+            : '';
+        final localMatch = normalizedPhone.isNotEmpty
+            ? localUnlinked[normalizedPhone]
             : null;
 
-        await CallHistoryDb.upsertByMacosContactId(
-          macosContactId: id,
-          displayName: displayName,
-          phoneNumber: phone,
-          email: email,
-          company: company,
-        );
-        imported++;
+        if (localMatch != null) {
+          // Tier 3: conflict — phone match but no macos_contact_id link
+          pendingConflicts.add(ImportConflict(
+            localContact: localMatch,
+            macosContactId: macId,
+            macosDisplayName: displayName,
+            macosPhone: phone,
+            macosEmail: email,
+            macosCompany: company,
+            macosThumbnailPath: thumbnailPath,
+          ));
+          // Remove from unlinked so a second macOS contact with the same
+          // number doesn't double-conflict against the same local row.
+          localUnlinked.remove(normalizedPhone);
+        } else {
+          // Tier 2: new — no local match, auto-import
+          await CallHistoryDb.upsertByMacosContactId(
+            macosContactId: macId,
+            displayName: displayName,
+            phoneNumber: phone,
+            email: email,
+            company: company,
+            thumbnailPath: thumbnailPath,
+          );
+          newCount++;
+        }
       }
 
       await loadAll();
+      _importedNewCount = newCount;
+      _importedUpdatedCount = updatedCount;
       _isImporting = false;
+
+      if (pendingConflicts.isNotEmpty) {
+        _conflicts = pendingConflicts;
+        _isReviewMode = true;
+        _resolvedCount = 0;
+      }
+
       notifyListeners();
-      return imported;
+      return ImportResult(
+        newCount: newCount,
+        updatedCount: updatedCount,
+        conflictCount: pendingConflicts.length,
+      );
     } catch (e) {
       debugPrint('[ContactService] importFromMacOS failed: $e');
       _importError = 'Import failed: $e';
       _isImporting = false;
       notifyListeners();
-      return -1;
+      return null;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Merge review: selection
+  // ---------------------------------------------------------------------------
+
+  void selectConflict(int index) {
+    _selectedConflictIndex = index;
+    notifyListeners();
+  }
+
+  void deselectConflict() {
+    _selectedConflictIndex = -1;
+    notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Merge review: resolution actions
+  // ---------------------------------------------------------------------------
+
+  /// Keep local data, just link the macOS ID so future imports don't conflict.
+  Future<void> resolveKeepLocal(ImportConflict conflict) async {
+    final localId = conflict.localContact['id'] as int;
+    await CallHistoryDb.linkMacosContactId(localId, conflict.macosContactId);
+    // Save the macOS thumbnail if local has none
+    if (conflict.macosThumbnailPath != null &&
+        (conflict.localContact['thumbnail_path'] as String? ?? '').isEmpty) {
+      await CallHistoryDb.updateContact(
+          localId, {'thumbnail_path': conflict.macosThumbnailPath});
+    }
+    _removeConflict(conflict);
+  }
+
+  /// Overwrite local with macOS data and link the ID.
+  Future<void> resolveUseMacOS(ImportConflict conflict) async {
+    final localId = conflict.localContact['id'] as int;
+    await CallHistoryDb.updateContact(localId, {
+      'display_name': conflict.macosDisplayName,
+      'phone_number': conflict.macosPhone,
+      if (conflict.macosEmail != null) 'email': conflict.macosEmail,
+      if (conflict.macosCompany != null) 'company': conflict.macosCompany,
+      if (conflict.macosThumbnailPath != null)
+        'thumbnail_path': conflict.macosThumbnailPath,
+      'macos_contact_id': conflict.macosContactId,
+    });
+    _removeConflict(conflict);
+  }
+
+  /// Merge with per-field selections and link the ID.
+  /// [fields] maps field names to values chosen by the user.
+  Future<void> resolveMerge(
+      ImportConflict conflict, Map<String, String?> fields) async {
+    final localId = conflict.localContact['id'] as int;
+    final updates = <String, dynamic>{
+      'macos_contact_id': conflict.macosContactId,
+    };
+    for (final entry in fields.entries) {
+      if (entry.value != null) updates[entry.key] = entry.value;
+    }
+    if (conflict.macosThumbnailPath != null &&
+        !updates.containsKey('thumbnail_path')) {
+      updates['thumbnail_path'] = conflict.macosThumbnailPath;
+    }
+    await CallHistoryDb.updateContact(localId, updates);
+    _removeConflict(conflict);
+  }
+
+  /// Import the macOS contact as a separate entry (no merge).
+  Future<void> resolveKeepBoth(ImportConflict conflict) async {
+    await CallHistoryDb.upsertByMacosContactId(
+      macosContactId: conflict.macosContactId,
+      displayName: conflict.macosDisplayName,
+      phoneNumber: conflict.macosPhone,
+      email: conflict.macosEmail,
+      company: conflict.macosCompany,
+      thumbnailPath: conflict.macosThumbnailPath,
+    );
+    _removeConflict(conflict);
+  }
+
+  void _removeConflict(ImportConflict conflict) {
+    _conflicts.remove(conflict);
+    _resolvedCount++;
+    _selectedConflictIndex = -1;
+
+    if (_conflicts.isEmpty) {
+      _isReviewMode = false;
+    }
+
+    loadAll();
+    notifyListeners();
+  }
+
+  void exitReviewMode() {
+    _isReviewMode = false;
+    _conflicts = [];
+    _selectedConflictIndex = -1;
+    notifyListeners();
   }
 
   void clearImportError() {
@@ -347,5 +594,10 @@ class ContactService extends ChangeNotifier {
   void closeQuickAdd() {
     _isQuickAddOpen = false;
     notifyListeners();
+  }
+
+  static Future<Directory> _thumbnailDir() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return Directory(p.join(dir.path, 'phonegentic', 'contact_thumbnails'));
   }
 }

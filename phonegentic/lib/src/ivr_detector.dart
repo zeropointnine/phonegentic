@@ -414,6 +414,17 @@ class IvrDetector {
     return const IvrConfidence(type: CallPartyType.ambiguous, score: 0.5);
   }
 
+  /// Returns true when the text contains a navigable IVR menu prompt
+  /// (e.g. "press 1 for sales", "for billing press 3", "dial 0 for operator").
+  /// Voicemail greetings ("leave a message after the beep") return false.
+  static bool hasNavigableMenu(String text) {
+    final lower = text.toLowerCase();
+    return RegExp(r'press\s*[0-9*#]').hasMatch(lower) ||
+        RegExp(r'dial\s*[0-9*#]').hasMatch(lower) ||
+        RegExp(r'for\s+\w+.*press').hasMatch(lower) ||
+        lower.contains('say ') && RegExp(r'say\s+(sales|billing|support|service|representative|operator|yes|no|english|spanish)', caseSensitive: false).hasMatch(lower);
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------

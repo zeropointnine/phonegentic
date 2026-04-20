@@ -1,0 +1,20 @@
+---
+description: When building a new section/feature that mirrors an existing one, study the reference implementation thoroughly before writing code.
+alwaysApply: true
+---
+
+# Reference Implementation Pattern
+
+When the codebase already has a working implementation of a similar feature (e.g. building an "Add Call" modal that mirrors the main dialpad), **read and understand the reference first** before writing new code.
+
+## Process
+
+1. **Identify the reference** — Find the existing widget/service that the new feature should mirror.
+2. **Read it fully** — Don't skim. Understand the state management, focus handling, gesture/keyboard input, layout strategy, and widget tree structure.
+3. **Catalogue the patterns** — Note which Flutter patterns it uses (e.g. `HardwareKeyboard.instance.addHandler` vs `Focus(onKeyEvent:)`, `Provider.of` vs `context.watch`, overlay strategies, animation controllers).
+4. **Replicate, don't reinvent** — Use the same patterns, same widget wrappers, same state-management approach. If the reference uses `HardwareKeyboard.instance.addHandler` for keyboard input, don't substitute a `Focus(onKeyEvent:)` wrapper. If it uses a `Stack` for overlays, don't switch to a `showMenu` call.
+5. **Subtract, don't add** — The new version should be a strict subset of the reference (minus features explicitly excluded). Don't introduce new abstractions, extra wrapper widgets, or alternate state patterns that the reference doesn't use.
+
+## Why
+
+Mixing different patterns for the same concern (keyboard input, focus, layout) across sibling features causes bugs that are hard to diagnose — focus traps inside dialogs, gesture-blocking wrappers, conflicting state listeners — and creates maintenance burden.

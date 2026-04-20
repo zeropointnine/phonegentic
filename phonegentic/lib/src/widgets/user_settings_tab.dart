@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../agent_config_service.dart';
+import '../agent_service.dart';
 import '../build_config.dart';
 import '../calendar_sync_service.dart';
 import '../calendly_service.dart';
@@ -22,6 +23,8 @@ import '../messaging/telnyx_messaging_provider.dart';
 import '../messaging/twilio_messaging_provider.dart';
 import '../settings_port_service.dart';
 import '../theme_provider.dart';
+import '../apple_reminders_config.dart';
+import '../native_actions_service.dart';
 import '../user_config_service.dart';
 import 'settings_export_import_card.dart';
 
@@ -233,6 +236,11 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
   bool _googleSearchExpanded = false;
   final _googleSearchCtrl = TextEditingController();
 
+  AppleRemindersConfig _appleReminders = const AppleRemindersConfig();
+  bool _appleRemindersExpanded = false;
+  bool _testingAppleReminders = false;
+  List<ReminderList>? _appleReminderLists;
+
   String _gitHubToken = '';
   bool _gitHubExpanded = false;
   final _gitHubTokenCtrl = TextEditingController();
@@ -295,6 +303,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
     final gm = await GmailConfig.load();
     final gc = await GoogleCalendarConfig.load();
     final gs = await GoogleSearchConfig.load();
+    final ar = await AppleRemindersConfig.load();
     final am = await UserConfigService.loadAgentManagerConfig();
     final ghToken = await AgentConfigService.loadGitHubToken();
     if (!mounted) return;
@@ -309,6 +318,7 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
       _gmail = gm;
       _gcal = gc;
       _googleSearch = gs;
+      _appleReminders = ar;
       _calendlyKeyCtrl.text = c.apiKey;
       _fakeNumberCtrl.text = d.fakeNumber;
       _agentManagerPhoneCtrl.text = am.phoneNumber;
@@ -441,6 +451,42 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
           onTest: svc.testConnection,
         );
       }
+    }
+  }
+
+  Future<void> _updateAppleReminders(AppleRemindersConfig ar) async {
+    setState(() => _appleReminders = ar);
+    ar.save();
+    context.read<AgentService>().appleRemindersConfig = ar;
+  }
+
+  Future<void> _testAppleRemindersPermission() async {
+    setState(() {
+      _testingAppleReminders = true;
+      _appleReminderLists = null;
+    });
+    try {
+      final lists = await NativeActionsService.getReminderLists();
+      if (!mounted) return;
+      setState(() {
+        _appleReminderLists = lists;
+        _testingAppleReminders = false;
+      });
+      if (_appleReminders.defaultList.isEmpty && lists.isNotEmpty) {
+        final defaultList = lists.firstWhere(
+          (l) => l.isDefault,
+          orElse: () => lists.first,
+        );
+        _updateAppleReminders(
+          _appleReminders.copyWith(defaultList: defaultList.title),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _appleReminderLists = [];
+        _testingAppleReminders = false;
+      });
     }
   }
 
@@ -968,6 +1014,24 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   _divider(),
                   _buildGoogleSearchTestRow(),
                   _buildGoogleSearchResultsArea(),
+                ],
+              ],
+              Divider(
+                  height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
+              _buildAppleRemindersHeader(),
+              if (_appleRemindersExpanded) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withValues(alpha: 0.5)),
+                _buildAppleRemindersEnableToggle(),
+                if (_appleReminders.enabled) ...[
+                  _divider(),
+                  _buildAppleRemindersTestRow(),
+                  if (_appleReminderLists != null &&
+                      _appleReminderLists!.isNotEmpty) ...[
+                    _divider(),
+                    _buildAppleRemindersListPicker(),
+                  ],
                 ],
               ],
               if (BuildConfig.enableGitHubIssues) ...[
@@ -3186,6 +3250,210 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
 
   Widget _divider() => Divider(
       height: 0.5, indent: 16, color: AppColors.border.withValues(alpha: 0.5));
+
+  // ───── Apple Reminders ─────
+
+  Widget _buildAppleRemindersHeader() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () =>
+          setState(() => _appleRemindersExpanded = !_appleRemindersExpanded),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _appleReminders.isConfigured
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.checklist_rounded,
+                  size: 17,
+                  color: _appleReminders.isConfigured
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Apple Reminders',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        'Sync reminders to macOS Reminders.app',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _appleReminders.isConfigured
+                              ? AppColors.green.withValues(alpha: 0.12)
+                              : AppColors.orange.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _appleReminders.isConfigured ? 'Enabled' : 'Disabled',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: _appleReminders.isConfigured
+                                ? AppColors.green
+                                : AppColors.orange,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              _appleRemindersExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              size: 20,
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAppleRemindersEnableToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Enabled',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          const Spacer(),
+          SizedBox(
+            height: 28,
+            child: Switch.adaptive(
+              value: _appleReminders.enabled,
+              onChanged: (v) {
+                _updateAppleReminders(_appleReminders.copyWith(enabled: v));
+                if (v && _appleReminderLists == null) {
+                  _testAppleRemindersPermission();
+                }
+              },
+              activeTrackColor: AppColors.accent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppleRemindersTestRow() {
+    final hasLists =
+        _appleReminderLists != null && _appleReminderLists!.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              hasLists
+                  ? '${_appleReminderLists!.length} list${_appleReminderLists!.length == 1 ? '' : 's'} found'
+                  : _appleReminderLists != null
+                      ? 'Permission denied or no lists'
+                      : 'Test access to Reminders.app',
+              style: TextStyle(
+                fontSize: 12,
+                color: hasLists ? AppColors.green : AppColors.textTertiary,
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 30,
+            child: TextButton(
+              onPressed:
+                  _testingAppleReminders ? null : _testAppleRemindersPermission,
+              style: TextButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                foregroundColor: AppColors.accent,
+                textStyle:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              child: _testingAppleReminders
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppColors.accent),
+                    )
+                  : Text(hasLists ? 'Refresh' : 'Test Permission'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppleRemindersListPicker() {
+    final lists = _appleReminderLists!;
+    final current = _appleReminders.defaultList;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text('Default List',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          const Spacer(),
+          DropdownButton<String>(
+            value: lists.any((l) => l.title == current) ? current : null,
+            hint: Text('Select list',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.textTertiary)),
+            underline: const SizedBox.shrink(),
+            dropdownColor: AppColors.surface,
+            style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+            items: lists
+                .map((l) => DropdownMenuItem(
+                      value: l.title,
+                      child: Text(l.title),
+                    ))
+                .toList(),
+            onChanged: (val) {
+              if (val != null) {
+                _updateAppleReminders(
+                    _appleReminders.copyWith(defaultList: val));
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
 
   // ───── GitHub ─────
 

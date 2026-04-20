@@ -43,6 +43,7 @@ dependencies:
   desktop_drop: ^0.7.0
   archive: ^4.0.2
   cryptography: ^2.9.0
+  flutter_svg: ^2.2.4
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +63,7 @@ flutter:
     - assets/80s_digital_telephon_4-1776301525611.wav
     - assets/80s_telephone_ring_3-1776301545127.wav
     - assets/old_fashioned_paypho_2-1776301537305.wav
+    - assets/phone_plus.svg
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware.
   # For details regarding adding assets from package dependencies, see

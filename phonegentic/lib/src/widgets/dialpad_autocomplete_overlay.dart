@@ -290,7 +290,11 @@ class _AutocompleteRowState extends State<_AutocompleteRow>
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 ContactIdenticon(
-                    seed: name.isEmpty ? phone : name, size: 36),
+                  seed: name.isEmpty ? phone : name,
+                  size: 36,
+                  thumbnailPath:
+                      widget.contact['thumbnail_path'] as String?,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(

@@ -717,6 +717,91 @@ class WhisperRealtimeService {
       },
       {
         'type': 'function',
+        'name': 'hold_conference_leg',
+        'description':
+            'Place a specific conference participant on hold by their '
+                'phone number.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'number': {
+              'type': 'string',
+              'description': 'Phone number of the participant to hold.',
+            },
+          },
+          'required': ['number'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'unhold_conference_leg',
+        'description':
+            'Resume a specific conference participant from hold by their '
+                'phone number.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'number': {
+              'type': 'string',
+              'description': 'Phone number of the participant to resume.',
+            },
+          },
+          'required': ['number'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'hangup_conference_leg',
+        'description':
+            'Hang up and remove a specific participant from the conference '
+                'by their phone number.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'number': {
+              'type': 'string',
+              'description':
+                  'Phone number of the participant to hang up and remove.',
+            },
+          },
+          'required': ['number'],
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'list_conference_legs',
+        'description':
+            'List all current conference call legs with their status '
+                '(ringing, active, held, merged).',
+        'parameters': {
+          'type': 'object',
+          'properties': {},
+        },
+      },
+      {
+        'type': 'function',
+        'name': 'request_manager_conference',
+        'description':
+            'Send an SMS to the manager asking if they want to be '
+                'conferenced into the current active call. Use this BEFORE '
+                'attempting to add the manager as a conference participant. '
+                'The manager must reply YES before you proceed with hold_call '
+                'and add_conference_participant.',
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            'reason': {
+              'type': 'string',
+              'description':
+                  'Brief context for the manager about why they are being '
+                      'asked to join (e.g. "Caller wants to discuss contract terms").',
+            },
+          },
+          'required': ['reason'],
+        },
+      },
+      {
+        'type': 'function',
         'name': 'create_reminder',
         'description':
             'Create a timed reminder for the manager. '
@@ -785,8 +870,9 @@ class WhisperRealtimeService {
         'type': 'function',
         'name': 'get_call_summary',
         'description':
-            'Get a summary of recent call activity. Use when the manager '
-                'asks about calls since they were away or wants a status update. '
+            'Search and summarize call activity. Results are automatically '
+                'displayed in the call history panel — give a brief spoken '
+                'summary but do NOT list individual calls. '
                 'Can filter by phone number and/or time window.',
         'parameters': {
           'type': 'object',

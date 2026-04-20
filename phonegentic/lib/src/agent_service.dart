@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
+import 'apple_reminders_config.dart';
 import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
 import 'chrome/flight_aware_service.dart';
@@ -25,6 +26,7 @@ import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
 import 'manager_presence_service.dart';
+import 'native_actions_service.dart';
 import 'user_config_service.dart';
 import 'elevenlabs_api_service.dart';
 import 'log_service.dart';
@@ -163,6 +165,7 @@ class AgentService extends ChangeNotifier {
   GmailService? gmailService;
   GoogleCalendarService? googleCalendarService;
   GoogleSearchService? googleSearchService;
+  AppleRemindersConfig appleRemindersConfig = const AppleRemindersConfig();
   JobFunctionService? _jobFunctionService;
   ConferenceService? conferenceService;
   TransferRuleService? _transferRuleService;
@@ -710,6 +713,16 @@ class AgentService extends ChangeNotifier {
     if (selected == null) return;
     _bootContext = _jobFunctionService!.buildBootContext();
     _lastSyncedJobFunctionId = selected.id;
+    _syncHostSpeakerName();
+  }
+
+  /// If the manager/host name is configured, propagate it to the host speaker
+  /// so transcript bubbles show the real name instead of "Host".
+  void _syncHostSpeakerName() {
+    final name = _agentManagerConfig.name;
+    if (name.isNotEmpty && hostSpeaker.name.isEmpty) {
+      hostSpeaker.name = name;
+    }
   }
 
   void updateBootContext(
@@ -718,6 +731,7 @@ class AgentService extends ChangeNotifier {
     bool? whisperByDefault,
   }) {
     _bootContext = ctx;
+    _syncHostSpeakerName();
     if (jobFunctionName != null) {
       final mode = whisperByDefault == true ? ' (text-only)' : '';
       _addMsg(ChatMessage.system(
@@ -803,6 +817,7 @@ class AgentService extends ChangeNotifier {
       _textAgentConfig = await AgentConfigService.loadTextConfig();
       _ttsConfig = await AgentConfigService.loadTtsConfig();
       _agentManagerConfig = await UserConfigService.loadAgentManagerConfig();
+      _syncHostSpeakerName();
 
       // ── Kokoro TTS diagnostic ──
       debugPrint('[KokoroTTS-DIAG] BuildConfig.enableOnDeviceModels=${BuildConfig.enableOnDeviceModels}');
@@ -946,6 +961,7 @@ class AgentService extends ChangeNotifier {
       _vadSub = _whisper.vadEvents.listen(_onVadEvent);
 
       _initTextAgent();
+      appleRemindersConfig = await AppleRemindersConfig.load();
       _applyIntegrationTools();
 
       // Apply the job function's ElevenLabs voice now that TTS is initialised.
@@ -1389,6 +1405,37 @@ class AgentService extends ChangeNotifier {
           'request or say you cannot do something — if the tool exists, use it.'
           '\n\nDo NOT apply inbound-caller restrictions to this person.');
     }
+
+    buf.write('\n\n## Conference Calling');
+    buf.write(
+        '\nYou can set up a conference call, but ONLY to bring the manager '
+        '(${hasName ? name : "the host"} at $phone) into the active call. '
+        'Conference calling is not available for arbitrary third parties.');
+    buf.write(
+        '\n\n### Conference flow'
+        '\n1. When a caller asks to conference in '
+        '${hasName ? name : "the manager"}, or you determine the manager '
+        'should join the call, use `request_manager_conference` first. This '
+        'sends an SMS to the manager asking if they want to join.'
+        '\n2. Tell the caller you are checking with '
+        '${hasName ? name : "the manager"} and to hold on a moment.'
+        '\n3. **Wait** for the manager\'s reply. Do NOT proceed until you '
+        'receive an inbound SMS with a YES response from the manager.'
+        '\n4. Once the manager replies YES:'
+        '\n   a. Inform the caller they will be placed on hold briefly while '
+        'you connect ${hasName ? name : "the manager"}.'
+        '\n   b. Call `hold_call` with action "hold" to hold the current call.'
+        '\n   c. Call `add_conference_participant` with number "$phone" to '
+        'dial the manager.'
+        '\n   d. Once the manager answers, call `merge_conference` to bridge '
+        'everyone together.'
+        '\n5. If the manager replies NO or does not respond, inform the caller '
+        'that ${hasName ? name : "the manager"} is unavailable to join right now.');
+    buf.write(
+        '\n\nNEVER skip the approval step. NEVER conference in the manager '
+        'without their explicit YES. If SMS is not configured, post the '
+        'request in the chat panel and wait for a response there.');
+
     return buf.toString();
   }
 
@@ -1407,15 +1454,34 @@ class AgentService extends ChangeNotifier {
         '- "in an hour and a half" → delay_hours=1, delay_minutes=30\n'
         'Only use remind_at as a last resort for fully-specified absolute datetimes '
         'like "April 25 2026 at 3 PM". '
-        'Always offer to also add important reminders to Google Calendar.\n\n');
+        'Always offer to also add important reminders to Google Calendar.');
+    if (appleRemindersConfig.enabled) {
+      buf.write(
+          ' The Apple Reminders integration is ENABLED — also offer to sync '
+          'reminders to macOS Reminders.app using add_to_apple_reminders=true.');
+    }
+    buf.write('\n\n');
     buf.write(
         'Use `list_reminders` when the manager asks about scheduled reminders, '
         'upcoming events they set through you, or "do I have any reminders?". '
         'This returns all agent-created reminders from the local database.\n\n');
     buf.write(
         'When the manager returns after being away, or asks about recent activity, '
-        'use `get_call_summary` to catch them up on what happened. Offer to play '
-        'back recordings of specific calls if they exist.\n\n');
+        'use `get_call_summary` to catch them up on what happened. The matching '
+        'calls are automatically shown in the call history panel, so give a brief '
+        'spoken summary (e.g. count, who called) but do NOT read out every call. '
+        'Offer to play back recordings of specific calls if they exist.\n\n'
+        '**Host vs Agent on calls:**\n'
+        'The "host" or "manager" is the person who owns and operates this device. '
+        'When the host instructs you to make a call (e.g. via text or voice command), '
+        'YOU (the agent) are the one on the call with the remote party — the host '
+        'may NOT be on the call at all. The call summary marks these as '
+        '"[agent-handled — host was NOT on this call]".\n'
+        '- For agent-handled calls, use "we" (you and the remote party) when '
+        'describing what happened — e.g. "Dave answered and we spoke for about '
+        '4 minutes." NEVER say "you spoke" when the host was not on the call.\n'
+        '- For calls where the host WAS on the line (no agent-handled tag), '
+        'you may say "you" referring to the host.\n\n');
     buf.write(
         'You can play call recordings using `play_call_recording` when '
         'the manager or host wants to hear a specific call. Include the '
@@ -2079,6 +2145,12 @@ class AgentService extends ChangeNotifier {
             'description':
                 'If true, also create a Google Calendar event for this reminder.',
           },
+          'add_to_apple_reminders': {
+            'type': 'boolean',
+            'description':
+                'If true, also create a reminder in macOS Reminders.app via EventKit. '
+                'Only available when the Apple Reminders integration is enabled.',
+          },
         },
         'required': ['title'],
       },
@@ -2086,8 +2158,9 @@ class AgentService extends ChangeNotifier {
     LlmTool(
       name: 'get_call_summary',
       description:
-          'Get a summary of recent call activity. Use when the manager '
-          'asks about calls since they were away or wants a status update. '
+          'Search and summarize call activity. Results are automatically '
+          'displayed in the call history panel — give a brief spoken '
+          'summary (count + highlight) but do NOT list individual calls. '
           'Can filter by phone number, time window, direction, and status. '
           'IMPORTANT: "missed" calls are ONLY unanswered inbound calls — '
           'a failed outbound call is NOT missed, it is "failed".',
@@ -2866,6 +2939,19 @@ class AgentService extends ChangeNotifier {
           _ivrHitsInSettle++;
           _ivrHeard = true;
           _extendSettleTimer();
+
+          if (IvrDetector.hasNavigableMenu(text)) {
+            debugPrint(
+                '[AgentService] IVR menu detected — forwarding to agent for DTMF navigation');
+            final directive = '[SYSTEM] IVR menu detected on the line. '
+                'Listen to the options and use send_dtmf to navigate: "$text"';
+            if (_splitPipeline && _textAgent != null) {
+              _textAgent!.sendUserMessage(directive);
+            } else if (_active) {
+              _whisper.sendSystemDirective(directive);
+            }
+          }
+
           if (c.ivrEnding) {
             debugPrint(
                 '[AgentService] IVR ending phrase detected — entering beep watch');
@@ -3495,6 +3581,21 @@ class AgentService extends ChangeNotifier {
         case 'merge_conference':
           result = await _handleMergeConference(args);
           break;
+        case 'request_manager_conference':
+          result = await _handleRequestManagerConference(args);
+          break;
+        case 'hold_conference_leg':
+          result = _handleHoldConferenceLeg(args);
+          break;
+        case 'unhold_conference_leg':
+          result = _handleUnholdConferenceLeg(args);
+          break;
+        case 'hangup_conference_leg':
+          result = _handleHangupConferenceLeg(args);
+          break;
+        case 'list_conference_legs':
+          result = _handleListConferenceLegs(args);
+          break;
         case 'create_reminder':
           result = await _handleCreateReminder(args);
           break;
@@ -3563,6 +3664,9 @@ class AgentService extends ChangeNotifier {
           break;
         case 'end_call':
           result = await _handleEndCall();
+          break;
+        case 'send_dtmf':
+          result = _handleSendDtmf(req.arguments);
           break;
         case 'search_contacts':
           result = await _handleSearchContacts(req.arguments);
@@ -3641,6 +3745,21 @@ class AgentService extends ChangeNotifier {
           break;
         case 'merge_conference':
           result = await _handleMergeConference(req.arguments);
+          break;
+        case 'request_manager_conference':
+          result = await _handleRequestManagerConference(req.arguments);
+          break;
+        case 'hold_conference_leg':
+          result = _handleHoldConferenceLeg(req.arguments);
+          break;
+        case 'unhold_conference_leg':
+          result = _handleUnholdConferenceLeg(req.arguments);
+          break;
+        case 'hangup_conference_leg':
+          result = _handleHangupConferenceLeg(req.arguments);
+          break;
+        case 'list_conference_legs':
+          result = _handleListConferenceLegs(req.arguments);
           break;
         case 'create_reminder':
           result = await _handleCreateReminder(req.arguments);
@@ -4161,6 +4280,8 @@ class AgentService extends ChangeNotifier {
 
     final description = args['description'] as String?;
     final addToGcal = args['add_to_google_calendar'] as bool? ?? false;
+    final addToAppleReminders =
+        args['add_to_apple_reminders'] as bool? ?? false;
 
     String? gcalEventId;
     if (addToGcal && googleCalendarService != null) {
@@ -4182,6 +4303,27 @@ class AgentService extends ChangeNotifier {
       }
     }
 
+    bool appleReminderCreated = false;
+    if (addToAppleReminders && appleRemindersConfig.enabled) {
+      try {
+        final listName = appleRemindersConfig.defaultList.isNotEmpty
+            ? appleRemindersConfig.defaultList
+            : null;
+        final appleId = await NativeActionsService.createReminder(
+          title: title,
+          body: description,
+          dueDate: remindAt,
+          remindDate: remindAt,
+          listName: listName,
+        );
+        appleReminderCreated = appleId != null;
+        debugPrint(
+            '[AgentService] Apple Reminder created: $appleId (list: $listName)');
+      } catch (e) {
+        debugPrint('[AgentService] Failed to create Apple Reminder: $e');
+      }
+    }
+
     final id = await CallHistoryDb.insertReminder(
       title: title,
       description: description,
@@ -4199,31 +4341,55 @@ class AgentService extends ChangeNotifier {
     if (gcalEventId != null) {
       buf.write(' (also added to Google Calendar)');
     }
+    if (appleReminderCreated) {
+      buf.write(' (also added to Apple Reminders)');
+    }
     buf.write('. [id=$id]');
     return buf.toString();
   }
 
   Future<String> _handleGetCallSummary(Map<String, dynamic> args) async {
     final sinceMinutes = args['since_minutes_ago'] as int?;
-    DateTime? since;
-    if (sinceMinutes != null) {
-      since = DateTime.now().subtract(Duration(minutes: sinceMinutes));
-    } else if (managerPresenceService?.lastBriefingAt != null) {
-      since = managerPresenceService!.lastBriefingAt;
-    }
-
     final phoneNumber = args['phone_number'] as String?;
     final direction = args['direction'] as String?;
     final status = args['status'] as String?;
     final transcriptQuery = args['transcript_query'] as String?;
 
-    return getCallActivitySummary(
+    // Only apply lastBriefingAt when doing a general "what happened?" query.
+    // Targeted searches (by contact, transcript, etc.) should search all time.
+    DateTime? since;
+    if (sinceMinutes != null) {
+      since = DateTime.now().subtract(Duration(minutes: sinceMinutes));
+    } else if (phoneNumber == null &&
+        transcriptQuery == null &&
+        managerPresenceService?.lastBriefingAt != null) {
+      since = managerPresenceService!.lastBriefingAt;
+    }
+
+    // Populate the call-history panel so results appear in the left sidebar
+    // automatically — the agent doesn't need to narrate them.
+    if (callHistory != null) {
+      final params = CallSearchParams(
+        contactName: phoneNumber,
+        since: since,
+        direction: direction,
+        status: status,
+        transcriptQuery: transcriptQuery,
+      );
+      await callHistory!.search(params);
+      callHistory!.openHistory(keepResults: true);
+    }
+
+    final summary = await getCallActivitySummary(
       since: since,
       phoneNumber: phoneNumber,
       direction: direction,
       status: status,
       transcriptQuery: transcriptQuery,
     );
+    return '$summary\n\n'
+        '[Results are now displayed in the call history panel. '
+        'Give a brief summary — do NOT list individual calls.]';
   }
 
   Future<String> getCallActivitySummary({
@@ -4275,6 +4441,16 @@ class AgentService extends ChangeNotifier {
         0, (sum, c) => sum + ((c['duration_seconds'] as int?) ?? 0));
     buf.writeln('Total duration: ${_formatDuration(totalDuration)}');
 
+    // Check which calls had the host (manager) actually on the line vs
+    // agent-only calls made on the host's behalf.
+    final callIds = calls
+        .take(10)
+        .map((c) => c['id'] as int?)
+        .whereType<int>()
+        .toList();
+    final hostOnCallIds =
+        await CallHistoryDb.callIdsWithHostTranscripts(callIds);
+
     buf.writeln('\nCalls:');
     for (final call in calls.take(10)) {
       final displayName = call['remote_display_name'] as String?;
@@ -4287,6 +4463,8 @@ class AgentService extends ChangeNotifier {
       final hasRecording =
           (call['recording_path'] as String?)?.isNotEmpty ?? false;
       final callId = call['id'] as int?;
+      final hostWasOnCall =
+          callId != null && hostOnCallIds.contains(callId);
 
       String timeLabel = '';
       final startedAt = call['started_at'] as String?;
@@ -4313,6 +4491,9 @@ class AgentService extends ChangeNotifier {
           '${_formatDuration(duration)}');
       if (timeLabel.isNotEmpty) buf.write(', $timeLabel');
       buf.write(')');
+      if (!hostWasOnCall && duration > 0) {
+        buf.write(' [agent-handled — host was NOT on this call]');
+      }
       if (hasRecording && callId != null) {
         buf.write(' [recording available, call_record_id=$callId]');
       }
@@ -4774,6 +4955,64 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  ConferenceCallLeg? _findLegByNumber(String number) {
+    if (conferenceService == null) return null;
+    final cleaned = number.replaceAll(RegExp(r'[^\d+]'), '');
+    for (final leg in conferenceService!.legs) {
+      final legNum = leg.remoteNumber.replaceAll(RegExp(r'[^\d+]'), '');
+      if (legNum == cleaned || legNum.endsWith(cleaned) || cleaned.endsWith(legNum)) {
+        return leg;
+      }
+    }
+    return null;
+  }
+
+  String _handleHoldConferenceLeg(Map<String, dynamic> args) {
+    if (conferenceService == null) return 'Conference service not available.';
+    final number = args['number'] as String?;
+    if (number == null || number.isEmpty) return 'No number provided.';
+    final leg = _findLegByNumber(number);
+    if (leg == null) return 'No conference leg found for $number.';
+    if (leg.state == LegState.held) return 'Leg $number is already on hold.';
+    conferenceService!.holdLeg(leg.sipCallId);
+    return 'Placed $number on hold.';
+  }
+
+  String _handleUnholdConferenceLeg(Map<String, dynamic> args) {
+    if (conferenceService == null) return 'Conference service not available.';
+    final number = args['number'] as String?;
+    if (number == null || number.isEmpty) return 'No number provided.';
+    final leg = _findLegByNumber(number);
+    if (leg == null) return 'No conference leg found for $number.';
+    if (leg.state != LegState.held) return 'Leg $number is not on hold.';
+    conferenceService!.unholdLeg(leg.sipCallId);
+    return 'Resumed $number from hold.';
+  }
+
+  String _handleHangupConferenceLeg(Map<String, dynamic> args) {
+    if (conferenceService == null) return 'Conference service not available.';
+    final number = args['number'] as String?;
+    if (number == null || number.isEmpty) return 'No number provided.';
+    final leg = _findLegByNumber(number);
+    if (leg == null) return 'No conference leg found for $number.';
+    final call = sipHelper?.findCall(leg.sipCallId);
+    if (call != null) call.hangup();
+    conferenceService!.removeLeg(leg.sipCallId);
+    return 'Hung up $number and removed from conference.';
+  }
+
+  String _handleListConferenceLegs(Map<String, dynamic> args) {
+    if (conferenceService == null) return 'Conference service not available.';
+    final conf = conferenceService!;
+    if (conf.legs.isEmpty) return 'No active conference legs.';
+    final lines = conf.legs.map((l) {
+      final state = l.state.name;
+      return '${l.remoteNumber} (${l.displayName ?? "unknown"}) — $state';
+    }).join('\n');
+    return 'Conference legs (${conf.legCount}):\n$lines'
+        '${conf.hasConference ? "\nMerged: yes" : "\nMerged: no"}';
+  }
+
   // ---------------------------------------------------------------------------
   // Transfer rule context injection + tool handlers
   // ---------------------------------------------------------------------------
@@ -4942,6 +5181,58 @@ class AgentService extends ChangeNotifier {
         'configured — manager phone or messaging must be set up in Settings). '
         'Tell the caller you are checking with the manager. Wait for the '
         'manager\'s response — do NOT transfer until you receive explicit '
+        'approval.';
+  }
+
+  Future<String> _handleRequestManagerConference(
+      Map<String, dynamic> args) async {
+    if (!_agentManagerConfig.isConfigured) {
+      return 'Manager is not configured. Conference calling requires a '
+          'configured manager phone number in Settings.';
+    }
+
+    if (!_callPhase.isActive) {
+      return 'No active call. A conference requires an active call to '
+          'conference the manager into.';
+    }
+
+    final reason =
+        args['reason'] as String? ?? 'A caller would like to conference you in.';
+    final callerName = _resolveCallerName() ?? _remoteIdentity ?? 'Unknown';
+    final managerPhone = _agentManagerConfig.phoneNumber;
+    final managerName = _agentManagerConfig.name;
+    final managerLabel =
+        managerName.isNotEmpty ? '$managerName ($managerPhone)' : managerPhone;
+
+    final canSms = messagingService != null &&
+        messagingService!.isConfigured &&
+        _agentManagerConfig.isConfigured;
+
+    _addMsg(ChatMessage.system(
+      'CONFERENCE REQUEST: $callerName wants to conference in $managerLabel. '
+      'Reason: $reason — Reply YES or NO.',
+    ));
+    notifyListeners();
+
+    if (canSms) {
+      final smsText = 'CONFERENCE REQUEST: $callerName is on the line and '
+          'would like to conference you in. Reason: $reason — '
+          'Reply YES to join or NO to decline.';
+
+      await messagingService!.sendMessage(to: managerPhone, text: smsText);
+
+      return 'Conference approval request sent to $managerLabel via SMS and '
+          'posted in the chat panel. Tell the caller you are checking with '
+          '${managerName.isNotEmpty ? managerName : "the manager"} to see if '
+          'they are available. Wait for the manager\'s YES reply — do NOT '
+          'place the call on hold or dial the manager until you receive '
+          'explicit approval.';
+    }
+
+    return 'Conference request posted in the chat for the manager (SMS not '
+        'configured — manager phone or messaging must be set up in Settings). '
+        'Tell the caller you are checking with the manager. Wait for the '
+        'manager\'s response — do NOT proceed until you receive explicit '
         'approval.';
   }
 

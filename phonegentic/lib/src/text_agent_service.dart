@@ -303,6 +303,21 @@ class TextAgentService {
       },
     ),
     LlmTool(
+      name: 'send_dtmf',
+      description: 'Send DTMF tones on the active call to navigate phone menus.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'tones': {
+            'type': 'string',
+            'description':
+                'DTMF digit string to send (e.g. "1", "123#", "*9")',
+          },
+        },
+        'required': ['tones'],
+      },
+    ),
+    LlmTool(
       name: 'search_contacts',
       description: 'Search the local contacts database by name, phone, or tags. '
           'Use not_called_since_days to find contacts with no outbound calls in N days.',
@@ -648,6 +663,124 @@ class TextAgentService {
             'description':
                 'The number or person the caller wants to be transferred to, '
                     'if specified. Leave empty if they did not specify.',
+          },
+        },
+        'required': ['reason'],
+      },
+    ),
+    LlmTool(
+      name: 'hold_call',
+      description: 'Put the active call on hold, or resume a held call. '
+          'Toggling hold is useful before adding a conference participant.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'action': {
+            'type': 'string',
+            'enum': ['hold', 'resume'],
+            'description': 'Whether to hold or resume the call.',
+          },
+        },
+        'required': ['action'],
+      },
+    ),
+    LlmTool(
+      name: 'add_conference_participant',
+      description: 'Add a new participant to the call by dialing a second number. '
+          'The current call is automatically placed on hold while the '
+          'new leg connects. Use merge_conference afterwards to bridge '
+          'all participants together.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'number': {
+            'type': 'string',
+            'description':
+                'Phone number or SIP URI of the participant to add.',
+          },
+        },
+        'required': ['number'],
+      },
+    ),
+    LlmTool(
+      name: 'merge_conference',
+      description: 'Merge all active call legs into a single conference call. '
+          'Requires at least two call legs (use add_conference_participant first).',
+      inputSchema: {
+        'type': 'object',
+        'properties': {},
+      },
+    ),
+    LlmTool(
+      name: 'hold_conference_leg',
+      description: 'Place a specific conference participant on hold by their '
+          'phone number.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'number': {
+            'type': 'string',
+            'description': 'Phone number of the participant to hold.',
+          },
+        },
+        'required': ['number'],
+      },
+    ),
+    LlmTool(
+      name: 'unhold_conference_leg',
+      description: 'Resume a specific conference participant from hold by '
+          'their phone number.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'number': {
+            'type': 'string',
+            'description': 'Phone number of the participant to resume.',
+          },
+        },
+        'required': ['number'],
+      },
+    ),
+    LlmTool(
+      name: 'hangup_conference_leg',
+      description: 'Hang up and remove a specific participant from the '
+          'conference by their phone number.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'number': {
+            'type': 'string',
+            'description':
+                'Phone number of the participant to hang up and remove.',
+          },
+        },
+        'required': ['number'],
+      },
+    ),
+    LlmTool(
+      name: 'list_conference_legs',
+      description: 'List all current conference call legs with their status '
+          '(ringing, active, held, merged).',
+      inputSchema: {
+        'type': 'object',
+        'properties': {},
+      },
+    ),
+    LlmTool(
+      name: 'request_manager_conference',
+      description: 'Send an SMS to the manager asking if they want to be '
+          'conferenced into the current active call. Use this BEFORE attempting '
+          'to add the manager as a conference participant. The manager must '
+          'reply YES before you proceed with hold_call and '
+          'add_conference_participant.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'reason': {
+            'type': 'string',
+            'description':
+                'Brief context for the manager about why they are being '
+                'asked to join (e.g. "Caller wants to discuss contract terms").',
           },
         },
         'required': ['reason'],

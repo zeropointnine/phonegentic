@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -28,14 +30,16 @@ class DialpadContactPreview extends StatelessWidget {
 
     final hasText = !nameIsPhone || _company.isNotEmpty;
 
+    final thumb = contact['thumbnail_path'] as String?;
+
     if (!hasText) {
-      return ContactIdenticon(seed: _rawName, size: 48);
+      return ContactIdenticon(seed: _rawName, size: 48, thumbnailPath: thumb);
     }
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ContactIdenticon(seed: _rawName, size: 44),
+        ContactIdenticon(seed: _rawName, size: 44, thumbnailPath: thumb),
         const SizedBox(width: 10),
         Flexible(
           child: Column(
@@ -75,17 +79,44 @@ class DialpadContactPreview extends StatelessWidget {
   }
 }
 
-/// Circular identicon with a symmetric pattern clipped to a circle.
-/// Uses monochrome tones derived from the theme accent so it feels cohesive
-/// rather than random-colored.
+/// Circular contact avatar. Shows the real photo when [thumbnailPath] points
+/// to a file on disk; falls back to a deterministic identicon grid derived
+/// from [seed].
 class ContactIdenticon extends StatelessWidget {
   final String seed;
   final double size;
+  final String? thumbnailPath;
 
-  const ContactIdenticon({super.key, required this.seed, required this.size});
+  const ContactIdenticon({
+    super.key,
+    required this.seed,
+    required this.size,
+    this.thumbnailPath,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final accent = AppColors.accent;
+
+    if (thumbnailPath != null && thumbnailPath!.isNotEmpty) {
+      final file = File(thumbnailPath!);
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: accent.withValues(alpha: 0.2),
+            width: 0.5,
+          ),
+          image: DecorationImage(
+            image: FileImage(file),
+            fit: BoxFit.cover,
+          ),
+        ),
+      );
+    }
+
     final hash = _hashSeed(seed);
     const gridSize = 7;
     final cellSize = size / gridSize;
@@ -103,7 +134,6 @@ class ContactIdenticon extends StatelessWidget {
     }
     filled[gridSize ~/ 2][gridSize ~/ 2] = true;
 
-    final accent = AppColors.accent;
     final fillColor = accent.withValues(alpha: 0.7);
     final dimColor = accent.withValues(alpha: 0.08);
 

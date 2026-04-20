@@ -30,7 +30,7 @@ class CallHistoryDb {
     final dbPath = p.join(dir.path, 'phonegentic', 'call_history.db');
     await Directory(p.dirname(dbPath)).create(recursive: true);
 
-    return databaseFactoryFfi.openDatabase(
+    final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
         version: 17,
@@ -38,6 +38,9 @@ class CallHistoryDb {
         onUpgrade: _onUpgrade,
       ),
     );
+    await db.execute('PRAGMA journal_mode = WAL');
+    await db.execute('PRAGMA busy_timeout = 5000');
+    return db;
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -477,6 +480,22 @@ class CallHistoryDb {
     );
   }
 
+  /// Returns the set of call record IDs (from [callIds]) that have at least
+  /// one transcript with role = 'host'.  Used to distinguish calls where the
+  /// host was actually on the line from agent-only calls.
+  static Future<Set<int>> callIdsWithHostTranscripts(
+      List<int> callIds) async {
+    if (callIds.isEmpty) return {};
+    final db = await database;
+    final placeholders = callIds.map((_) => '?').join(',');
+    final rows = await db.rawQuery(
+      'SELECT DISTINCT call_record_id FROM call_transcripts '
+      'WHERE call_record_id IN ($placeholders) AND role = ?',
+      [...callIds, 'host'],
+    );
+    return rows.map((r) => r['call_record_id'] as int).toSet();
+  }
+
   /// Find the most recent completed call with [remotePhone] (suffix match on
   /// the last 10 digits) and return its transcript rows, or empty if none.
   static Future<List<Map<String, dynamic>>> getLastTranscriptForRemote(
@@ -522,46 +541,49 @@ class CallHistoryDb {
     final args = <dynamic>[];
 
     if (contactName != null && contactName.isNotEmpty) {
-      where.add('(remote_display_name LIKE ? OR remote_identity LIKE ?)');
-      args.addAll(['%$contactName%', '%$contactName%']);
+      where.add(
+        '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
+        'OR c.display_name LIKE ?)');
+      args.addAll(['%$contactName%', '%$contactName%', '%$contactName%']);
     }
     if (minDurationSeconds != null) {
-      where.add('duration_seconds >= ?');
+      where.add('cr.duration_seconds >= ?');
       args.add(minDurationSeconds);
     }
     if (maxDurationSeconds != null) {
-      where.add('duration_seconds <= ?');
+      where.add('cr.duration_seconds <= ?');
       args.add(maxDurationSeconds);
     }
     if (since != null) {
-      where.add('started_at >= ?');
+      where.add('cr.started_at >= ?');
       args.add(since.toIso8601String());
     }
     if (before != null) {
-      where.add('started_at <= ?');
+      where.add('cr.started_at <= ?');
       args.add(before.toIso8601String());
     }
     if (direction != null) {
-      where.add('direction = ?');
+      where.add('cr.direction = ?');
       args.add(direction);
     }
     if (status != null && status != 'active') {
-      where.add('status = ?');
+      where.add('cr.status = ?');
       args.add(status);
     }
 
-    // Exclude currently-active calls from search results
     if (status == null) {
-      where.add("status != 'active'");
+      where.add("cr.status != 'active'");
     }
 
-    return db.query(
-      'call_records',
-      where: where.isEmpty ? null : where.join(' AND '),
-      whereArgs: args.isEmpty ? null : args,
-      orderBy: 'started_at DESC',
-      limit: limit,
-    );
+    final whereClause = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
+    return db.rawQuery('''
+      SELECT cr.*, c.display_name AS contact_name
+      FROM call_records cr
+      LEFT JOIN contacts c ON c.id = cr.contact_id
+      $whereClause
+      ORDER BY cr.started_at DESC
+      LIMIT ?
+    ''', [...args, limit]);
   }
 
   /// Search for calls whose transcripts contain [query].
@@ -584,8 +606,9 @@ class CallHistoryDb {
 
     if (contactName != null && contactName.isNotEmpty) {
       where.add(
-          '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ?)');
-      args.addAll(['%$contactName%', '%$contactName%']);
+          '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
+          'OR c.display_name LIKE ?)');
+      args.addAll(['%$contactName%', '%$contactName%', '%$contactName%']);
     }
     if (minDurationSeconds != null) {
       where.add('cr.duration_seconds >= ?');
@@ -616,9 +639,10 @@ class CallHistoryDb {
     }
 
     return db.rawQuery('''
-      SELECT DISTINCT cr.*
+      SELECT DISTINCT cr.*, c.display_name AS contact_name
       FROM call_records cr
       INNER JOIN call_transcripts ct ON ct.call_record_id = cr.id
+      LEFT JOIN contacts c ON c.id = cr.contact_id
       WHERE ${where.join(' AND ')}
       ORDER BY cr.started_at DESC
       LIMIT ?
@@ -629,12 +653,14 @@ class CallHistoryDb {
     int limit = 50,
   }) async {
     final db = await database;
-    return db.query(
-      'call_records',
-      where: "status != 'active'",
-      orderBy: 'started_at DESC',
-      limit: limit,
-    );
+    return db.rawQuery('''
+      SELECT cr.*, c.display_name AS contact_name
+      FROM call_records cr
+      LEFT JOIN contacts c ON c.id = cr.contact_id
+      WHERE cr.status != 'active'
+      ORDER BY cr.started_at DESC
+      LIMIT ?
+    ''', [limit]);
   }
 
   /// Distinct caller names and numbers for autocomplete suggestions.
@@ -647,15 +673,17 @@ class CallHistoryDb {
 
     final rows = await db.rawQuery('''
       SELECT DISTINCT
-        COALESCE(NULLIF(cr.remote_display_name, ''), cr.remote_identity) AS label,
+        COALESCE(NULLIF(c.display_name, ''), NULLIF(cr.remote_display_name, ''), cr.remote_identity) AS label,
         cr.remote_identity AS phone
       FROM call_records cr
+      LEFT JOIN contacts c ON c.id = cr.contact_id
       WHERE cr.status != 'active'
-        AND (cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ?)
+        AND (cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ?
+             OR c.display_name LIKE ?)
       GROUP BY label
       ORDER BY MAX(cr.started_at) DESC
       LIMIT ?
-    ''', [like, like, limit]);
+    ''', [like, like, like, limit]);
 
     // Merge in contacts that haven't called yet
     final contactRows = await db.query(
@@ -770,6 +798,7 @@ class CallHistoryDb {
     String phoneNumber = '',
     String? email,
     String? company,
+    String? thumbnailPath,
   }) async {
     final db = await database;
     final existing = await db.query(
@@ -786,6 +815,7 @@ class CallHistoryDb {
           'phone_number': phoneNumber,
           if (email != null) 'email': email,
           if (company != null) 'company': company,
+          if (thumbnailPath != null) 'thumbnail_path': thumbnailPath,
         },
         where: 'id = ?',
         whereArgs: [id],
@@ -797,9 +827,22 @@ class CallHistoryDb {
       'phone_number': phoneNumber,
       'email': email,
       'company': company,
+      'thumbnail_path': thumbnailPath,
       'macos_contact_id': macosContactId,
       'created_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  /// Link a macOS contact ID to an existing local contact row.
+  static Future<void> linkMacosContactId(
+      int localId, String macosContactId) async {
+    final db = await database;
+    await db.update(
+      'contacts',
+      {'macos_contact_id': macosContactId},
+      where: 'id = ?',
+      whereArgs: [localId],
+    );
   }
 
   static Future<void> mergeContacts(int sourceId, int targetId) async {

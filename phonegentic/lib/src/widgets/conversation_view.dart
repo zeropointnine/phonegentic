@@ -96,41 +96,42 @@ class _ConversationViewState extends State<ConversationView> {
                       color: AppColors.accent.withValues(alpha: 0.8), width: 2)
                   : null,
             ),
-            child: Column(
-              children: [
-                _buildConvoHeader(messaging, convo),
-                Divider(height: 0.5, color: AppColors.border.withValues(alpha: 0.4)),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      messages.isEmpty
-                          ? _buildEmptyThread()
-                          : _buildMessageList(messages, convo),
-                      if (_isDragging)
-                        Container(
-                          color: AppColors.bg.withValues(alpha: 0.85),
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.file_upload_outlined,
-                                    size: 48, color: AppColors.accent),
-                                const SizedBox(height: 8),
-                                Text('Drop images here',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        color: AppColors.textSecondary)),
-                              ],
+            child: SafeArea(
+              child: Column(
+                children: [
+                  _buildConvoHeader(messaging, convo),
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        messages.isEmpty
+                            ? _buildEmptyThread()
+                            : _buildMessageList(messages, convo),
+                        if (_isDragging)
+                          Container(
+                            color: AppColors.bg.withValues(alpha: 0.85),
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.file_upload_outlined,
+                                      size: 48, color: AppColors.accent),
+                                  const SizedBox(height: 8),
+                                  Text('Drop images here',
+                                      style: TextStyle(
+                                          fontSize: 15,
+                                          color: AppColors.textSecondary)),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                if (messaging.lastError != null) _buildErrorBanner(messaging),
-                _buildComposeBar(messaging),
-                if (_showEmoji) _buildEmojiPicker(),
-              ],
+                  if (messaging.lastError != null) _buildErrorBanner(messaging),
+                  _buildComposeBar(messaging),
+                  if (_showEmoji) _buildEmojiPicker(),
+                ],
+              ),
             ),
           ),
         );
@@ -142,8 +143,7 @@ class _ConversationViewState extends State<ConversationView> {
   // Header
   // ---------------------------------------------------------------------------
 
-  Widget _buildConvoHeader(
-      MessagingService messaging, dynamic convo) {
+  Widget _buildConvoHeader(MessagingService messaging, dynamic convo) {
     final demo = context.read<DemoModeService>();
     final rawPhone = messaging.selectedRemotePhone ?? '';
     final rawName = convo?.contactName as String?;
@@ -151,31 +151,47 @@ class _ConversationViewState extends State<ConversationView> {
         ? demo.maskDisplayName(rawName)
         : demo.maskPhone(rawPhone);
     final phone = demo.maskPhone(rawPhone);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(90, 18, 16, 10),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 28, 8, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
       child: Row(
         children: [
-          HoverButton(
-            onTap: () => messaging.deselectConversation(),
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(8),
-                border:
-                    Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => messaging.deselectConversation(),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.message_rounded,
+                      size: 15, color: AppColors.textTertiary),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Messages',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Icon(Icons.chevron_right_rounded,
+                        size: 16, color: AppColors.textTertiary),
+                  ),
+                ],
               ),
-              child: Icon(Icons.arrow_back_ios_new_rounded,
-                  size: 14, color: AppColors.textSecondary),
             ),
           ),
-          const SizedBox(width: 10),
           ContactIdenticon(
             seed: convo?.contactName ?? rawPhone,
-            size: 34,
+            size: 30,
           ),
           const SizedBox(width: 8),
-          Flexible(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -192,8 +208,7 @@ class _ConversationViewState extends State<ConversationView> {
                 ),
                 Text(
                   phone,
-                  style:
-                      TextStyle(fontSize: 11, color: AppColors.textTertiary),
+                  style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
                 ),
               ],
             ),
@@ -201,42 +216,52 @@ class _ConversationViewState extends State<ConversationView> {
           const SizedBox(width: 8),
           HoverButton(
             onTap: () => _dialRemote(rawPhone),
+            borderRadius: BorderRadius.circular(8),
             child: Container(
-              padding: const EdgeInsets.all(6),
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
-                color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
+                color: AppColors.card,
                 border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.4),
-                    width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
-              child: Icon(Icons.phone_rounded,
-                  size: 15, color: AppColors.accent),
+              child:
+                  Icon(Icons.phone_rounded, size: 15, color: AppColors.accent),
             ),
           ),
           const SizedBox(width: 6),
           HoverButton(
             onTap: () => _openContact(rawPhone),
+            borderRadius: BorderRadius.circular(8),
             child: Container(
-              padding: const EdgeInsets.all(6),
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
-                color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
+                color: AppColors.card,
                 border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.4),
-                    width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
               child: Icon(Icons.person_rounded,
                   size: 15, color: AppColors.textSecondary),
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           HoverButton(
             onTap: () => messaging.close(),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: AppColors.card,
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              ),
               child: Icon(Icons.close_rounded,
-                  size: 18, color: AppColors.textTertiary),
+                  size: 16, color: AppColors.textSecondary),
             ),
           ),
         ],
@@ -251,8 +276,7 @@ class _ConversationViewState extends State<ConversationView> {
       final helper = context.read<SIPUAHelper>();
       final stream = await navigator.mediaDevices
           .getUserMedia(<String, dynamic>{'audio': true, 'video': false});
-      helper.call(ensureE164(rawPhone),
-          voiceOnly: true, mediaStream: stream);
+      helper.call(ensureE164(rawPhone), voiceOnly: true, mediaStream: stream);
     } catch (e) {
       debugPrint('[ConversationView] Call failed: $e');
     }
@@ -304,9 +328,7 @@ class _ConversationViewState extends State<ConversationView> {
                       .deleteMessage(msg.localId!)
                   : null,
               onResend: msg.status == SmsStatus.failed
-                  ? () => context
-                      .read<MessagingService>()
-                      .resendMessage(msg)
+                  ? () => context.read<MessagingService>().resendMessage(msg)
                   : null,
             ),
           ],
@@ -322,9 +344,8 @@ class _ConversationViewState extends State<ConversationView> {
   Widget _buildDateSeparator(DateTime dt) {
     final local = dt.toLocal();
     final now = DateTime.now();
-    final h = local.hour > 12
-        ? local.hour - 12
-        : (local.hour == 0 ? 12 : local.hour);
+    final h =
+        local.hour > 12 ? local.hour - 12 : (local.hour == 0 ? 12 : local.hour);
     final ampm = local.hour >= 12 ? 'PM' : 'AM';
     final time = '$h:${local.minute.toString().padLeft(2, '0')} $ampm';
     String label;
@@ -361,32 +382,32 @@ class _ConversationViewState extends State<ConversationView> {
     return HoverButton(
       onTap: messaging.clearError,
       child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: AppColors.red.withValues(alpha: 0.12),
-            border: Border(
-              top: BorderSide(color: AppColors.red.withValues(alpha: 0.3), width: 0.5),
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.error_outline_rounded,
-                  size: 15, color: AppColors.red),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  messaging.lastError!,
-                  style: TextStyle(fontSize: 12, color: AppColors.red),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Icon(Icons.close_rounded,
-                  size: 14, color: AppColors.red.withValues(alpha: 0.6)),
-            ],
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.red.withValues(alpha: 0.12),
+          border: Border(
+            top: BorderSide(
+                color: AppColors.red.withValues(alpha: 0.3), width: 0.5),
           ),
         ),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline_rounded, size: 15, color: AppColors.red),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                messaging.lastError!,
+                style: TextStyle(fontSize: 12, color: AppColors.red),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Icon(Icons.close_rounded,
+                size: 14, color: AppColors.red.withValues(alpha: 0.6)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -399,108 +420,113 @@ class _ConversationViewState extends State<ConversationView> {
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+          top: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_attachmentUrls.isNotEmpty)
-            _buildAttachmentPreview(),
+          if (_attachmentUrls.isNotEmpty) _buildAttachmentPreview(),
           Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          HoverButton(
-            onTap: _pickAttachment,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: Icon(
-                Icons.add_photo_alternate_outlined,
-                size: 22,
-                color: _attachmentUrls.isNotEmpty
-                    ? AppColors.accent
-                    : AppColors.textTertiary,
-              ),
-            ),
-          ),
-          // Emoji toggle
-          HoverButton(
-            onTap: () => setState(() => _showEmoji = !_showEmoji),
-            child: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Icon(
-                _showEmoji
-                    ? Icons.keyboard_rounded
-                    : Icons.emoji_emotions_outlined,
-                size: 22,
-                color: _showEmoji ? AppColors.accent : AppColors.textTertiary,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Container(
-              constraints: const BoxConstraints(maxHeight: 120),
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-              ),
-              child: Focus(
-                onKeyEvent: (node, event) {
-                  if (event is KeyDownEvent &&
-                      event.logicalKey == LogicalKeyboardKey.enter &&
-                      !HardwareKeyboard.instance.isShiftPressed) {
-                    _send(messaging);
-                    return KeyEventResult.handled;
-                  }
-                  return KeyEventResult.ignored;
-                },
-                child: TextField(
-                  controller: _composeCtrl,
-                  focusNode: _composeFocus,
-                  maxLines: null,
-                  textInputAction: TextInputAction.newline,
-                  style:
-                      TextStyle(fontSize: 14, color: AppColors.textPrimary),
-                  decoration: InputDecoration(
-                    hintText: 'Message...',
-                    hintStyle: TextStyle(
-                        fontSize: 13, color: AppColors.textTertiary),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              HoverButton(
+                onTap: _pickAttachment,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 2),
+                  child: Icon(
+                    Icons.add_photo_alternate_outlined,
+                    size: 22,
+                    color: _attachmentUrls.isNotEmpty
+                        ? AppColors.accent
+                        : AppColors.textTertiary,
                   ),
-                  onChanged: (_) => setState(() {}),
                 ),
               ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          HoverButton(
-            onTap: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
-                ? () => _send(messaging)
-                : null,
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
-                    ? AppColors.accent
-                    : AppColors.card,
+              // Emoji toggle
+              HoverButton(
+                onTap: () => setState(() => _showEmoji = !_showEmoji),
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Icon(
+                    _showEmoji
+                        ? Icons.keyboard_rounded
+                        : Icons.emoji_emotions_outlined,
+                    size: 22,
+                    color:
+                        _showEmoji ? AppColors.accent : AppColors.textTertiary,
+                  ),
+                ),
               ),
-              child: Icon(
-                Icons.arrow_upward_rounded,
-                size: 18,
-                color: (_composeCtrl.text.trim().isNotEmpty || _attachmentUrls.isNotEmpty)
-                    ? AppColors.onAccent
-                    : AppColors.textTertiary,
+              Expanded(
+                child: Container(
+                  constraints: const BoxConstraints(maxHeight: 120),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                        color: AppColors.border.withValues(alpha: 0.5),
+                        width: 0.5),
+                  ),
+                  child: Focus(
+                    onKeyEvent: (node, event) {
+                      if (event is KeyDownEvent &&
+                          event.logicalKey == LogicalKeyboardKey.enter &&
+                          !HardwareKeyboard.instance.isShiftPressed) {
+                        _send(messaging);
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: TextField(
+                      controller: _composeCtrl,
+                      focusNode: _composeFocus,
+                      maxLines: null,
+                      textInputAction: TextInputAction.newline,
+                      style:
+                          TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: 'Message...',
+                        hintStyle: TextStyle(
+                            fontSize: 13, color: AppColors.textTertiary),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 6),
+              HoverButton(
+                onTap: (_composeCtrl.text.trim().isNotEmpty ||
+                        _attachmentUrls.isNotEmpty)
+                    ? () => _send(messaging)
+                    : null,
+                child: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: (_composeCtrl.text.trim().isNotEmpty ||
+                            _attachmentUrls.isNotEmpty)
+                        ? AppColors.accent
+                        : AppColors.card,
+                  ),
+                  child: Icon(
+                    Icons.arrow_upward_rounded,
+                    size: 18,
+                    color: (_composeCtrl.text.trim().isNotEmpty ||
+                            _attachmentUrls.isNotEmpty)
+                        ? AppColors.onAccent
+                        : AppColors.textTertiary,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
         ],
       ),
     );
@@ -524,7 +550,8 @@ class _ConversationViewState extends State<ConversationView> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
@@ -535,8 +562,7 @@ class _ConversationViewState extends State<ConversationView> {
                 top: -4,
                 right: -4,
                 child: HoverButton(
-                  onTap: () => setState(
-                      () => _attachmentUrls.removeAt(i)),
+                  onTap: () => setState(() => _attachmentUrls.removeAt(i)),
                   child: Container(
                     width: 18,
                     height: 18,
@@ -544,7 +570,8 @@ class _ConversationViewState extends State<ConversationView> {
                       color: AppColors.red,
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.close, size: 12, color: AppColors.onAccent),
+                    child:
+                        Icon(Icons.close, size: 12, color: AppColors.onAccent),
                   ),
                 ),
               ),
@@ -557,18 +584,19 @@ class _ConversationViewState extends State<ConversationView> {
 
   Widget _buildAttachmentThumb(String path) {
     if (path.startsWith('http://') || path.startsWith('https://')) {
-      return Image.network(path, fit: BoxFit.cover,
+      return Image.network(path,
+          fit: BoxFit.cover,
           errorBuilder: (_, __, ___) => Center(
-                child: Icon(Icons.image_rounded,
-                    size: 20, color: AppColors.textTertiary)));
+              child: Icon(Icons.image_rounded,
+                  size: 20, color: AppColors.textTertiary)));
     }
     final file = File(path);
     if (file.existsSync()) {
       return Image.file(file, fit: BoxFit.cover);
     }
     return Center(
-        child: Icon(Icons.image_rounded,
-            size: 20, color: AppColors.textTertiary));
+        child:
+            Icon(Icons.image_rounded, size: 20, color: AppColors.textTertiary));
   }
 
   // ---------------------------------------------------------------------------
@@ -581,8 +609,8 @@ class _ConversationViewState extends State<ConversationView> {
       child: EmojiPickerWidget(
         onSelected: (emoji) {
           _composeCtrl.text += emoji;
-          _composeCtrl.selection = TextSelection.collapsed(
-              offset: _composeCtrl.text.length);
+          _composeCtrl.selection =
+              TextSelection.collapsed(offset: _composeCtrl.text.length);
           setState(() {});
         },
       ),
@@ -614,11 +642,11 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = AppColors.accent;
-    final bubbleColor = _isOutbound
-        ? accent.withValues(alpha: 0.08)
-        : AppColors.card;
+    final bubbleColor =
+        _isOutbound ? accent.withValues(alpha: 0.08) : AppColors.card;
     final textColor = AppColors.textPrimary;
-    final align = _isOutbound ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final align =
+        _isOutbound ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
     const double avatarSize = 26;
     const double avatarGap = 6;
@@ -637,8 +665,7 @@ class _MessageBubble extends StatelessWidget {
             child: Wrap(
               spacing: 4,
               runSpacing: 4,
-              alignment:
-                  _isOutbound ? WrapAlignment.end : WrapAlignment.start,
+              alignment: _isOutbound ? WrapAlignment.end : WrapAlignment.start,
               children: message.mediaUrls
                   .map((url) => ClipRRect(
                         borderRadius: BorderRadius.circular(12),
@@ -664,7 +691,6 @@ class _MessageBubble extends StatelessWidget {
                   .toList(),
             ),
           ),
-
         if (message.text.isNotEmpty)
           GestureDetector(
             onLongPress: () => _showContextMenu(context),
@@ -687,8 +713,7 @@ class _MessageBubble extends StatelessWidget {
                   tailHeight: 6,
                 ),
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                      14, 10, 14, showTail ? 16 : 10),
+                  padding: EdgeInsets.fromLTRB(14, 10, 14, showTail ? 16 : 10),
                   child: Text(
                     message.text,
                     style: TextStyle(
@@ -701,7 +726,6 @@ class _MessageBubble extends StatelessWidget {
               ),
             ),
           ),
-
         if (_isOutbound && showTail)
           message.status == SmsStatus.failed
               ? _buildFailedStatus()
@@ -709,8 +733,8 @@ class _MessageBubble extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 3, right: 4),
                   child: Text(
                     _statusLabel,
-                    style: TextStyle(
-                        fontSize: 10, color: AppColors.textTertiary),
+                    style:
+                        TextStyle(fontSize: 10, color: AppColors.textTertiary),
                   ),
                 ),
       ],
@@ -758,8 +782,7 @@ class _MessageBubble extends StatelessWidget {
               triggerMode: TooltipTriggerMode.tap,
               showDuration: const Duration(seconds: 6),
               textStyle: const TextStyle(fontSize: 13, color: Colors.white),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: AppColors.surface,
                 borderRadius: BorderRadius.circular(8),
@@ -810,8 +833,7 @@ class _MessageBubble extends StatelessWidget {
               onTap: onResend,
               borderRadius: BorderRadius.circular(4),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
                   color: AppColors.green.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(4),
@@ -866,8 +888,8 @@ class _MessageBubble extends StatelessWidget {
             ),
             if (onDelete != null)
               ListTile(
-                leading:
-                    Icon(Icons.delete_outline_rounded, size: 20, color: AppColors.red),
+                leading: Icon(Icons.delete_outline_rounded,
+                    size: 20, color: AppColors.red),
                 title: Text('Delete',
                     style: TextStyle(fontSize: 14, color: AppColors.red)),
                 onTap: () {
@@ -916,8 +938,7 @@ class _SpeechBubblePainter extends CustomPainter {
 
     path.moveTo(r, 0);
     path.lineTo(w - r, 0);
-    path.arcToPoint(Offset(w, r),
-        radius: Radius.circular(r), clockwise: true);
+    path.arcToPoint(Offset(w, r), radius: Radius.circular(r), clockwise: true);
     path.lineTo(w, bodyH - r);
     path.arcToPoint(Offset(w - r, bodyH),
         radius: Radius.circular(r), clockwise: true);
@@ -943,8 +964,7 @@ class _SpeechBubblePainter extends CustomPainter {
     }
 
     path.lineTo(0, r);
-    path.arcToPoint(Offset(r, 0),
-        radius: Radius.circular(r), clockwise: true);
+    path.arcToPoint(Offset(r, 0), radius: Radius.circular(r), clockwise: true);
     path.close();
 
     canvas.drawPath(

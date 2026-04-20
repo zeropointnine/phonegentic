@@ -50,111 +50,140 @@ class _MessagingPanelState extends State<MessagingPanel> {
 
     return Container(
       color: AppColors.bg,
-      child: Column(
-        children: [
-          _buildHeader(messaging),
-          Divider(height: 0.5, color: AppColors.border.withValues(alpha: 0.4)),
-          _buildSearchBar(),
-          if (_showNewMessage) _buildNewMessageRow(messaging),
-          Expanded(
-            child: filtered.isEmpty
-                ? _buildEmptyState(messaging)
-                : ListView.separated(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) => Divider(
-                      height: 0.5,
-                      indent: 68,
-                      color: AppColors.border.withValues(alpha: 0.3),
+      child: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(messaging),
+            if (_showNewMessage) _buildNewMessageRow(messaging),
+            Expanded(
+              child: filtered.isEmpty
+                  ? _buildEmptyState(messaging)
+                  : ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => Divider(
+                        height: 0.5,
+                        indent: 68,
+                        color: AppColors.border.withValues(alpha: 0.3),
+                      ),
+                      itemBuilder: (context, i) =>
+                          _buildConversationTile(messaging, filtered[i]),
                     ),
-                    itemBuilder: (context, i) =>
-                        _buildConversationTile(messaging, filtered[i]),
-                  ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildHeader(MessagingService messaging) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(90, 18, 16, 10),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 28, 8, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
       child: Row(
         children: [
+          Icon(Icons.message_rounded, size: 18, color: AppColors.accent),
+          const SizedBox(width: 8),
           Text(
             'Messages',
             style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
-              letterSpacing: -0.5,
+              letterSpacing: -0.3,
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+              ),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (_) => setState(() {}),
+                style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  hintText: 'Search...',
+                  hintStyle:
+                      TextStyle(fontSize: 13, color: AppColors.textTertiary),
+                  prefixIcon: Icon(Icons.search_rounded,
+                      size: 16, color: AppColors.textTertiary),
+                  prefixIconConstraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 0),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           HoverButton(
             onTap: () => messaging.syncNow(),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: AppColors.card,
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              ),
               child: Icon(Icons.refresh_rounded,
-                  size: 18, color: AppColors.textTertiary),
+                  size: 16, color: AppColors.textSecondary),
             ),
           ),
+          const SizedBox(width: 6),
           HoverButton(
             onTap: () => setState(() => _showNewMessage = !_showNewMessage),
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(8),
             child: Container(
-              padding: const EdgeInsets.all(6),
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
                 color: _showNewMessage
                     ? AppColors.accent.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(6),
+                    : AppColors.card,
+                border: Border.all(
+                    color: _showNewMessage
+                        ? AppColors.accent.withValues(alpha: 0.3)
+                        : AppColors.border.withValues(alpha: 0.5),
+                    width: 0.5),
               ),
               child: Icon(Icons.edit_rounded,
-                  size: 18,
+                  size: 16,
                   color: _showNewMessage
                       ? AppColors.accent
-                      : AppColors.textTertiary),
+                      : AppColors.textSecondary),
             ),
           ),
+          const SizedBox(width: 8),
           HoverButton(
             onTap: () => messaging.close(),
-            child: Padding(
-              padding: const EdgeInsets.all(6),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: AppColors.card,
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+              ),
               child: Icon(Icons.close_rounded,
-                  size: 18, color: AppColors.textTertiary),
+                  size: 16, color: AppColors.textSecondary),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      child: Container(
-        height: 34,
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
-        ),
-        child: TextField(
-          controller: _searchCtrl,
-          onChanged: (_) => setState(() {}),
-          style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
-          decoration: InputDecoration(
-            hintText: 'Search conversations...',
-            hintStyle: TextStyle(fontSize: 13, color: AppColors.textTertiary),
-            prefixIcon: Icon(Icons.search_rounded,
-                size: 16, color: AppColors.textTertiary),
-            prefixIconConstraints:
-                const BoxConstraints(minWidth: 32, minHeight: 0),
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(vertical: 8),
-          ),
-        ),
       ),
     );
   }
@@ -170,8 +199,8 @@ class _MessagingPanelState extends State<MessagingPanel> {
               decoration: BoxDecoration(
                 color: AppColors.card,
                 borderRadius: BorderRadius.circular(8),
-                border:
-                    Border.all(color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
               ),
               child: TextField(
                 controller: _newNumberCtrl,
@@ -245,7 +274,8 @@ class _MessagingPanelState extends State<MessagingPanel> {
                 child: Text(
                   'Set up SMS (Telnyx or Twilio) in Settings',
                   style: TextStyle(
-                      fontSize: 12, color: AppColors.textTertiary.withValues(alpha: 0.6)),
+                      fontSize: 12,
+                      color: AppColors.textTertiary.withValues(alpha: 0.6)),
                 ),
               ),
           ],
