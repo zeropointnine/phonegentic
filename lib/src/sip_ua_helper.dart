@@ -300,9 +300,12 @@ class SIPUAHelper extends EventManager {
     });
     handlers.on(EventCallFailed(), (EventCallFailed event) {
       logger.d('call failed with cause: ${event.cause}');
+      final bool localHangup = event.originator == Originator.local &&
+          (event.cause?.cause == DartSIP_C.CausesType.CANCELED ||
+              event.cause?.cause == DartSIP_C.CausesType.REJECTED);
       _notifyCallStateListeners(
           event,
-          CallState(CallStateEnum.FAILED,
+          CallState(localHangup ? CallStateEnum.ENDED : CallStateEnum.FAILED,
               originator: event.originator, cause: event.cause));
       _calls.remove(event.id);
     });

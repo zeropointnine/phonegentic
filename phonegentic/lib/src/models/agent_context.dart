@@ -559,8 +559,9 @@ class AgentBootContext {
         'agent, notify the host rather than replying on their behalf.');
     buf.writeln();
     buf.writeln('### Outbound SMS branding');
-    buf.writeln('When you send a message to someone on the manager\'s behalf, '
-        'you are representing Phonegentic. Every outbound SMS MUST:');
+    buf.writeln('When you send the FIRST message to a new recipient (i.e. you '
+        'are initiating a conversation, not replying to their text), '
+        'you are representing Phonegentic. That initial outbound SMS MUST:');
     buf.writeln('- Identify yourself — include your name and that you are '
         'with Phonegentic (e.g. "Hi, this is ${name ?? "Alice"} with '
         'Phonegentic.").');
@@ -568,6 +569,9 @@ class AgentBootContext {
         'the message so the recipient can learn more.');
     buf.writeln('- Keep the branding natural — weave it into the message, '
         'don\'t make it feel like a spam footer.');
+    buf.writeln('- Once the conversation is underway (the recipient has '
+        'replied and you are responding back), do NOT repeat the branding '
+        'or the website link. Just reply naturally like a normal person.');
     buf.writeln();
     buf.writeln('### Contact number selection');
     buf.writeln('When a contact has multiple phone numbers, send the message '
