@@ -837,7 +837,8 @@ class TextAgentService {
     }
 
     stopwatch.stop();
-    debugPrint('[TextAgent] LLM response time: ${stopwatch.elapsedMilliseconds}ms (model: ${req.model})');
+    debugPrint('[TextAgent] LLM response time: ${stopwatch.elapsedMilliseconds}ms '
+        '(model: ${req.model}, tools: ${toolCallEvents.length})');
 
     if (_disposed) return;
     _cancelRequested = false;
@@ -845,20 +846,13 @@ class TextAgentService {
     if (cancelled || fabricationDetected) {
       if (fabricationDetected) {
         debugPrint('[TextAgentService] Response truncated (fabrication) — '
-            '${fullText.length} clean chars');
+            '${fullText.length} clean chars, '
+            '${toolCallEvents.length} tool call(s) preserved');
       } else {
-        debugPrint('[TextAgentService] Response cancelled — ${fullText.length} chars emitted');
+        debugPrint('[TextAgentService] Response cancelled — '
+            '${fullText.length} chars emitted, '
+            '${toolCallEvents.length} tool call(s) preserved');
       }
-      if (fullText.isNotEmpty) {
-        _history.add(LlmMessage(
-          role: LlmRole.assistant,
-          content: [LlmTextBlock(fullText)],
-        ));
-        if (!_disposed) {
-          _responseController.add(ResponseTextEvent(text: fullText, isFinal: true));
-        }
-      }
-      return;
     }
 
     final assistantContent = <LlmContentBlock>[];
