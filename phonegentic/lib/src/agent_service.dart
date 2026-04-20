@@ -135,6 +135,7 @@ class AgentService extends ChangeNotifier {
   String? _localIdentity;
   bool _isOutbound = true;
   bool _callDialPending = false;
+  bool _isConferenceLeg = false;
   String? _lastDialedNumber;
   String? _priorCallTranscript;
 
@@ -3250,6 +3251,14 @@ class AgentService extends ChangeNotifier {
   static final _hallucinatedCallStateRe =
       RegExp(r'\[CALL_STATE:\s*[^\]]*\]', caseSensitive: false);
 
+  /// Matches LLM responses that echo call state details (phone numbers,
+  /// party counts, connection status). These should display in the chat panel
+  /// but never be spoken over TTS.
+  static final _callStatsEchoRe = RegExp(
+    r'(?:Remote:\s*\+?\d|Host\s+number:|parties\s+on\s+the\s+call|Call\s+(?:resumed|connected|ended|on\s+hold|ringing|failed)\.?\s*Remote:)',
+    caseSensitive: false,
+  );
+
   /// Matches LLM responses that are purely parenthesized stage directions
   /// like "(Silent)", "(Pause)", "(Listening)", etc. These should never be
   /// spoken aloud or shown as agent messages.
@@ -3307,6 +3316,35 @@ class AgentService extends ChangeNotifier {
         final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
         if (idx >= 0) _removeMsgAt(idx);
         _streamingMessageId = null;
+      }
+      _resetVoiceUiSyncState();
+      notifyListeners();
+      return;
+    }
+
+    // Suppress TTS for responses that echo call state details (phone
+    // numbers, party counts, connection status) during live calls. The text
+    // still appears in the chat panel as a whisper-only message.
+    if (event.isFinal &&
+        _callPhase.isActive &&
+        _callStatsEchoRe.hasMatch(event.text)) {
+      debugPrint(
+          '[AgentService] Call-stats echo suppressed from TTS: "${event.text.length > 80 ? event.text.substring(0, 80) : event.text}..."');
+      _ttsInterrupted = true;
+      _activeTtsEndGeneration();
+      _whisper.stopResponseAudio();
+      _whisper.clearTTSQueue();
+      _whisper.isTtsPlaying = false;
+      // Keep the chat bubble but mark it as system/whisper so the host sees it
+      if (_streamingMessageId != null) {
+        final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+        if (idx >= 0) {
+          _messages[idx].text = event.text;
+          _messages[idx].isStreaming = false;
+        }
+        _streamingMessageId = null;
+      } else {
+        _addMsg(ChatMessage.agent(event.text));
       }
       _resetVoiceUiSyncState();
       notifyListeners();
@@ -6460,6 +6498,21 @@ class AgentService extends ChangeNotifier {
       _textAgent?.updateInstructions(_buildTextAgentInstructions());
     }
 
+    // Detect conference second-leg: a new outbound call starting while the
+    // first call already connected. Reset greeting state so the agent gets a
+    // fresh greeting cycle with conference-aware context.
+    if ((phase == CallPhase.initiating || phase == CallPhase.ringing) &&
+        _hasConnectedBefore &&
+        _isOutbound) {
+      _isConferenceLeg = true;
+      _hasConnectedBefore = false;
+      _preGreetInFlight = false;
+      _preGreetTextBuffer = null;
+      _preGreetFinalText = null;
+      _preGreetReady = false;
+      _cancelConnectedGreeting();
+    }
+
     // Start/end call history records
     if (phase == CallPhase.initiating || phase == CallPhase.ringing) {
       callHistory?.startCallRecord(
@@ -6481,9 +6534,11 @@ class AgentService extends ChangeNotifier {
       }
 
       // Pre-fetch the last transcript with this remote party so it's ready
-      // by the time the connected greeting fires.
+      // by the time the connected greeting fires.  Only for inbound calls —
+      // outbound calls are user-initiated so the agent doesn't need prior
+      // conversation history injected (and it can confuse different contexts).
       final priorRid = remoteIdentity ?? _remoteIdentity;
-      if (priorRid != null && priorRid.isNotEmpty) {
+      if (!_isOutbound && priorRid != null && priorRid.isNotEmpty) {
         _fetchPriorCallTranscript(priorRid);
       }
     }
@@ -6513,6 +6568,7 @@ class AgentService extends ChangeNotifier {
       _voicemailPromptSent = false;
       _ivrHeard = false;
       _hasConnectedBefore = false;
+      _isConferenceLeg = false;
       _inBeepWatchMode = false;
       _settleWordCount = 0;
       _preGreetInFlight = false;
@@ -6822,7 +6878,17 @@ class AgentService extends ChangeNotifier {
     _whisperPriorTranscriptOnce();
 
     String prompt;
-    if (_isOutbound) {
+    if (_isConferenceLeg) {
+      final calleeName = _resolveCallerName();
+      final nameClause = calleeName != null
+          ? 'You are now speaking with $calleeName.'
+          : '';
+      prompt = '[SYSTEM] A conference call leg has connected. '
+          '$nameClause '
+          'Greet this person, introduce yourself, and explain that you are '
+          'setting up a conference call on behalf of the manager. '
+          'Be brief and professional.';
+    } else if (_isOutbound) {
       prompt = '[SYSTEM] The call is connected and the line is quiet. '
           'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
           'Otherwise, begin the conversation per your job function instructions.';
@@ -6843,7 +6909,7 @@ class AgentService extends ChangeNotifier {
       _whisper.sendSystemDirective(prompt);
     }
     _postGreetGraceUntil = DateTime.now().add(const Duration(seconds: 8));
-    debugPrint('[AgentService] Connected greeting triggered (line quiet, ${_isOutbound ? "outbound" : "inbound"})');
+    debugPrint('[AgentService] Connected greeting triggered (line quiet, ${_isOutbound ? "outbound" : "inbound"}${_isConferenceLeg ? ", conference leg" : ""})');
   }
 
   void _cancelConnectedGreeting() {
@@ -6927,7 +6993,17 @@ class AgentService extends ChangeNotifier {
     _whisperPriorTranscriptOnce();
 
     String prompt;
-    if (_isOutbound) {
+    if (_isConferenceLeg) {
+      final calleeName = _resolveCallerName();
+      final nameClause = calleeName != null
+          ? 'You are now speaking with $calleeName.'
+          : '';
+      prompt = '[SYSTEM] A conference call leg has connected. '
+          '$nameClause '
+          'Greet this person, introduce yourself, and explain that you are '
+          'setting up a conference call on behalf of the manager. '
+          'Be brief and professional.';
+    } else if (_isOutbound) {
       prompt = '[SYSTEM] The call is connected and the line is quiet. '
           'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
           'Otherwise, begin the conversation per your job function instructions.';
@@ -6943,7 +7019,7 @@ class AgentService extends ChangeNotifier {
           'Greet the caller warmly and help them per your job function instructions.';
     }
     _textAgent!.sendUserMessage(prompt);
-    debugPrint('[AgentService] Pre-greeting fired during settle (${_isOutbound ? "outbound" : "inbound"})');
+    debugPrint('[AgentService] Pre-greeting fired during settle (${_isOutbound ? "outbound" : "inbound"}${_isConferenceLeg ? ", conference leg" : ""})');
   }
 
   /// Play the pre-generated greeting through TTS and add it to chat.
