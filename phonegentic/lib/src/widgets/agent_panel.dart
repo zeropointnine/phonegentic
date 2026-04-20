@@ -168,6 +168,16 @@ class _AgentPanelState extends State<AgentPanel> {
         return 'Can you tell me who is on the call? Please ask for names if you don\'t know them.';
       case '/score':
         return 'What\'s the current score?';
+      case '/stttest':
+        return 'We need to run a speech-to-text accuracy test. '
+            'Say the following nursery rhyme clearly and at a natural pace: '
+            '"Mary had a little lamb, its fleece was white as snow. '
+            'And everywhere that Mary went, the lamb was sure to go." '
+            'After you say it, ask the person on the line to repeat it back '
+            'to you word for word. Once they finish, repeat back EXACTLY '
+            'what you heard them say — word for word, including any mistakes, '
+            'missing words, or extra words. Do not correct or clean up what '
+            'they said. This is a diagnostic test.';
       default:
         return cmd;
     }

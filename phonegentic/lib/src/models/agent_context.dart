@@ -337,7 +337,11 @@ class AgentBootContext {
     buf.writeln(
         'You will receive [CALL_STATE: ...] system messages as the call progresses.');
     buf.writeln(
-        '- NEVER read these aloud, repeat them, or verbally acknowledge them.');
+        '- NEVER read these aloud, repeat them, or verbally acknowledge them. '
+        'This includes the details inside them — do NOT speak phone numbers, '
+        'party counts, host numbers, or connection status over the call. '
+        'These details are for YOUR internal awareness only. The remote party '
+        'must never hear call metadata.');
     buf.writeln(
         '- NEVER generate [CALL_STATE: ...] tags yourself. These are SYSTEM-ONLY '
         'messages. You must not output text like "[CALL_STATE: Ended]" or any '

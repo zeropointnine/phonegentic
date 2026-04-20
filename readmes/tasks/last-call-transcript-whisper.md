@@ -12,7 +12,7 @@ Key design decisions:
 - **Async pre-fetch**: The DB lookup happens at call start so it's ready by the time the call connects — no latency added to the greeting.
 - **Suffix-match on last 10 digits**: Reuses existing `normalizePhone` logic for reliable matching across formatting variants.
 - **Truncation**: Prior transcripts are capped at ~2000 characters to avoid bloating the context window. Older turns are trimmed first, keeping the end of the conversation (most relevant for follow-up).
-- **Both directions**: Works for inbound and outbound calls.
+- **Inbound only**: Prior transcript is only fetched/injected for inbound calls. Outbound calls are user-initiated so the agent doesn't need prior history (and injecting it was causing context confusion).
 
 ## Files
 
