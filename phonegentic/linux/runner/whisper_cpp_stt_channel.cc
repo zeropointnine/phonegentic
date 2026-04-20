@@ -91,6 +91,7 @@ struct _WhisperCppSttChannel {
 
   whisper_context* ctx;          // null until initialize() succeeds
   gboolean         is_initialized;
+  gboolean         is_initializing; // TRUE while background init thread is in flight
   gboolean         is_transcribing;
   gboolean         is_inferring;  // set/cleared on main thread around each job
 
@@ -135,10 +136,13 @@ static std::string get_binary_dir() {
 }
 
 static std::string get_model_path(const char* model_size) {
+  std::string size(model_size);
+  // Large models don't have an .en variant — they use plain .bin
+  bool is_large = size.rfind("large", 0) == 0;
   return get_binary_dir()
     + "data/flutter_assets/models/whisper-ggml/ggml-"
-    + model_size
-    + ".en.bin";
+    + size
+    + (is_large ? ".bin" : ".en.bin");
 }
 
 // ─── Inference data (passed to worker thread) ─────────────────────────────────
@@ -387,10 +391,95 @@ static FlMethodErrorResponse* on_event_cancel(FlEventChannel* channel,
 
 // ─── MethodChannel handlers ───────────────────────────────────────────────────
 
+// ─── Async model initialisation ──────────────────────────────────────────────
+//
+// Model loading can take several seconds for a 142 MB file.  Running it on the
+// main GLib thread blocks the Flutter event loop and freezes the UI.  We spawn
+// a GThread, load the model there, then deliver the result via g_idle_add so
+// all struct mutations stay on the main thread.
+//
+// If the initial GPU-accelerated load fails (e.g. Vulkan driver unavailable at
+// runtime even though the library was compiled in), we retry with CPU-only.
+// This is the primary cause of the "model not found" false-positive: the model
+// file IS present but ggml-vulkan init fails and whisper_init_from_file_with_params
+// returns nullptr.
+
+struct InitJob {
+  WhisperCppSttChannel* channel;  // ref'd; unref'd in on_init_result
+  FlMethodCall*         call;     // ref'd; unref'd in on_init_result
+  bool                  use_gpu;
+  std::string           path;
+};
+
+struct InitJobResult {
+  WhisperCppSttChannel* channel;
+  FlMethodCall*         call;
+  whisper_context*      ctx;   // nullptr on failure
+};
+
+static gboolean on_init_result(gpointer user_data) {
+  auto* r = static_cast<InitJobResult*>(user_data);
+  WhisperCppSttChannel* self = r->channel;
+
+  self->is_initializing = FALSE;
+
+  if (self->shutting_down) {
+    if (r->ctx) whisper_free(r->ctx);
+    // Still respond so the Dart Future completes.
+    fl_method_call_respond_success(r->call, fl_value_new_bool(FALSE), nullptr);
+  } else {
+    self->ctx = r->ctx;
+    self->is_initialized = (r->ctx != nullptr);
+    if (self->is_initialized)
+      g_print("[WhisperSTT] Model loaded successfully\n");
+    else
+      g_warning("[WhisperSTT] Failed to load model");
+    fl_method_call_respond_success(r->call,
+        fl_value_new_bool(self->is_initialized ? TRUE : FALSE), nullptr);
+  }
+
+  g_object_unref(r->call);
+  g_object_unref(r->channel);
+  delete r;
+  return G_SOURCE_REMOVE;
+}
+
+static gpointer init_thread_func(gpointer user_data) {
+  auto* job = static_cast<InitJob*>(user_data);
+
+  struct whisper_context_params cparams = whisper_context_default_params();
+  cparams.use_gpu = job->use_gpu;
+
+  whisper_context* ctx =
+      whisper_init_from_file_with_params(job->path.c_str(), cparams);
+
+  // GPU init can fail at runtime (missing/broken Vulkan driver) even when the
+  // model file is valid.  Retry with CPU so we don't surface a false-positive
+  // "model not found" error to the user.
+  if (ctx == nullptr && job->use_gpu) {
+    g_print("[WhisperSTT] GPU init failed — retrying with CPU-only\n");
+    cparams.use_gpu = false;
+    ctx = whisper_init_from_file_with_params(job->path.c_str(), cparams);
+  }
+
+  auto* result = new InitJobResult{job->channel, job->call, ctx};
+  g_idle_add(on_init_result, result);
+
+  delete job;
+  return nullptr;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 static void handle_initialize(WhisperCppSttChannel* self,
                                FlMethodCall*         call) {
   if (self->is_initialized) {
     fl_method_call_respond_success(call, fl_value_new_bool(TRUE), nullptr);
+    return;
+  }
+  if (self->is_initializing) {
+    // Init already in flight — respond false; caller can retry after the
+    // pending init completes.
+    fl_method_call_respond_success(call, fl_value_new_bool(FALSE), nullptr);
     return;
   }
 
@@ -409,23 +498,15 @@ static void handle_initialize(WhisperCppSttChannel* self,
   }
 
   std::string path = get_model_path(model_size);
-  g_debug("[WhisperSTT] Loading model: %s (gpu=%s)", path.c_str(),
+  g_print("[WhisperSTT] Loading model: %s (gpu=%s)\n", path.c_str(),
           use_gpu ? "true" : "false");
 
-  struct whisper_context_params cparams = whisper_context_default_params();
-  cparams.use_gpu = use_gpu ? true : false;
+  self->is_initializing = TRUE;
+  g_object_ref(self);
+  g_object_ref(call);
 
-  self->ctx = whisper_init_from_file_with_params(path.c_str(), cparams);
-  self->is_initialized = (self->ctx != nullptr);
-
-  if (!self->is_initialized) {
-    g_warning("[WhisperSTT] Failed to load model from: %s", path.c_str());
-  } else {
-    g_debug("[WhisperSTT] Model loaded successfully");
-  }
-
-  fl_method_call_respond_success(call,
-      fl_value_new_bool(self->is_initialized ? TRUE : FALSE), nullptr);
+  auto* job = new InitJob{self, call, static_cast<bool>(use_gpu), path};
+  g_thread_new("whisper-init", init_thread_func, job);
 }
 
 static void handle_is_model_available(WhisperCppSttChannel* self,
@@ -570,6 +651,7 @@ static void whisper_cpp_stt_channel_init(WhisperCppSttChannel* self) {
   self->shutting_down        = FALSE;
   self->ctx                  = nullptr;
   self->is_initialized       = FALSE;
+  self->is_initializing      = FALSE;
   self->is_transcribing      = FALSE;
   self->is_inferring         = FALSE;
   self->timer_id             = 0;

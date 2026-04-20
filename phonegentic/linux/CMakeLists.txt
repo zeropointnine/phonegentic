@@ -127,6 +127,17 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
     COMPONENT Runtime)
 endif()
 
+# Install Pocket TTS model files if they exist (from download_models.sh)
+set(POCKET_TTS_MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../models/pocket-tts-onnx")
+if(EXISTS "${POCKET_TTS_MODELS_DIR}")
+  install(DIRECTORY "${POCKET_TTS_MODELS_DIR}"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/flutter_assets/models"
+    COMPONENT Runtime
+    PATTERN ".gitignore" EXCLUDE
+  )
+  message(STATUS "Pocket TTS models will be bundled from: ${POCKET_TTS_MODELS_DIR}")
+endif()
+
 # Install Kokoro TTS model files if they exist (from download_models.sh)
 set(KOKORO_MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../models/kokoro")
 if(EXISTS "${KOKORO_MODELS_DIR}")
@@ -136,4 +147,15 @@ if(EXISTS "${KOKORO_MODELS_DIR}")
     PATTERN ".gitignore" EXCLUDE
   )
   message(STATUS "Kokoro TTS models will be bundled from: ${KOKORO_MODELS_DIR}")
+endif()
+
+# Install whisper.cpp GGML model files if they exist (from download_models.sh)
+set(WHISPER_GGML_MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../models/whisper-ggml")
+if(EXISTS "${WHISPER_GGML_MODELS_DIR}")
+  install(DIRECTORY "${WHISPER_GGML_MODELS_DIR}"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/flutter_assets/models"
+    COMPONENT Runtime
+    PATTERN ".gitignore" EXCLUDE
+  )
+  message(STATUS "whisper.cpp GGML models will be bundled from: ${WHISPER_GGML_MODELS_DIR}")
 endif()

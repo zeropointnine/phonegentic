@@ -79,7 +79,8 @@ lib/src/test_credentials_local.dart
 build.env
 
 # On-device ML models (downloaded via scripts/download_models.sh)
-models/
+models/**
+!**/models/*.dart  # but keep Dart model classes (not ML assets)
 *.safetensors
 *.mlmodelc
 *.mlpackage

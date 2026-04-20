@@ -42,6 +42,8 @@ import 'transfer_rule_service.dart';
 import 'tear_sheet_service.dart';
 import 'elevenlabs_tts_service.dart';
 import 'kokoro_tts_service.dart';
+import 'local_tts_service.dart';
+import 'pocket_tts_service.dart';
 import 'build_config.dart';
 import 'llm/llm_interfaces.dart';
 import 'text_agent_service.dart';
@@ -197,8 +199,8 @@ class AgentService extends ChangeNotifier {
     }
     _applyInitialMuteState();
     _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
-    if (_bootContext.kokoroVoiceStyle != null && _kokoroTts != null) {
-      _kokoroTts!.setVoice(_bootContext.kokoroVoiceStyle!);
+    if (_bootContext.kokoroVoiceStyle != null && _localTts != null) {
+      _localTts!.setVoice(_bootContext.kokoroVoiceStyle!);
     }
     _pushInstructionsIfLive();
     notifyListeners();
@@ -264,7 +266,7 @@ class AgentService extends ChangeNotifier {
   bool get _splitPipeline => _textAgent != null;
 
   ElevenLabsTtsService? _tts;
-  KokoroTtsService? _kokoroTts;
+  LocalTtsService? _localTts;
   TtsConfig? _ttsConfig;
   bool _ttsMuted = false;
   bool _ttsInterrupted = false;
@@ -1039,10 +1041,67 @@ class AgentService extends ChangeNotifier {
         debugPrint('[KokoroTTS-DIAG] _initTts: → _initKokoroTts()');
         _initKokoroTts(tc);
         return;
+      case TtsProvider.pocketTts:
+        debugPrint('[KokoroTTS-DIAG] _initTts: → _initPocketTts()');
+        _initPocketTts(tc);
+        return;
       case TtsProvider.none:
         debugPrint('[KokoroTTS-DIAG] _initTts: provider is none, skipping');
         return;
     }
+  }
+
+  void _initPocketTts(TtsConfig tc) {
+    final pocket = PocketTtsService(config: tc);
+    _localTts = pocket;
+
+    pocket.initialize().then((_) async {
+      try {
+        if (!pocket.isInitialized) {
+          debugPrint('[AgentService] Pocket TTS failed to initialize');
+          _localTts = null;
+          return;
+        }
+        await pocket.setVoice(tc.kokoroVoiceStyle);
+        if (tc.pocketTtsVoiceClonePath.isNotEmpty) {
+          final ok = await pocket.cloneVoiceFromFile(tc.pocketTtsVoiceClonePath, 'user_clone');
+          if (ok) await pocket.setVoice('user_clone');
+        }
+        await pocket.warmUpSynthesis();
+
+      } catch (e, st) {
+        debugPrint('[AgentService] Pocket TTS post-init: $e\n$st');
+      }
+    });
+
+    int chunkCount = 0;
+    _ttsAudioSub = pocket.audioChunks.listen((pcm) {
+      if (_ttsMuted || _ttsInterrupted) return;
+      comfortNoiseService?.stopPlayback();
+      _releaseVoiceUiIfWaitingForTts(pcm);
+      _pushTtsAudioLevel(pcm);
+      chunkCount++;
+      if (chunkCount <= 3 || chunkCount % 25 == 0) {
+        debugPrint('[AgentService] Pocket TTS audio #$chunkCount: '
+            '${pcm.length} bytes → playResponseAudio');
+      }
+      _whisper.playResponseAudio(pcm);
+    });
+
+    _ttsSpeakingSub = pocket.speakingState.listen((speaking) {
+      if (speaking) {
+        _ttsGenerationComplete = false;
+        _speaking = true;
+        if (!_muted) {
+          _statusText = 'Speaking';
+          notifyListeners();
+        }
+      } else {
+        _ttsGenerationComplete = true;
+      }
+    });
+
+    debugPrint('[AgentService] Pocket TTS active: voice=${tc.kokoroVoiceStyle}');
   }
 
   // ── Local STT initialisation ──────────────────────────────────────────────
@@ -1210,13 +1269,13 @@ class AgentService extends ChangeNotifier {
 
   void _initKokoroTts(TtsConfig tc) {
     final kokoro = KokoroTtsService(config: tc);
-    _kokoroTts = kokoro;
+    _localTts = kokoro;
 
     kokoro.initialize().then((_) async {
       try {
         if (!kokoro.isInitialized) {
           debugPrint('[AgentService] Kokoro TTS failed to initialize');
-          _kokoroTts = null;
+          _localTts = null;
           return;
         }
         await kokoro.setVoice(tc.kokoroVoiceStyle);
@@ -1264,12 +1323,12 @@ class AgentService extends ChangeNotifier {
 
   // -- Active TTS abstraction (ElevenLabs or Kokoro) --------------------------
 
-  bool get _hasTts => _tts != null || _kokoroTts != null;
+  bool get _hasTts => _tts != null || _localTts != null;
 
   void _activeTtsStartGeneration() {
     _ttsInterrupted = false;
     _tts?.startGeneration();
-    _kokoroTts?.startGeneration();
+    _localTts?.startGeneration();
   }
 
   static final _phonegenticRe = RegExp(r'Phonegentic', caseSensitive: false);
@@ -1277,24 +1336,24 @@ class AgentService extends ChangeNotifier {
   void _activeTtsSendText(String text) {
     final fixed = text.replaceAll(_phonegenticRe, 'Phone-Jentic');
     _tts?.sendText(fixed);
-    _kokoroTts?.sendText(fixed);
+    _localTts?.sendText(fixed);
   }
 
   void _activeTtsEndGeneration() {
     _tts?.endGeneration();
-    _kokoroTts?.endGeneration();
+    _localTts?.endGeneration();
   }
 
   void _activeTtsWarmUp() {
     _tts?.warmUp();
-    // Kokoro: discarded `warmup` synthesis runs once after init (see _initKokoroTts).
+    // Local TTS: warmUpSynthesis runs once after init (see _initKokoroTts).
   }
 
   void _activeTtsDispose() {
     _tts?.dispose();
     _tts = null;
-    _kokoroTts?.dispose();
-    _kokoroTts = null;
+    _localTts?.dispose();
+    _localTts = null;
   }
 
   CalendarSyncService? _calendarSync;
@@ -1340,7 +1399,7 @@ class AgentService extends ChangeNotifier {
 
   String _buildTextAgentInstructions() {
     final hasTts =
-        (_tts != null || _kokoroTts != null) && !_ttsMuted && !_muted;
+        (_tts != null || _localTts != null) && !_ttsMuted && !_muted;
     final ctx = AgentBootContext(
       name: _bootContext.name,
       role: _bootContext.role,
@@ -4825,7 +4884,7 @@ class AgentService extends ChangeNotifier {
     if (_speaking) {
       debugPrint(
           '[AgentService] end_call deferred — waiting for TTS to finish');
-      final speakingStream = _kokoroTts?.speakingState ?? _tts?.speakingState;
+      final speakingStream = _localTts?.speakingState ?? _tts?.speakingState;
       if (speakingStream != null) {
         final completer = Completer<void>();
         late StreamSubscription<bool> sub;
@@ -5561,8 +5620,8 @@ class AgentService extends ChangeNotifier {
 
     if (_tts != null) {
       _tts!.updateVoiceId(voiceId);
-    } else if (_kokoroTts != null) {
-      await _kokoroTts!.setVoice(voiceId);
+    } else if (_localTts != null) {
+      await _localTts!.setVoice(voiceId);
     } else {
       return 'No TTS provider is active. Cannot change voice.';
     }

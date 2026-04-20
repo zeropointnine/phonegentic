@@ -54,7 +54,7 @@ class WhisperKitSttService {
   bool get isInitialized => _initialized;
   bool get isTranscribing => _transcribing;
 
-  static const validModelSizes = ['tiny', 'base', 'small'];
+  static const validModelSizes = ['tiny', 'base', 'small', 'large-v3-turbo'];
 
   Future<void> initialize() async {
     if (_initialized) return;

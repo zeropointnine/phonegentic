@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Downloads on-device ML models for Kokoro TTS and WhisperKit STT.
+# Downloads on-device ML models for Kokoro TTS, WhisperKit STT, and Pocket TTS.
 # Models are stored in phonegentic/models/ (git-ignored).
 #
 # Usage:
-#   ./scripts/download_models.sh          # download all for current platform
-#   ./scripts/download_models.sh kokoro   # Kokoro TTS only
-#   ./scripts/download_models.sh whisper  # WhisperKit STT only
-#   ./scripts/download_models.sh status   # show model status
+#   ./scripts/download_models.sh             # download all for current platform
+#   ./scripts/download_models.sh kokoro      # Kokoro TTS only
+#   ./scripts/download_models.sh whisper     # WhisperKit STT only
+#   ./scripts/download_models.sh pocket-tts  # Pocket TTS only (Linux only)
+#   ./scripts/download_models.sh status      # show model status
 #
 # Prerequisites: pip3 install huggingface_hub
 
@@ -19,9 +20,10 @@ MODELS_DIR="$PROJECT_DIR/models"
 KOKORO_DIR="$MODELS_DIR/kokoro"
 WHISPER_DIR="$MODELS_DIR/whisperkit"
 WHISPER_GGML_DIR="$MODELS_DIR/whisper-ggml"
+POCKET_TTS_DIR="$MODELS_DIR/pocket-tts-onnx"
 
-WHISPER_MODEL="openai_whisper-base"
-WHISPER_GGML_MODEL="ggml-base.en.bin"
+WHISPER_MODELS="openai_whisper-tiny openai_whisper-base openai_whisper-small openai_whisper-large-v3_turbo"
+WHISPER_GGML_MODELS="ggml-tiny.en.bin ggml-base.en.bin ggml-small.en.bin ggml-large-v3-turbo.bin"
 
 OS="$(uname -s)"
 
@@ -114,59 +116,63 @@ print('Download complete.')
 # ─── macOS: WhisperKit STT (CoreML via SPM) ───────────────────────────
 
 download_whisper_macos() {
-    info "Downloading WhisperKit STT model ($WHISPER_MODEL, ~140 MB)..."
+    info "Downloading WhisperKit STT models (tiny/base/small)..."
     mkdir -p "$WHISPER_DIR"
 
-    local target_dir="$WHISPER_DIR/$WHISPER_MODEL"
-    local dsize=0
-    if [ -d "$target_dir" ]; then
-        dsize=$(dir_size_kb "$target_dir")
-    fi
+    for model in $WHISPER_MODELS; do
+        local target_dir="$WHISPER_DIR/$model"
+        local dsize=0
+        if [ -d "$target_dir" ]; then
+            dsize=$(dir_size_kb "$target_dir")
+        fi
 
-    if [ "$dsize" -gt 1000 ]; then
-        ok "$WHISPER_MODEL already exists ($(dir_size_human "$target_dir")), skipping."
-    else
-        echo "    Source: argmaxinc/whisperkit-coreml"
-        python3 -c "
+        if [ "$dsize" -gt 1000 ]; then
+            ok "$model already exists ($(dir_size_human "$target_dir")), skipping."
+        else
+            echo "    Downloading $model from argmaxinc/whisperkit-coreml..."
+            python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
     'argmaxinc/whisperkit-coreml',
     local_dir=r'''$WHISPER_DIR''',
-    allow_patterns=['$WHISPER_MODEL/**'],
+    allow_patterns=['$model/**'],
 )
 print('Download complete.')
 "
-    fi
-    ok "WhisperKit STT model ready at $target_dir"
+            ok "WhisperKit STT model ready at $target_dir"
+        fi
+    done
 }
 
 # ─── Linux: whisper.cpp GGML model ────────────────────────────────────
 
 download_whisper_linux() {
-    info "Downloading whisper.cpp GGML model ($WHISPER_GGML_MODEL, ~140 MB)..."
+    info "Downloading whisper.cpp GGML models (tiny/base/small)..."
     mkdir -p "$WHISPER_GGML_DIR"
 
-    local target="$WHISPER_GGML_DIR/$WHISPER_GGML_MODEL"
-    local fsize=0
-    if [ -f "$target" ]; then
-        fsize=$(file_size_bytes "$target")
-    fi
+    for model in $WHISPER_GGML_MODELS; do
+        local target="$WHISPER_GGML_DIR/$model"
+        local fsize=0
+        if [ -f "$target" ]; then
+            fsize=$(file_size_bytes "$target")
+        fi
 
-    if [ "$fsize" -gt 1000000 ]; then
-        ok "$WHISPER_GGML_MODEL already exists ($(( fsize / 1048576 ))MB), skipping."
-    else
-        echo "    Source: ggerganov/whisper.cpp (HuggingFace)"
-        python3 -c "
+        if [ "$fsize" -gt 1000000 ]; then
+            ok "$model already exists ($(( fsize / 1048576 ))MB), skipping."
+        else
+            echo "    Downloading $model from ggerganov/whisper.cpp..."
+            python3 -c "
 from huggingface_hub import hf_hub_download
 hf_hub_download(
     'ggerganov/whisper.cpp',
-    filename='$WHISPER_GGML_MODEL',
+    filename='$model',
     local_dir=r'''$WHISPER_GGML_DIR''',
 )
 print('Download complete.')
 "
-    fi
-    ok "whisper.cpp GGML model ready at $target"
+            ok "$model ready at $target"
+        fi
+    done
 }
 
 # ─── Linux: Kokoro TTS (ONNX via PyTorch export) ──────────────────────
@@ -202,6 +208,7 @@ import os, warnings, torch
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 warnings.filterwarnings('ignore')
 
+print('  Note: AttributeError: MessageFactory warnings below are harmless protobuf compatibility noise.')
 from kokoro import KModel
 from kokoro.model import KModelForONNX
 
@@ -223,6 +230,7 @@ with torch.no_grad():
     print(f'  Forward pass OK: audio={audio.shape}, dur={dur.shape}')
 
 print('  Exporting to ONNX (opset 17)...')
+print('  Note: shape_type_inference warnings below are harmless; ONNX export still works correctly.')
 torch.onnx.export(
     onnx_model,
     (dummy_input_ids, dummy_ref_s, dummy_speed),
@@ -271,7 +279,74 @@ print(f'  Converted {voice}: {pack.shape} → {npy_path}')
     ok "Kokoro TTS (ONNX) model ready at $KOKORO_DIR ($voices_converted voices)"
 }
 
+# ─── Linux: Pocket TTS (ONNX INT8) ───────────────────────────────────
+#
+# Source: KevinAHM/pocket-tts-onnx (ungated, CC-BY 4.0)
+# Downloads INT8-quantized synthesis models (~180 MB), the tokenizer, encoder, and reference voice sample.
+
+download_pocket_tts_linux() {
+    if [ "$OS" != "Linux" ]; then
+        warn "Pocket TTS ONNX is Linux-only (use MLX on macOS). Skipping."
+        return 0
+    fi
+
+    info "Downloading Pocket TTS model (ONNX INT8, ~180 MB)..."
+    mkdir -p "$POCKET_TTS_DIR/onnx"
+
+    local required_files=(
+        "onnx/flow_lm_main_int8.onnx"
+        "onnx/flow_lm_flow_int8.onnx"
+        "onnx/mimi_decoder_int8.onnx"
+        "onnx/text_conditioner.onnx"
+        "onnx/mimi_encoder.onnx"
+        "tokenizer.model"
+        "reference_sample.wav"
+    )
+
+    local missing=0
+    for f in "${required_files[@]}"; do
+        local fpath="$POCKET_TTS_DIR/$f"
+        local fsize=0
+        if [ -f "$fpath" ]; then fsize=$(file_size_bytes "$fpath"); fi
+        if [ "$fsize" -gt 1000 ]; then
+            ok "$f already exists, skipping."
+        else
+            missing=$((missing + 1))
+        fi
+    done
+
+    if [ "$missing" -gt 0 ]; then
+        echo "    Source: KevinAHM/pocket-tts-onnx"
+        python3 -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    'KevinAHM/pocket-tts-onnx',
+    local_dir=r'''$POCKET_TTS_DIR''',
+    allow_patterns=[
+        'tokenizer.model',
+        'reference_sample.wav',
+        'onnx/flow_lm_main_int8.onnx',
+        'onnx/flow_lm_flow_int8.onnx',
+        'onnx/mimi_decoder_int8.onnx',
+        'onnx/text_conditioner.onnx',
+        'onnx/mimi_encoder.onnx',
+    ],
+)
+print('Download complete.')
+" || { err "Pocket TTS download failed."; exit 1; }
+    fi
+    ok "Pocket TTS model ready at $POCKET_TTS_DIR"
+}
+
 # ─── Platform dispatch ────────────────────────────────────────────────
+
+download_pocket_tts() {
+    case "$OS" in
+        Linux)  download_pocket_tts_linux ;;
+        Darwin) warn "Pocket TTS ONNX is Linux-only. Skipping on macOS." ;;
+        *)      err "Unsupported OS: $OS"; exit 1 ;;
+    esac
+}
 
 download_kokoro() {
     case "$OS" in
@@ -318,33 +393,53 @@ show_status() {
 
     # WhisperKit STT — macOS CoreML
     if [ "$OS" = "Darwin" ]; then
-        local wdir="$WHISPER_DIR/$WHISPER_MODEL"
-        if [ -d "$wdir" ]; then
-            local dsize
-            dsize=$(dir_size_kb "$wdir")
-            if [ "$dsize" -gt 1000 ]; then
-                ok "WhisperKit STT (CoreML): READY ($(dir_size_human "$wdir"))"
+        for model in $WHISPER_MODELS; do
+            local wdir="$WHISPER_DIR/$model"
+            if [ -d "$wdir" ]; then
+                local dsize
+                dsize=$(dir_size_kb "$wdir")
+                if [ "$dsize" -gt 1000 ]; then
+                    ok "WhisperKit STT ($model): READY ($(dir_size_human "$wdir"))"
+                else
+                    warn "WhisperKit STT ($model): CORRUPT (re-run download)"
+                fi
             else
-                warn "WhisperKit STT (CoreML): CORRUPT (re-run download)"
+                echo "      WhisperKit STT ($model): NOT DOWNLOADED"
             fi
-        else
-            echo "      WhisperKit STT:      NOT DOWNLOADED"
-        fi
+        done
     fi
 
     # whisper.cpp — Linux GGML
     if [ "$OS" = "Linux" ]; then
-        local wpath="$WHISPER_GGML_DIR/$WHISPER_GGML_MODEL"
-        if [ -f "$wpath" ]; then
-            local fsize
-            fsize=$(file_size_bytes "$wpath")
-            if [ "$fsize" -gt 1000000 ]; then
-                ok "whisper.cpp STT (GGML): READY ($(( fsize / 1048576 ))MB)"
+        for model in $WHISPER_GGML_MODELS; do
+            local wpath="$WHISPER_GGML_DIR/$model"
+            if [ -f "$wpath" ]; then
+                local fsize
+                fsize=$(file_size_bytes "$wpath")
+                if [ "$fsize" -gt 1000000 ]; then
+                    ok "whisper.cpp STT ($model): READY ($(( fsize / 1048576 ))MB)"
+                else
+                    warn "whisper.cpp STT ($model): CORRUPT (re-run download)"
+                fi
             else
-                warn "whisper.cpp STT (GGML): CORRUPT (re-run download)"
+                echo "      whisper.cpp STT ($model): NOT DOWNLOADED"
+            fi
+        done
+    fi
+
+    # Pocket TTS — Linux ONNX
+    if [ "$OS" = "Linux" ]; then
+        local ptpath="$POCKET_TTS_DIR/onnx/flow_lm_main_int8.onnx"
+        if [ -f "$ptpath" ]; then
+            local fsize
+            fsize=$(file_size_bytes "$ptpath")
+            if [ "$fsize" -gt 1000000 ]; then
+                ok "Pocket TTS (ONNX INT8): READY ($(dir_size_human "$POCKET_TTS_DIR"))"
+            else
+                warn "Pocket TTS (ONNX INT8): CORRUPT (re-run download)"
             fi
         else
-            echo "      whisper.cpp STT:     NOT DOWNLOADED"
+            echo "      Pocket TTS:          NOT DOWNLOADED"
         fi
     fi
 
@@ -439,10 +534,15 @@ case "$target" in
         check_huggingface
         download_whisper
         ;;
+    pocket-tts)
+        check_huggingface
+        download_pocket_tts
+        ;;
     all)
         check_huggingface
         download_kokoro
         download_whisper
+        download_pocket_tts
         ;;
     status)
         show_status
@@ -453,7 +553,7 @@ case "$target" in
         exit $?
         ;;
     *)
-        echo "Usage: $0 [kokoro|whisper|all|status|preflight]"
+        echo "Usage: $0 [kokoro|whisper|pocket-tts|all|status|preflight]"
         exit 1
         ;;
 esac

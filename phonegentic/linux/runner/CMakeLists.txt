@@ -48,6 +48,8 @@ add_executable(${BINARY_NAME}
   "audio_tap_channel.cc"
   "kokoro_tts_channel.cc"
   "kokoro_onnx_engine.cc"
+  "pocket_tts_channel.cc"
+  "pocket_tts_onnx_engine.cc"
   "whisper_cpp_stt_channel.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
@@ -90,6 +92,19 @@ endif()
 
 # Link dl for dlopen/dlsym (used by kokoro_onnx_engine.cc for dynamic espeak loading)
 target_link_libraries(${BINARY_NAME} PRIVATE dl)
+
+# Find SentencePiece (optional — enables Pocket TTS tokenization when available)
+find_library(SENTENCEPIECE_LIB NAMES sentencepiece)
+find_path(SENTENCEPIECE_INCLUDE NAMES sentencepiece_processor.h)
+
+if(SENTENCEPIECE_LIB AND SENTENCEPIECE_INCLUDE)
+  target_link_libraries(${BINARY_NAME} PRIVATE ${SENTENCEPIECE_LIB})
+  target_include_directories(${BINARY_NAME} PRIVATE ${SENTENCEPIECE_INCLUDE})
+  target_compile_definitions(${BINARY_NAME} PRIVATE HAS_SENTENCEPIECE)
+  message(STATUS "SentencePiece found: ${SENTENCEPIECE_LIB}")
+else()
+  message(WARNING "SentencePiece not found — Pocket TTS tokenizer will be disabled (install: sudo apt install libsentencepiece-dev)")
+endif()
 
 target_link_libraries(${BINARY_NAME} PRIVATE whisper)
 # whisper.h lives at the repo root in v1.x; the target's INTERFACE_INCLUDE_DIRS

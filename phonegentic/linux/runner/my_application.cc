@@ -8,6 +8,7 @@
 #include "audio_device_channel.h"
 #include "audio_tap_channel.h"
 #include "kokoro_tts_channel.h"
+#include "pocket_tts_channel.h"
 #include "whisper_cpp_stt_channel.h"
 #include "flutter/generated_plugin_registrant.h"
 
@@ -17,6 +18,7 @@ struct _MyApplication {
   AudioDeviceChannel*    audio_device_channel;
   AudioTapChannel*       audio_tap_channel;
   KokoroTtsChannel*      kokoro_tts_channel;
+  PocketTtsChannel*      pocket_tts_channel;
   WhisperCppSttChannel*  whisper_cpp_stt_channel;
 };
 
@@ -92,6 +94,9 @@ static void my_application_activate(GApplication* application) {
   // Register Kokoro TTS channel
   self->kokoro_tts_channel = kokoro_tts_channel_new(messenger);
 
+  // Register Pocket TTS channel
+  self->pocket_tts_channel = pocket_tts_channel_new(messenger);
+
   // Register whisper.cpp STT channel
   self->whisper_cpp_stt_channel = whisper_cpp_stt_channel_new(messenger);
 
@@ -153,6 +158,12 @@ static void my_application_shutdown(GApplication* application) {
   if (self->kokoro_tts_channel) {
     kokoro_tts_channel_dispose(self->kokoro_tts_channel);
     self->kokoro_tts_channel = nullptr;
+  }
+
+  // Cleanup Pocket TTS channel
+  if (self->pocket_tts_channel) {
+    pocket_tts_channel_dispose(self->pocket_tts_channel);
+    self->pocket_tts_channel = nullptr;
   }
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
