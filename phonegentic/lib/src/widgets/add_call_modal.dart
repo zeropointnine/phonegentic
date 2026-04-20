@@ -401,15 +401,18 @@ class _AddCallModalState extends State<AddCallModal> {
     final derived = _derivePhase(conf);
     _applyPhase(derived);
 
+    final isActiveCall = _placing || _phase == _ModalPhase.connected;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 44, 28, 44),
       child: Column(
         children: [
           _buildHeader(conf, heldCount),
-          const SizedBox(height: 4),
+          SizedBox(height: isActiveCall ? 40 : 4),
           Expanded(
             child: Align(
-              alignment: Alignment.center,
+              alignment:
+                  isActiveCall ? Alignment.topCenter : Alignment.center,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 360),
                 child: _phase == _ModalPhase.connected

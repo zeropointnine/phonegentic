@@ -26,14 +26,17 @@ class ConversationView extends StatefulWidget {
 
 class _ConversationViewState extends State<ConversationView> {
   final TextEditingController _composeCtrl = TextEditingController();
+  final TextEditingController _searchCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _composeFocus = FocusNode();
   bool _showEmoji = false;
+  String _searchQuery = '';
   List<String> _attachmentUrls = [];
 
   @override
   void dispose() {
     _composeCtrl.dispose();
+    _searchCtrl.dispose();
     _scrollCtrl.dispose();
     _composeFocus.dispose();
     super.dispose();
@@ -82,7 +85,13 @@ class _ConversationViewState extends State<ConversationView> {
     return Consumer<MessagingService>(
       builder: (context, messaging, _) {
         final convo = messaging.selectedConversation;
-        final messages = messaging.activeMessages;
+        final allMessages = messaging.activeMessages;
+        final messages = _searchQuery.isEmpty
+            ? allMessages
+            : allMessages
+                .where((m) =>
+                    m.text.toLowerCase().contains(_searchQuery.toLowerCase()))
+                .toList();
 
         return DropTarget(
           onDragEntered: (_) => setState(() => _isDragging = true),
@@ -104,7 +113,9 @@ class _ConversationViewState extends State<ConversationView> {
                     child: Stack(
                       children: [
                         messages.isEmpty
-                            ? _buildEmptyThread()
+                            ? (_searchQuery.isNotEmpty
+                                ? _buildNoSearchResults()
+                                : _buildEmptyThread())
                             : _buildMessageList(messages, convo),
                         if (_isDragging)
                           Container(
@@ -191,7 +202,8 @@ class _ConversationViewState extends State<ConversationView> {
             size: 30,
           ),
           const SizedBox(width: 8),
-          Expanded(
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -211,6 +223,35 @@ class _ConversationViewState extends State<ConversationView> {
                   style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.4),
+                    width: 0.5),
+              ),
+              child: TextField(
+                controller: _searchCtrl,
+                style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  hintText: 'Search...',
+                  hintStyle:
+                      TextStyle(color: AppColors.textTertiary, fontSize: 13),
+                  prefixIcon: Icon(Icons.search_rounded,
+                      size: 16, color: AppColors.textTertiary),
+                  prefixIconConstraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 0),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+                onChanged: (v) => setState(() => _searchQuery = v.trim()),
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -296,6 +337,15 @@ class _ConversationViewState extends State<ConversationView> {
     return Center(
       child: Text(
         'Start the conversation...',
+        style: TextStyle(fontSize: 13, color: AppColors.textTertiary),
+      ),
+    );
+  }
+
+  Widget _buildNoSearchResults() {
+    return Center(
+      child: Text(
+        'No messages match your search',
         style: TextStyle(fontSize: 13, color: AppColors.textTertiary),
       ),
     );
