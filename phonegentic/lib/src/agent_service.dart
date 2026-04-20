@@ -4044,6 +4044,10 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] Inbound SMS from $senderLabel: ${preview.length > 80 ? '${preview.substring(0, 80)}...' : preview}');
 
+    final normalizedFrom = ensureE164(msg.from);
+    _smsSendLog.remove(normalizedFrom);
+    _smsConsecutiveRateLimits.remove(normalizedFrom);
+
     String? contactName;
     if (contactService != null) {
       final contact = contactService!.lookupByPhone(msg.from);
@@ -4063,12 +4067,11 @@ class AgentService extends ChangeNotifier {
     // current session, prepend the last 20 messages so the agent has the full
     // thread context.
     final buf = StringBuffer();
-    final normalizedPhone = ensureE164(msg.from);
-    if (!_smsHistoryLoadedPhones.contains(normalizedPhone)) {
-      _smsHistoryLoadedPhones.add(normalizedPhone);
+    if (!_smsHistoryLoadedPhones.contains(normalizedFrom)) {
+      _smsHistoryLoadedPhones.add(normalizedFrom);
       try {
         final rows = await CallHistoryDb.getSmsMessagesForConversation(
-          normalizedPhone,
+          normalizedFrom,
           limit: 20,
         );
         if (rows.length > 1) {
@@ -4102,7 +4105,7 @@ class AgentService extends ChangeNotifier {
         }
       } catch (e) {
         debugPrint('[AgentService] Failed to load SMS history for '
-            '$normalizedPhone: $e');
+            '$normalizedFrom: $e');
       }
     }
 
