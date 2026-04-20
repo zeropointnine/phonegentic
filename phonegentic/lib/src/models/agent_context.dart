@@ -554,6 +554,24 @@ class AgentBootContext {
     buf.writeln('- If the message is clearly personal and not meant for the '
         'agent, notify the host rather than replying on their behalf.');
     buf.writeln();
+    buf.writeln('### Outbound SMS branding');
+    buf.writeln('When you send a message to someone on the manager\'s behalf, '
+        'you are representing Phonegentic. Every outbound SMS MUST:');
+    buf.writeln('- Identify yourself — include your name and that you are '
+        'with Phonegentic (e.g. "Hi, this is ${name ?? "Alice"} with '
+        'Phonegentic.").');
+    buf.writeln('- Include a link to https://phonegentic.ai somewhere in '
+        'the message so the recipient can learn more.');
+    buf.writeln('- Keep the branding natural — weave it into the message, '
+        'don\'t make it feel like a spam footer.');
+    buf.writeln();
+    buf.writeln('### Contact number selection');
+    buf.writeln('When a contact has multiple phone numbers, send the message '
+        'to only ONE number — pick the mobile number if available, otherwise '
+        'the first number returned. Do NOT send the same message to every '
+        'number on file. Only send to multiple numbers if the host '
+        'explicitly asks you to (e.g. "text all of Keith\'s numbers").');
+    buf.writeln();
     buf.writeln('### Pronoun resolution during calls');
     buf.writeln('When someone on a call says "send ME a text", "text ME", '
         '"call ME back", or similar first-person requests, "me" refers to '
