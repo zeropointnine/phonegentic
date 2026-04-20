@@ -1104,9 +1104,9 @@ class AgentService extends ChangeNotifier {
         // Gate audio during TTS playback — whisper.cpp has no AEC, so any
         // speaker bleed would be transcribed as user speech.  Dropping mic
         // input while TTS is active prevents acoustic echo from reaching
-        // inference.  The VAD timer sees silence and drains without running
-        // whisper_full().
-        if (!_muted && !_speaking && !_whisper.isTtsPlaying) {
+        // inference.  ttsSuppressed includes a 300ms cooldown after playback
+        // ends to catch the reverb tail.
+        if (!_muted && !_speaking && !_whisper.ttsSuppressed) {
           _whisperKitStt?.feedAudio(chunk);
         }
       });
@@ -7212,13 +7212,13 @@ class AgentService extends ChangeNotifier {
           _playbackEndDebounce = Timer(debounce, () {
             _ttsGenerationComplete = false;
             _whisper.isTtsPlaying = false;
+            _speakingEndTime = DateTime.now();
             if (_speaking) {
               _speaking = false;
-              _speakingEndTime = DateTime.now();
               _statusText = _muted ? 'Not Listening...' : 'Listening';
               notifyListeners();
-              _schedulePostSpeakFlush();
             }
+            _schedulePostSpeakFlush();
           });
         } else {
           _playbackSafetyTimer?.cancel();

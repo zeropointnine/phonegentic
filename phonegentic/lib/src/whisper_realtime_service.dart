@@ -1212,6 +1212,10 @@ class WhisperRealtimeService {
   bool get _ttsSuppressed =>
       _isTtsPlaying || DateTime.now().isBefore(_ttsSuppressedUntil);
 
+  /// Public accessor for callers that need the same cooldown-aware gate
+  /// (e.g. local STT feedAudio gating in agent_service).
+  bool get ttsSuppressed => _ttsSuppressed;
+
   int _audioSendCount = 0;
   void sendAudio(Uint8List pcm16Mono24kHz) {
     _emitAudioLevel(pcm16Mono24kHz);
