@@ -25,6 +25,7 @@ import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
 import 'phone_formatter.dart';
 import 'job_function_service.dart';
+import 'manager_presence_service.dart';
 import 'ringtone_service.dart';
 import 'tear_sheet_service.dart';
 import 'widgets/action_button.dart';
@@ -434,6 +435,111 @@ class _MyDialPadWidget extends State<DialPadWidget>
     context.read<AgentService>().reconnect();
   }
 
+  Widget _buildPresenceIndicator(BuildContext context) {
+    final presence = context.watch<ManagerPresenceService>();
+    final away = presence.isAway;
+    final color = away ? AppColors.burntAmber : AppColors.green;
+    final label = away ? 'Away' : 'Active';
+
+    return PopupMenuButton<bool>(
+      onSelected: (setAway) {
+        if (setAway) {
+          presence.setManuallyAway();
+        } else {
+          presence.clearManuallyAway();
+        }
+      },
+      offset: const Offset(0, 36),
+      color: AppColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: AppColors.border, width: 0.5),
+      ),
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: false,
+          height: 36,
+          child: Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration:
+                    BoxDecoration(shape: BoxShape.circle, color: AppColors.green),
+              ),
+              const SizedBox(width: 8),
+              Text('Available',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: !away
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary)),
+              if (!away) ...[
+                const Spacer(),
+                Icon(Icons.check, size: 14, color: AppColors.green),
+              ],
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: true,
+          height: 36,
+          child: Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                    shape: BoxShape.circle, color: AppColors.burntAmber),
+              ),
+              const SizedBox(width: 8),
+              Text('Away',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: away
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary)),
+              if (away) ...[
+                const Spacer(),
+                Icon(Icons.check, size: 14, color: AppColors.burntAmber),
+              ],
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(12),
+          border:
+              Border.all(color: color.withValues(alpha: 0.20), width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: color,
+              ),
+            ),
+            const SizedBox(width: 3),
+            Icon(Icons.keyboard_arrow_down_rounded, size: 12, color: color),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ------- BUILD -------
 
   @override
@@ -818,6 +924,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
               ),
               _buildConferenceBadge(),
               const Spacer(),
+              _buildPresenceIndicator(context),
+              const SizedBox(width: 20),
               HoverButton(
                 onTap: _hasSipError ? _handleReconnect : null,
                 borderRadius: BorderRadius.circular(20),
@@ -834,13 +942,12 @@ class _MyDialPadWidget extends State<DialPadWidget>
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                            shape: BoxShape.circle, color: _statusColor),
+                      Icon(
+                        Icons.phone_rounded,
+                        size: 12,
+                        color: _statusColor,
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 5),
                       Text(
                         _statusText,
                         style: TextStyle(
@@ -865,15 +972,15 @@ class _MyDialPadWidget extends State<DialPadWidget>
               _buildRingToggleButton(context),
               const SizedBox(width: 4),
               if (wide) ...[
+                _buildCallHistoryButton(context),
+                const SizedBox(width: 4),
                 _buildMessagesButton(context),
+                const SizedBox(width: 4),
+                _buildContactsButton(context),
                 const SizedBox(width: 4),
                 _buildCalendarButton(context),
                 const SizedBox(width: 4),
                 _buildTearSheetButton(context),
-                const SizedBox(width: 4),
-                _buildContactsButton(context),
-                const SizedBox(width: 4),
-                _buildCallHistoryButton(context),
                 const SizedBox(width: 4),
                 _buildAudioDeviceButton(context),
                 const SizedBox(width: 4),
@@ -1427,6 +1534,15 @@ class _MyDialPadWidget extends State<DialPadWidget>
           case 'calendar':
             context.read<CalendarSyncService>().toggleOpen();
             break;
+          case 'theme_amber':
+            context.read<ThemeProvider>().setTheme(AppTheme.amberVt100);
+            break;
+          case 'theme_miami':
+            context.read<ThemeProvider>().setTheme(AppTheme.miamiVice);
+            break;
+          case 'theme_light':
+            context.read<ThemeProvider>().setTheme(AppTheme.light);
+            break;
         }
       },
       icon: Icon(Icons.more_horiz, color: AppColors.textSecondary, size: 20),
@@ -1525,8 +1641,72 @@ class _MyDialPadWidget extends State<DialPadWidget>
             ],
           ),
         ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          enabled: false,
+          height: 28,
+          child: Text(
+            'Theme',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textTertiary,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        ..._buildThemeMenuItems(context),
       ],
     );
+  }
+
+  List<PopupMenuEntry<String>> _buildThemeMenuItems(BuildContext context) {
+    final current = context.read<ThemeProvider>().appTheme;
+    return [
+      PopupMenuItem(
+        value: 'theme_amber',
+        child: Row(
+          children: [
+            Icon(Icons.terminal_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('Amber VT-100', style: TextStyle(fontSize: 13))),
+            if (current == AppTheme.amberVt100)
+              Icon(Icons.check, size: 16, color: AppColors.accent),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'theme_miami',
+        child: Row(
+          children: [
+            Icon(Icons.nightlife_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('Miami Vice', style: TextStyle(fontSize: 13))),
+            if (current == AppTheme.miamiVice)
+              Icon(Icons.check, size: 16, color: AppColors.accent),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'theme_light',
+        child: Row(
+          children: [
+            Icon(Icons.light_mode_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+                child:
+                    Text('Pedestrian Neutral', style: TextStyle(fontSize: 13))),
+            if (current == AppTheme.light)
+              Icon(Icons.check, size: 16, color: AppColors.accent),
+          ],
+        ),
+      ),
+    ];
   }
 
   void _onAutocompleteSelect(Map<String, dynamic> contact) {

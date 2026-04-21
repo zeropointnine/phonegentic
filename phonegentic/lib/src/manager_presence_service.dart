@@ -22,6 +22,7 @@ class ManagerPresenceService extends ChangeNotifier
   DateTime? _lastFocusedAt;
   DateTime? _lastUnfocusedAt;
   bool _isAway = false;
+  bool _manuallyAway = false;
   AwayReturnMode _awayReturnMode = AwayReturnMode.quietBadge;
   DateTime? _lastBriefingAt;
   List<Map<String, dynamic>> _cachedPendingReminders = [];
@@ -33,7 +34,8 @@ class ManagerPresenceService extends ChangeNotifier
   int _awayMinutes = 0;
 
   bool get windowFocused => _windowFocused;
-  bool get isAway => _isAway;
+  bool get isAway => _isAway || _manuallyAway;
+  bool get manuallyAway => _manuallyAway;
   DateTime? get lastFocusedAt => _lastFocusedAt;
   DateTime? get lastUnfocusedAt => _lastUnfocusedAt;
   AwayReturnMode get awayReturnMode => _awayReturnMode;
@@ -66,6 +68,23 @@ class ManagerPresenceService extends ChangeNotifier
   set awayReturnMode(AwayReturnMode mode) {
     _awayReturnMode = mode;
     UserConfigService.saveAwayReturnConfig(AwayReturnConfig(mode: mode));
+    notifyListeners();
+  }
+
+  void setManuallyAway() {
+    _manuallyAway = true;
+    _awayTimer?.cancel();
+    if (_lastUnfocusedAt == null) _lastUnfocusedAt = DateTime.now();
+    debugPrint('[ManagerPresence] Manually set away');
+    notifyListeners();
+  }
+
+  void clearManuallyAway() {
+    final wasAway = isAway;
+    _manuallyAway = false;
+    _isAway = false;
+    debugPrint('[ManagerPresence] Manually set available');
+    if (wasAway) _handleReturnFromAway();
     notifyListeners();
   }
 
@@ -135,7 +154,7 @@ class ManagerPresenceService extends ChangeNotifier
     _lastFocusedAt = DateTime.now();
     _awayTimer?.cancel();
 
-    if (_isAway) {
+    if (_isAway && !_manuallyAway) {
       _handleReturnFromAway();
     }
 

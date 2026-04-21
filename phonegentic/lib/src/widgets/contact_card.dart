@@ -12,6 +12,7 @@ class ContactCard extends StatefulWidget {
   final VoidCallback? onDelete;
   final VoidCallback? onCall;
   final VoidCallback? onMessage;
+  final double topPadding;
 
   const ContactCard({
     super.key,
@@ -20,6 +21,7 @@ class ContactCard extends StatefulWidget {
     this.onDelete,
     this.onCall,
     this.onMessage,
+    this.topPadding = 24,
   });
 
   @override
@@ -183,19 +185,15 @@ class _ContactCardState extends State<ContactCard> {
   @override
   Widget build(BuildContext context) {
     final demo = context.watch<DemoModeService>();
-    return Container(
-      color: AppColors.surface,
-      child: Column(
+    return Column(
         children: [
-          const SizedBox(height: 24),
-          // Avatar
+          SizedBox(height: widget.topPadding),
           ContactIdenticon(
             seed: _rawDisplayName,
             size: 72,
             thumbnailPath: widget.contact['thumbnail_path'] as String?,
           ),
           const SizedBox(height: 12),
-          // Name
           FractionallySizedBox(
             widthFactor: 0.65,
             child: HoverButton(
@@ -251,7 +249,6 @@ class _ContactCardState extends State<ContactCard> {
             ),
           ],
           const SizedBox(height: 20),
-          // Action buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -282,8 +279,7 @@ class _ContactCardState extends State<ContactCard> {
                 ),
             ],
           ),
-          const SizedBox(height: 20),
-          // Fields
+          const SizedBox(height: 32),
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
@@ -309,7 +305,6 @@ class _ContactCardState extends State<ContactCard> {
           ),
           const SizedBox(height: 16),
         ],
-      ),
     );
   }
 }

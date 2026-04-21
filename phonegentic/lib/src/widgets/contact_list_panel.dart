@@ -261,24 +261,36 @@ class _ContactListPanelState extends State<ContactListPanel> {
 
   Widget _buildContactDetail(ContactService service) {
     final contact = service.selectedContact!;
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          if (service.multipleMatchMessage != null)
-            _buildMultipleMatchBanner(service),
-          ContactCard(
-            contact: contact,
-            onFieldChanged: (field, value) {
-              service.updateField(contact['id'] as int, field, value);
-            },
-            onDelete: () {
-              service.deleteContact(contact['id'] as int);
-            },
-            onCall: () => _callContact(contact),
-            onMessage: () => _messageContact(contact),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final topPad = (constraints.maxHeight * 0.18).clamp(24.0, 120.0);
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Container(
+              color: AppColors.surface,
+              child: Column(
+                children: [
+                  if (service.multipleMatchMessage != null)
+                    _buildMultipleMatchBanner(service),
+                  ContactCard(
+                    contact: contact,
+                    topPadding: topPad,
+                    onFieldChanged: (field, value) {
+                      service.updateField(contact['id'] as int, field, value);
+                    },
+                    onDelete: () {
+                      service.deleteContact(contact['id'] as int);
+                    },
+                    onCall: () => _callContact(contact),
+                    onMessage: () => _messageContact(contact),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

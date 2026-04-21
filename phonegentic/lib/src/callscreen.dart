@@ -1283,6 +1283,15 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           case 'settings':
             Navigator.pushNamed(context, '/register');
             break;
+          case 'theme_amber':
+            context.read<ThemeProvider>().setTheme(AppTheme.amberVt100);
+            break;
+          case 'theme_miami':
+            context.read<ThemeProvider>().setTheme(AppTheme.miamiVice);
+            break;
+          case 'theme_light':
+            context.read<ThemeProvider>().setTheme(AppTheme.light);
+            break;
         }
       },
       icon: Icon(Icons.more_horiz, color: AppColors.textSecondary, size: 20),
@@ -1381,8 +1390,72 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             ],
           ),
         ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          enabled: false,
+          height: 28,
+          child: Text(
+            'Theme',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textTertiary,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        ..._buildThemeMenuItems(context),
       ],
     );
+  }
+
+  List<PopupMenuEntry<String>> _buildThemeMenuItems(BuildContext context) {
+    final current = context.read<ThemeProvider>().appTheme;
+    return [
+      PopupMenuItem(
+        value: 'theme_amber',
+        child: Row(
+          children: [
+            Icon(Icons.terminal_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('Amber VT-100', style: TextStyle(fontSize: 13))),
+            if (current == AppTheme.amberVt100)
+              Icon(Icons.check, size: 16, color: AppColors.accent),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'theme_miami',
+        child: Row(
+          children: [
+            Icon(Icons.nightlife_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+                child: Text('Miami Vice', style: TextStyle(fontSize: 13))),
+            if (current == AppTheme.miamiVice)
+              Icon(Icons.check, size: 16, color: AppColors.accent),
+          ],
+        ),
+      ),
+      PopupMenuItem(
+        value: 'theme_light',
+        child: Row(
+          children: [
+            Icon(Icons.light_mode_rounded,
+                size: 18, color: AppColors.textSecondary),
+            const SizedBox(width: 10),
+            const Expanded(
+                child:
+                    Text('Pedestrian Neutral', style: TextStyle(fontSize: 13))),
+            if (current == AppTheme.light)
+              Icon(Icons.check, size: 16, color: AppColors.accent),
+          ],
+        ),
+      ),
+    ];
   }
 
   Widget _buildSingleCallAvatar(String seed, String? thumbnailPath) {
