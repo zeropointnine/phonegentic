@@ -1,3 +1,4 @@
+#import "PocketTtsEngine.h"
 #import <WebRTC/RTCAudioBuffer.h>
 #import <WebRTC/RTCAudioCustomProcessingDelegate.h>
 #import <WebRTC/RTCDefaultAudioProcessingModule.h>

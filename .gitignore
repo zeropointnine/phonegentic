@@ -30,3 +30,9 @@ example/lib/generated_plugin_registrant.dart
 *.safetensors
 *.mlmodelc
 *.mlpackage
+
+.python-version
+
+# Personal/local files
+*_lee
+*_lee.*

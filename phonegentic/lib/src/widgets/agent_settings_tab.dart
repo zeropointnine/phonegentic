@@ -919,7 +919,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     };
     if (BuildConfig.onDeviceModelsSupported) {
       providers[TtsProvider.kokoro] = 'Kokoro (On-Device)';
-      if (Platform.isLinux) {
+      if (Platform.isLinux || Platform.isMacOS) {
         providers[TtsProvider.pocketTts] = 'Pocket TTS (On-Device)';
       }
     }
