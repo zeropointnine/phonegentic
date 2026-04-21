@@ -19,6 +19,7 @@ import 'call_history_service.dart';
 import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'db/call_history_db.dart';
+import 'db/pocket_tts_voice_db.dart';
 import 'demo_mode_service.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
@@ -687,23 +688,106 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
 
     if (_samplePath != null && mounted) {
-      final result = await showVoiceCloneModal(
-        context,
-        apiKey: _ttsConfig?.elevenLabsApiKey ?? '',
-        preRecordedPath: _samplePath,
-        sampleParty: _sampleParty,
-      );
-      if (result != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Voice "${result.name}" created'),
-            backgroundColor: AppColors.green,
-          ),
+      if (_ttsConfig?.provider == TtsProvider.pocketTts) {
+        await _savePocketTtsVoiceSample(_samplePath!, _sampleParty);
+      } else {
+        final result = await showVoiceCloneModal(
+          context,
+          apiKey: _ttsConfig?.elevenLabsApiKey ?? '',
+          preRecordedPath: _samplePath,
+          sampleParty: _sampleParty,
         );
+        if (result != null && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Voice "${result.name}" created'),
+              backgroundColor: AppColors.green,
+            ),
+          );
+        }
       }
     }
     _samplePath = null;
     _sampleParty = null;
+  }
+
+  Future<void> _savePocketTtsVoiceSample(
+      String samplePath, String? party) async {
+    final defaultName =
+        party == 'host' ? 'My Voice' : 'Remote Voice';
+    final nameCtrl = TextEditingController(text: defaultName);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Save Voice',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary)),
+        content: TextField(
+          controller: nameCtrl,
+          autofocus: true,
+          style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'Voice name',
+            hintStyle: TextStyle(fontSize: 13, color: AppColors.textTertiary),
+            filled: true,
+            fillColor: AppColors.card,
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.5),
+                  width: 0.5),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: AppColors.accent, width: 1),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: Text('Cancel',
+                style: TextStyle(color: AppColors.textTertiary)),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(ctx).pop(nameCtrl.text.trim()),
+            child: Text('Save',
+                style: TextStyle(color: AppColors.accent)),
+          ),
+        ],
+      ),
+    );
+    nameCtrl.dispose();
+
+    if (result != null && result.isNotEmpty && mounted) {
+      try {
+        await PocketTtsVoiceDb.addUserVoice(
+          name: result,
+          audioPath: samplePath,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Voice "$result" saved'),
+              backgroundColor: AppColors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to save voice: $e'),
+              backgroundColor: AppColors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _toggleVoiceSample(String party) async {

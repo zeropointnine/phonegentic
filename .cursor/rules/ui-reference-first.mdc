@@ -1,0 +1,16 @@
+---
+description: When adding new UI widgets or panels, always read reference implementations first
+globs: phonegentic/lib/src/widgets/**/*.dart
+alwaysApply: false
+---
+
+# Reference Implementation First
+
+Before adding or modifying any UI widget, **read the existing sibling widgets** in the codebase to match their patterns.
+
+## Checklist
+
+1. **Find the reference** — Look at how similar panels/widgets handle layout, state, input, and theming (e.g. the dialpad, messages panel, call screen overlays).
+2. **Match the patterns** — Use the same widget wrappers, state management, color tokens (`AppColors.*`), spacing conventions, border styles, and hover/interaction patterns.
+3. **Match the typography** — If the app uses `HoverButton` for clickable chrome, don't use raw `InkWell`. If headers use `AppColors.surface` backgrounds with 0.5px borders, do the same.
+4. **Subtract, don't add** — Don't introduce new abstractions or alternate patterns. A new panel should feel like it was written by the same author as the existing panels.

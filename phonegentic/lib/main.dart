@@ -13,6 +13,7 @@ import 'package:phonegentic/src/chrome/google_search_service.dart';
 import 'package:phonegentic/src/conference/conference_service.dart';
 import 'package:phonegentic/src/contact_service.dart';
 import 'package:phonegentic/src/db/call_history_db.dart';
+import 'package:phonegentic/src/db/pocket_tts_voice_db.dart';
 import 'package:phonegentic/src/demo_mode_service.dart';
 import 'package:phonegentic/src/inbound_call_flow_service.dart';
 import 'package:phonegentic/src/transfer_rule_service.dart';
@@ -57,6 +58,7 @@ void main() async {
   };
 
   await CallHistoryDb.initialize();
+  await PocketTtsVoiceDb.seedDefaultVoices();
   final confConfig = await AgentConfigService.loadConferenceConfig();
   runApp(
     MultiProvider(

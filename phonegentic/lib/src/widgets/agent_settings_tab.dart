@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../comfort_noise_service.dart';
+import '../db/pocket_tts_voice_db.dart';
 import '../elevenlabs_api_service.dart';
+import '../elevenlabs_tts_service.dart';
 import '../kokoro_tts_service.dart';
 import '../build_config.dart';
 import '../whisperkit_stt_service.dart';
@@ -55,6 +60,18 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   bool _voiceListLoading = false;
   String? _voiceListError;
 
+  List<PocketTtsVoice> _pocketVoiceList = [];
+  bool _pocketVoiceListLoading = false;
+
+  bool _pocketPreviewPlaying = false;
+  Object? _pocketPreviewToken;
+  StreamSubscription? _pocketPreviewAudioSub;
+
+  bool _elevenLabsPreviewPlaying = false;
+  Object? _elevenLabsPreviewToken;
+  ElevenLabsTtsService? _previewElevenLabs;
+  StreamSubscription<Uint8List>? _previewElevenLabsAudioSub;
+
   @override
   void initState() {
     super.initState();
@@ -82,8 +99,13 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     _systemPromptCtrl.dispose();
     _ttsApiKeyCtrl.dispose();
     _ttsVoiceIdCtrl.dispose();
+    _stopPocketPreview(disposing: true);
+    _stopElevenLabsPreview(disposing: true);
     super.dispose();
   }
+
+  // PCM16 24 kHz mono = 48 000 bytes per second = 48 bytes per millisecond.
+  static const double _pcm16BytesPerMs = 48.0;
 
   Future<void> _load() async {
     final v = await AgentConfigService.loadVoiceConfig();
@@ -122,6 +144,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     if (tts.elevenLabsApiKey.isNotEmpty) {
       _fetchVoiceList();
     }
+    _fetchPocketVoiceList();
   }
 
   Future<void> _fetchVoiceList() async {
@@ -153,6 +176,221 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         });
       }
     }
+  }
+
+  Future<void> _fetchPocketVoiceList() async {
+    setState(() => _pocketVoiceListLoading = true);
+    try {
+      final voices = await PocketTtsVoiceDb.listVoices();
+      if (mounted) {
+        setState(() {
+          _pocketVoiceList = voices;
+          _pocketVoiceListLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[AgentSettings] Failed to load pocket voices: $e');
+      if (mounted) setState(() => _pocketVoiceListLoading = false);
+    }
+  }
+
+  static const _previewText =
+      'The birch canoe slid on the smooth planks, and the juice of lemons '
+      'makes fine punch. She had your dark blue jacket before the big show, '
+      'and those crazy things were given to me. The quick brown fox jumps '
+      'over a lazy dog, catching the breeze with joy.';
+
+  static const _tapChannel =
+      MethodChannel('com.agentic_ai/audio_tap_control');
+
+  static const _pocketChannel =
+      MethodChannel('com.agentic_ai/pocket_tts');
+  static const _pocketAudioChannel =
+      EventChannel('com.agentic_ai/pocket_tts_audio');
+
+  Future<void> _playPocketPreview() async {
+    if (_pocketPreviewPlaying) {
+      _stopPocketPreview();
+      return;
+    }
+
+    final voiceId = _tts.pocketTtsVoiceId;
+    if (voiceId == null) return;
+
+    final voice = _pocketVoiceList
+        .cast<PocketTtsVoice?>()
+        .firstWhere((v) => v!.id == voiceId, orElse: () => null);
+    if (voice == null) return;
+
+    // Flush any leftover audio from a previous preview.
+    _tapChannel.invokeMethod('stopAudioPlayback').catchError((_) {});
+
+    final token = Object();
+    _pocketPreviewToken = token;
+    setState(() => _pocketPreviewPlaying = true);
+
+    try {
+      // Ensure the native engine is running (idempotent on the native side
+      // when already initialized — replaces engine only if needed).
+      final ok =
+          await _pocketChannel.invokeMethod<bool>('initialize') ?? false;
+      if (!ok || _pocketPreviewToken != token) {
+        _resetPocketPreview(token);
+        return;
+      }
+
+      // Import voice embedding / clone voice.
+      final tag = 'preview_${voice.id}';
+      if (voice.embedding != null && voice.embedding!.isNotEmpty) {
+        await _pocketChannel.invokeMethod('importVoiceEmbedding', {
+          'voiceId': tag,
+          'embeddingData': Uint8List.fromList(voice.embedding!),
+        });
+        await _pocketChannel.invokeMethod('setVoice', {'voice': tag});
+      } else if (voice.audioPath != null && voice.audioPath!.isNotEmpty) {
+        final pcm = await PocketTtsService.decodeAudioFileToPcm16(
+            voice.audioPath!);
+        if (pcm.isNotEmpty) {
+          await _pocketChannel.invokeMethod('encodeVoice', {
+            'audioData': pcm,
+            'voiceId': tag,
+          });
+          await _pocketChannel.invokeMethod('setVoice', {'voice': tag});
+        }
+      }
+
+      if (_pocketPreviewToken != token) return;
+
+      // Subscribe to audio chunks from the native EventChannel and pipe
+      // them straight to the playback engine.
+      int totalPcmBytes = 0;
+      final sw = Stopwatch()..start();
+      _pocketPreviewAudioSub =
+          _pocketAudioChannel.receiveBroadcastStream().listen((data) {
+        if (data is Uint8List && data.isNotEmpty) {
+          _tapChannel.invokeMethod('playAudioResponse', data);
+          totalPcmBytes += data.length;
+        }
+      });
+
+      // Synthesize the preview text (blocks until native synthesis finishes).
+      await _pocketChannel.invokeMethod('synthesize', {
+        'text': _previewText,
+        'voice': tag,
+      });
+
+      if (_pocketPreviewToken != token) return;
+
+      // Synthesis is done but the native AVAudioPlayerNode may still be
+      // draining queued buffers.  Estimate remaining playback time.
+      final totalDurationMs = (totalPcmBytes / _pcm16BytesPerMs).ceil();
+      final remainingMs = totalDurationMs - sw.elapsedMilliseconds + 400;
+      if (remainingMs > 0) {
+        await Future.delayed(Duration(milliseconds: remainingMs));
+      }
+
+      _resetPocketPreview(token);
+    } catch (e) {
+      debugPrint('[AgentSettings] Pocket preview failed: $e');
+      _resetPocketPreview(token);
+    }
+  }
+
+  void _resetPocketPreview(Object token) {
+    if (_pocketPreviewToken != token) return;
+    _pocketPreviewAudioSub?.cancel();
+    _pocketPreviewAudioSub = null;
+    _pocketPreviewToken = null;
+    _pocketPreviewPlaying = false;
+    if (mounted) setState(() {});
+  }
+
+  void _stopPocketPreview({bool disposing = false}) {
+    final sub = _pocketPreviewAudioSub;
+    _pocketPreviewAudioSub = null;
+    _pocketPreviewToken = null;
+    _pocketPreviewPlaying = false;
+    sub?.cancel();
+    _tapChannel.invokeMethod('stopAudioPlayback').catchError((_) {});
+    if (!disposing && mounted) setState(() {});
+  }
+
+  Future<void> _playElevenLabsPreview() async {
+    if (_elevenLabsPreviewPlaying) {
+      _stopElevenLabsPreview();
+      return;
+    }
+
+    if (_tts.elevenLabsApiKey.isEmpty || _tts.elevenLabsVoiceId.isEmpty) {
+      return;
+    }
+
+    // Flush leftover audio from a previous preview.
+    _tapChannel.invokeMethod('stopAudioPlayback').catchError((_) {});
+
+    final token = Object();
+    _elevenLabsPreviewToken = token;
+    setState(() => _elevenLabsPreviewPlaying = true);
+
+    try {
+      final el = ElevenLabsTtsService(config: _tts);
+      _previewElevenLabs = el;
+
+      int totalPcmBytes = 0;
+      final sw = Stopwatch()..start();
+
+      _previewElevenLabsAudioSub = el.audioChunks.listen((pcm) {
+        _tapChannel.invokeMethod('playAudioResponse', pcm);
+        totalPcmBytes += pcm.length;
+      });
+
+      el.startGeneration();
+      el.sendText(_previewText);
+      el.endGeneration();
+
+      await el.speakingState.firstWhere((playing) => !playing).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => false,
+      );
+
+      if (_elevenLabsPreviewToken != token) return;
+
+      // Wait for native playback to drain queued buffers.
+      final totalDurationMs = (totalPcmBytes / _pcm16BytesPerMs).ceil();
+      final remainingMs = totalDurationMs - sw.elapsedMilliseconds + 400;
+      if (remainingMs > 0) {
+        await Future.delayed(Duration(milliseconds: remainingMs));
+      }
+
+      _resetElevenLabsPreview(token);
+      el.dispose();
+    } catch (e) {
+      debugPrint('[AgentSettings] ElevenLabs preview failed: $e');
+      _resetElevenLabsPreview(token);
+    }
+  }
+
+  void _resetElevenLabsPreview(Object token) {
+    if (_elevenLabsPreviewToken != token) return;
+    _previewElevenLabsAudioSub?.cancel();
+    _previewElevenLabsAudioSub = null;
+    _previewElevenLabs = null;
+    _elevenLabsPreviewToken = null;
+    _elevenLabsPreviewPlaying = false;
+    if (mounted) setState(() {});
+  }
+
+  void _stopElevenLabsPreview({bool disposing = false}) {
+    final el = _previewElevenLabs;
+    final sub = _previewElevenLabsAudioSub;
+    _previewElevenLabs = null;
+    _previewElevenLabsAudioSub = null;
+    _elevenLabsPreviewToken = null;
+    _elevenLabsPreviewPlaying = false;
+    sub?.cancel();
+    el?.dispose();
+    _tapChannel.invokeMethod('stopAudioPlayback').catchError((_) {});
+    if (!disposing && mounted) setState(() {});
   }
 
   void _updateVoice(VoiceAgentConfig v) {
@@ -907,7 +1145,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         ],
         if (isPocketTts) ...[
           _divider(),
-          _buildPocketTtsVoiceCloneRow(),
+          _buildPocketTtsVoiceSelector(),
         ],
       ],
     );
@@ -961,62 +1199,287 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     );
   }
 
-  Widget _buildPocketTtsVoiceCloneRow() {
-    final clonePath = _tts.pocketTtsVoiceClonePath;
-    final hasClone = clonePath.isNotEmpty;
-
+  Widget _buildPocketTtsVoiceSelector() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 100,
-            child: Text('Voice clone',
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-          ),
-          Expanded(
-            child: Text(
-              hasClone ? p.basename(clonePath) : 'Default',
-              style: TextStyle(
-                fontSize: 13,
-                color: hasClone ? AppColors.textPrimary : AppColors.textSecondary,
+          Row(
+            children: [
+              SizedBox(
+                width: 100,
+                child: Text('Voice',
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary)),
               ),
-              overflow: TextOverflow.ellipsis,
-            ),
+              if (_pocketVoiceListLoading)
+                Expanded(
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.textTertiary),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text('Loading voices...',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textTertiary)),
+                    ],
+                  ),
+                )
+              else
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: AppColors.border.withValues(alpha: 0.5),
+                          width: 0.5),
+                    ),
+                    child: DropdownButton<int>(
+                      value: _pocketVoiceList.any(
+                              (v) => v.id == _tts.pocketTtsVoiceId)
+                          ? _tts.pocketTtsVoiceId
+                          : null,
+                      hint: Text('Default',
+                          style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.textTertiary)),
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      dropdownColor: AppColors.card,
+                      style: TextStyle(
+                          fontSize: 13, color: AppColors.textPrimary),
+                      icon: Icon(Icons.unfold_more_rounded,
+                          size: 16, color: AppColors.textTertiary),
+                      items: _buildPocketVoiceDropdownItems(),
+                      onChanged: (v) {
+                        _updateTts(_tts.copyWith(
+                          pocketTtsVoiceId: v,
+                          clearPocketTtsVoiceId: v == null,
+                          pocketTtsVoiceClonePath: '',
+                        ));
+                      },
+                    ),
+                  ),
+                ),
+            ],
           ),
-          if (hasClone)
-            IconButton(
-              icon: const Icon(Icons.close, size: 16),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              visualDensity: VisualDensity.compact,
-              onPressed: () => _updateTts(_tts.copyWith(pocketTtsVoiceClonePath: '')),
-            ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: () async {
-              final result = await FilePicker.platform.pickFiles(
-                type: FileType.custom,
-                allowedExtensions: ['wav', 'mp3', 'm4a', 'ogg', 'flac', 'aac'],
-              );
-              if (result == null || result.files.single.path == null) return;
-              final path = result.files.single.path!;
-              final duration = await PocketTtsService.getAudioDurationSeconds(path);
-              if (!mounted) return;
-              if (duration > 30) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('File too long — voice clone must be 30 seconds or less'),
-                  behavior: SnackBarBehavior.floating,
-                ));
-                return;
-              }
-              _updateTts(_tts.copyWith(pocketTtsVoiceClonePath: path));
-            },
-            child: const Text('Browse', style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const SizedBox(width: 100),
+              SizedBox(
+                height: 28,
+                child: TextButton.icon(
+                  onPressed: _openPocketVoiceUploadModal,
+                  icon: Icon(Icons.add_rounded, size: 14,
+                      color: AppColors.accent),
+                  label: Text('Add Voice',
+                      style: TextStyle(
+                          fontSize: 12, color: AppColors.accent)),
+                  style: TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      side: BorderSide(
+                          color: AppColors.accent.withValues(alpha: 0.3)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 28,
+                child: TextButton.icon(
+                  onPressed: _fetchPocketVoiceList,
+                  icon: Icon(Icons.refresh_rounded, size: 14,
+                      color: AppColors.textTertiary),
+                  label: Text('Refresh',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textTertiary)),
+                  style: TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ),
+              if (_tts.pocketTtsVoiceId != null) ...[
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 28,
+                  child: TextButton.icon(
+                    onPressed: _playPocketPreview,
+                    icon: _pocketPreviewPlaying
+                        ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  AppColors.accent),
+                            ),
+                          )
+                        : Icon(Icons.play_arrow_rounded,
+                            size: 14, color: AppColors.accent),
+                    label: Text(
+                        _pocketPreviewPlaying ? 'Stop' : 'Preview',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.accent)),
+                    style: TextButton.styleFrom(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        side: BorderSide(
+                            color:
+                                AppColors.accent.withValues(alpha: 0.3)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
     );
+  }
+
+  List<DropdownMenuItem<int>> _buildPocketVoiceDropdownItems() {
+    final items = <DropdownMenuItem<int>>[];
+
+    final defaults = _pocketVoiceList.where((v) => v.isDefault).toList();
+    final custom = _pocketVoiceList.where((v) => !v.isDefault).toList();
+
+    if (defaults.isNotEmpty) {
+      items.add(DropdownMenuItem<int>(
+        enabled: false,
+        value: null,
+        child: Text('On Device Voices',
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.3)),
+      ));
+      for (final v in defaults) {
+        items.add(DropdownMenuItem<int>(
+          value: v.id,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(v.name, overflow: TextOverflow.ellipsis),
+                ),
+                if (v.subtitle.isNotEmpty)
+                  Text(v.subtitle,
+                      style: TextStyle(
+                          fontSize: 10, color: AppColors.textTertiary)),
+              ],
+            ),
+          ),
+        ));
+      }
+    }
+
+    if (custom.isNotEmpty) {
+      items.add(DropdownMenuItem<int>(
+        enabled: false,
+        value: null,
+        child: Padding(
+          padding: EdgeInsets.only(top: defaults.isNotEmpty ? 8 : 0),
+          child: Text('My Voices',
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textTertiary,
+                  letterSpacing: 0.3)),
+        ),
+      ));
+      for (final v in custom) {
+        items.add(DropdownMenuItem<int>(
+          value: v.id,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(v.name, overflow: TextOverflow.ellipsis),
+                ),
+                if (v.subtitle.isNotEmpty)
+                  Text(v.subtitle,
+                      style: TextStyle(
+                          fontSize: 10, color: AppColors.textTertiary)),
+                const SizedBox(width: 4),
+                HoverButton(
+                  onTap: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: AppColors.surface,
+                        title: Text('Delete "${v.name}"?',
+                            style: TextStyle(
+                                fontSize: 15, color: AppColors.textPrimary)),
+                        content: Text('This voice will be permanently removed.',
+                            style: TextStyle(
+                                fontSize: 13, color: AppColors.textSecondary)),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(false),
+                            child: Text('Cancel',
+                                style: TextStyle(
+                                    color: AppColors.textTertiary)),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(true),
+                            child: Text('Delete',
+                                style: TextStyle(color: AppColors.red)),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true && v.id != null) {
+                      await PocketTtsVoiceDb.deleteVoice(v.id!);
+                      if (_tts.pocketTtsVoiceId == v.id) {
+                        _updateTts(_tts.copyWith(clearPocketTtsVoiceId: true));
+                      }
+                      _fetchPocketVoiceList();
+                    }
+                  },
+                  child: Icon(Icons.close, size: 14,
+                      color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+        ));
+      }
+    }
+
+    return items;
+  }
+
+  Future<void> _openPocketVoiceUploadModal() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _PocketVoiceUploadDialog(),
+    );
+    if (result == true) {
+      _fetchPocketVoiceList();
+    }
   }
 
   static String _formatKokoroVoiceName(String style) {
@@ -1265,6 +1728,42 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   ),
                 ),
               ),
+              if (_tts.elevenLabsVoiceId.isNotEmpty &&
+                  _tts.elevenLabsApiKey.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 28,
+                  child: TextButton.icon(
+                    onPressed: _playElevenLabsPreview,
+                    icon: _elevenLabsPreviewPlaying
+                        ? SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 1.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  AppColors.accent),
+                            ),
+                          )
+                        : Icon(Icons.play_arrow_rounded,
+                            size: 14, color: AppColors.accent),
+                    label: Text(
+                        _elevenLabsPreviewPlaying ? 'Stop' : 'Preview',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.accent)),
+                    style: TextButton.styleFrom(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        side: BorderSide(
+                            color:
+                                AppColors.accent.withValues(alpha: 0.3)),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ],
@@ -1541,6 +2040,344 @@ class _AgentCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ───── Pocket TTS Voice Upload Dialog ─────
+
+class _PocketVoiceUploadDialog extends StatefulWidget {
+  const _PocketVoiceUploadDialog();
+
+  @override
+  State<_PocketVoiceUploadDialog> createState() =>
+      _PocketVoiceUploadDialogState();
+}
+
+class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
+  final _nameCtrl = TextEditingController();
+  String? _filePath;
+  String? _fileName;
+  String? _accent;
+  String? _gender;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['wav', 'mp3', 'm4a', 'ogg', 'flac', 'aac'],
+    );
+    if (result == null || result.files.single.path == null) return;
+    final path = result.files.single.path!;
+    final duration = await PocketTtsService.getAudioDurationSeconds(path);
+    if (!mounted) return;
+    if (duration > 30) {
+      setState(
+          () => _error = 'File too long — voice sample must be 30 seconds or less');
+      return;
+    }
+    setState(() {
+      _filePath = path;
+      _fileName = p.basename(path);
+      _error = null;
+    });
+  }
+
+  Future<void> _submit() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Please enter a voice name');
+      return;
+    }
+    if (_filePath == null) {
+      setState(() => _error = 'Please select an audio file');
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+
+    try {
+      await PocketTtsVoiceDb.addUserVoice(
+        name: name,
+        audioPath: _filePath!,
+        accent: _accent,
+        gender: _gender,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                    ),
+                    child: Icon(Icons.record_voice_over_rounded,
+                        size: 18, color: AppColors.accent),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Add Voice',
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary)),
+                        const SizedBox(height: 2),
+                        Text('Upload an audio sample for voice cloning',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textTertiary)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              TextField(
+                controller: _nameCtrl,
+                autocorrect: false,
+                style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  hintText: 'Voice name',
+                  hintStyle: TextStyle(
+                      fontSize: 13, color: AppColors.textTertiary),
+                  filled: true,
+                  fillColor: AppColors.card,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(
+                        color: AppColors.border.withValues(alpha: 0.5),
+                        width: 0.5),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: AppColors.accent, width: 1),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMiniDropdown<String>(
+                      'Accent',
+                      _accent,
+                      const {
+                        'American': 'American',
+                        'British': 'British',
+                        'UK': 'UK',
+                        'Australian': 'Australian',
+                        'Spanish': 'Spanish',
+                        'Other': 'Other',
+                      },
+                      (v) => setState(() => _accent = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildMiniDropdown<String>(
+                      'Gender',
+                      _gender,
+                      const {
+                        'Female': 'Female',
+                        'Male': 'Male',
+                        'Other': 'Other',
+                      },
+                      (v) => setState(() => _gender = v),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              HoverButton(
+                onTap: _pickFile,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: _filePath != null
+                            ? AppColors.accent.withValues(alpha: 0.3)
+                            : AppColors.border.withValues(alpha: 0.5),
+                        width: _filePath != null ? 1 : 0.5),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        _filePath != null
+                            ? Icons.audio_file_rounded
+                            : Icons.file_upload_outlined,
+                        size: 28,
+                        color: _filePath != null
+                            ? AppColors.accent
+                            : AppColors.textTertiary,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _fileName ?? 'Click to select audio file',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _filePath != null
+                              ? AppColors.textPrimary
+                              : AppColors.textTertiary,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (_filePath == null) ...[
+                        const SizedBox(height: 4),
+                        Text('WAV, MP3, M4A, OGG, FLAC, AAC — max 30s',
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textTertiary)),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.red.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: AppColors.red.withValues(alpha: 0.2),
+                        width: 0.5),
+                  ),
+                  child: Text(_error!,
+                      style: TextStyle(fontSize: 12, color: AppColors.red)),
+                ),
+              ],
+
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => Navigator.of(context).pop(false),
+                    child: Text('Cancel',
+                        style: TextStyle(
+                            fontSize: 13, color: AppColors.textTertiary)),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 36,
+                    child: ElevatedButton(
+                      onPressed:
+                          _submitting || _filePath == null ? null : _submit,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        foregroundColor: AppColors.crtBlack,
+                        disabledBackgroundColor:
+                            AppColors.accent.withValues(alpha: 0.3),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 20),
+                      ),
+                      child: _submitting
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    AppColors.crtBlack),
+                              ),
+                            )
+                          : const Text('Add Voice',
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniDropdown<T>(
+      String hint, T? value, Map<T, String> options, ValueChanged<T?> onChanged) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+      ),
+      child: DropdownButton<T>(
+        value: value,
+        hint: Text(hint,
+            style:
+                TextStyle(fontSize: 12, color: AppColors.textTertiary)),
+        isExpanded: true,
+        underline: const SizedBox.shrink(),
+        dropdownColor: AppColors.card,
+        style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
+        icon: Icon(Icons.unfold_more_rounded,
+            size: 14, color: AppColors.textTertiary),
+        items: options.entries
+            .map((e) => DropdownMenuItem<T>(
+                  value: e.key,
+                  child: Text(e.value),
+                ))
+            .toList(),
+        onChanged: onChanged,
+      ),
     );
   }
 }

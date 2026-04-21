@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
 import '../agent_service.dart';
 import '../comfort_noise_service.dart';
+import '../db/pocket_tts_voice_db.dart';
 import '../elevenlabs_api_service.dart';
 import '../job_function_service.dart';
 import '../kokoro_tts_service.dart';
@@ -44,6 +45,10 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   // Kokoro voice selection
   String? _selectedKokoroVoice;
 
+  // Pocket TTS voice selection
+  List<PocketTtsVoice> _pocketVoiceList = [];
+  int? _selectedPocketVoiceId;
+
   // Mute policy override (null = use global, 0 = autoToggle, 1 = stayMuted)
   int? _mutePolicyOverride;
 
@@ -66,6 +71,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       _whisperByDefault = _existing!.whisperByDefault;
       _selectedVoiceId = _existing!.elevenLabsVoiceId;
       _selectedKokoroVoice = _existing!.kokoroVoiceStyle;
+      _selectedPocketVoiceId = _existing!.pocketTtsVoiceId;
       _mutePolicyOverride = _existing!.mutePolicyOverride;
       _comfortNoisePath = _existing!.comfortNoisePath;
       _speakers = _existing!.speakers
@@ -104,6 +110,16 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
         tts.elevenLabsApiKey.isNotEmpty) {
       _fetchVoiceList(tts.elevenLabsApiKey);
     }
+    if (tts.provider == TtsProvider.pocketTts) {
+      _fetchPocketVoiceList();
+    }
+  }
+
+  Future<void> _fetchPocketVoiceList() async {
+    try {
+      final voices = await PocketTtsVoiceDb.listVoices();
+      if (mounted) setState(() => _pocketVoiceList = voices);
+    } catch (_) {}
   }
 
   Future<void> _fetchVoiceList(String apiKey) async {
@@ -172,6 +188,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       whisperByDefault: _whisperByDefault,
       elevenLabsVoiceId: _selectedVoiceId,
       kokoroVoiceStyle: _selectedKokoroVoice,
+      pocketTtsVoiceId: _selectedPocketVoiceId,
       mutePolicyOverride: _mutePolicyOverride,
       comfortNoisePath: _comfortNoisePath,
       createdAt: _existing?.createdAt,
@@ -355,6 +372,11 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                             _ttsConfig!.provider == TtsProvider.kokoro) ...[
                           const SizedBox(height: 14),
                           _buildKokoroVoiceSelector(),
+                        ],
+                        if (_ttsConfig != null &&
+                            _ttsConfig!.provider == TtsProvider.pocketTts) ...[
+                          const SizedBox(height: 14),
+                          _buildPocketTtsVoiceSelector(),
                         ],
                         const SizedBox(height: 14),
                         _buildSpeakersSection(),
@@ -849,6 +871,61 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
         const SizedBox(height: 4),
         Text(
           'Override the Kokoro voice for this job function. '
+          'Leave as default to use the voice from settings.',
+          style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPocketTtsVoiceSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('Pocket TTS Voice'),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+          ),
+          child: DropdownButton<int>(
+            value: _selectedPocketVoiceId != null &&
+                    _pocketVoiceList.any((v) => v.id == _selectedPocketVoiceId)
+                ? _selectedPocketVoiceId
+                : null,
+            hint: Text('Default (from settings)',
+                style: TextStyle(
+                    fontSize: 12, color: AppColors.textTertiary)),
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            dropdownColor: AppColors.surface,
+            style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
+            icon: Icon(Icons.unfold_more_rounded,
+                size: 14, color: AppColors.textTertiary),
+            items: [
+              DropdownMenuItem<int>(
+                value: null,
+                child: Text('Default (from settings)',
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.textTertiary)),
+              ),
+              ..._pocketVoiceList.map((v) => DropdownMenuItem<int>(
+                    value: v.id,
+                    child: Text(
+                      '${v.name}${v.subtitle.isNotEmpty ? '  ${v.subtitle}' : ''}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  )),
+            ],
+            onChanged: (v) => setState(() => _selectedPocketVoiceId = v),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Override the Pocket TTS voice for this job function. '
           'Leave as default to use the voice from settings.',
           style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
         ),

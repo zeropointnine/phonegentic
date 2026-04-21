@@ -14,7 +14,7 @@ import '../messaging/messaging_service.dart';
 import '../models/calendar_event.dart';
 import '../theme_provider.dart';
 
-enum _CalendarView { week, month }
+enum _CalendarView { day, week, month }
 
 class CalendarPanel extends StatefulWidget {
   const CalendarPanel({super.key});
@@ -27,12 +27,172 @@ class _CalendarPanelState extends State<CalendarPanel> {
   _CalendarView _view = _CalendarView.week;
   late DateTime _focusDate;
   List<CalendarEvent> _events = [];
+  String _searchQuery = '';
+  final Set<EventSource> _hiddenSources = {};
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  final LayerLink _searchLayerLink = LayerLink();
+  OverlayEntry? _searchOverlay;
+
+  List<CalendarEvent> _searchResults = [];
+  bool get _isSearching => _searchQuery.isNotEmpty;
+
+  List<CalendarEvent> get _filteredEvents {
+    final source = _isSearching ? _searchResults : _events;
+    var result = source;
+    if (_hiddenSources.isNotEmpty) {
+      result = result
+          .where((e) => !_hiddenSources.contains(e.source))
+          .toList();
+    }
+    return result;
+  }
+
+  static bool _eventMatchesQuery(CalendarEvent e, String q) {
+    return e.title.toLowerCase().contains(q) ||
+        (e.inviteeName?.toLowerCase().contains(q) ?? false) ||
+        (e.inviteeEmail?.toLowerCase().contains(q) ?? false) ||
+        (e.description?.toLowerCase().contains(q) ?? false) ||
+        (e.location?.toLowerCase().contains(q) ?? false) ||
+        (e.eventType?.toLowerCase().contains(q) ?? false);
+  }
+
+  Future<void> _onSearchChanged(String value) async {
+    setState(() => _searchQuery = value);
+    if (value.isEmpty) {
+      setState(() => _searchResults = []);
+      _removeSearchOverlay();
+      return;
+    }
+    final q = value.toLowerCase();
+    final all = await CallHistoryDb.getAllCalendarEvents();
+    final matches = all.where((e) => _eventMatchesQuery(e, q)).toList();
+    if (mounted) {
+      setState(() => _searchResults = matches);
+      _showSearchOverlay();
+    }
+  }
+
+  void _showSearchOverlay() {
+    _removeSearchOverlay();
+    if (_searchResults.isEmpty && _searchQuery.isEmpty) return;
+
+    _searchOverlay = OverlayEntry(builder: (context) {
+      final results = _filteredEvents;
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _dismissSearch,
+        child: Stack(
+          children: [
+            CompositedTransformFollower(
+              link: _searchLayerLink,
+              showWhenUnlinked: false,
+              offset: const Offset(0, 38),
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  constraints: const BoxConstraints(
+                      maxHeight: 320, maxWidth: 400),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.6),
+                      width: 0.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.25),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: results.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 20, horizontal: 16),
+                            child: Text(
+                              'No events found',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textTertiary,
+                              ),
+                            ),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            itemCount: results.length,
+                            separatorBuilder: (_, __) => Divider(
+                              height: 1,
+                              color:
+                                  AppColors.border.withValues(alpha: 0.25),
+                            ),
+                            itemBuilder: (context, index) {
+                              final event = results[index];
+                              final stateContext = this.context;
+                              return _SearchResultRow(
+                                event: event,
+                                onTap: () {
+                                  _navigateToEvent(event);
+                                  _dismissSearch();
+                                  _showEditEventDialog(
+                                      stateContext, event);
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+
+    Overlay.of(context).insert(_searchOverlay!);
+  }
+
+  void _removeSearchOverlay() {
+    _searchOverlay?.remove();
+    _searchOverlay = null;
+  }
+
+  void _dismissSearch() {
+    _searchController.clear();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _searchQuery = '';
+      _searchResults = [];
+    });
+    _removeSearchOverlay();
+  }
+
+  void _navigateToEvent(CalendarEvent event) {
+    final day = event.startTime.toLocal();
+    setState(() {
+      _focusDate = DateTime(day.year, day.month, day.day);
+    });
+    _loadEvents();
+  }
 
   @override
   void initState() {
     super.initState();
     _focusDate = DateTime.now();
     _syncAndLoad();
+  }
+
+  @override
+  void dispose() {
+    _removeSearchOverlay();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _syncAndLoad() async {
@@ -49,24 +209,39 @@ class _CalendarPanelState extends State<CalendarPanel> {
   }
 
   List<DateTime> get _currentRange {
-    if (_view == _CalendarView.week) {
-      final weekStart =
-          _focusDate.subtract(Duration(days: _focusDate.weekday % 7));
-      final start = DateTime.utc(weekStart.year, weekStart.month, weekStart.day);
-      return [start, start.add(const Duration(days: 7))];
-    } else {
-      final start = DateTime.utc(_focusDate.year, _focusDate.month, 1);
-      return [start, DateTime.utc(_focusDate.year, _focusDate.month + 1, 1)];
+    switch (_view) {
+      case _CalendarView.day:
+        final start = DateTime.utc(
+            _focusDate.year, _focusDate.month, _focusDate.day);
+        return [start, start.add(const Duration(days: 1))];
+      case _CalendarView.week:
+        final weekStart =
+            _focusDate.subtract(Duration(days: _focusDate.weekday % 7));
+        final start =
+            DateTime.utc(weekStart.year, weekStart.month, weekStart.day);
+        return [start, start.add(const Duration(days: 7))];
+      case _CalendarView.month:
+        final start = DateTime.utc(_focusDate.year, _focusDate.month, 1);
+        return [
+          start,
+          DateTime.utc(_focusDate.year, _focusDate.month + 1, 1)
+        ];
     }
   }
 
   void _navigate(int delta) {
     setState(() {
-      if (_view == _CalendarView.week) {
-        _focusDate = _focusDate.add(Duration(days: 7 * delta));
-      } else {
-        _focusDate =
-            DateTime(_focusDate.year, _focusDate.month + delta, 1);
+      switch (_view) {
+        case _CalendarView.day:
+          _focusDate = _focusDate.add(Duration(days: delta));
+          break;
+        case _CalendarView.week:
+          _focusDate = _focusDate.add(Duration(days: 7 * delta));
+          break;
+        case _CalendarView.month:
+          _focusDate =
+              DateTime(_focusDate.year, _focusDate.month + delta, 1);
+          break;
       }
     });
     _loadEvents();
@@ -80,7 +255,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
   void _goToDay(DateTime day) {
     setState(() {
       _focusDate = day;
-      _view = _CalendarView.week;
+      _view = _CalendarView.day;
     });
     _loadEvents();
   }
@@ -101,22 +276,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
             if (!hasAnyIntegration && _events.isEmpty)
               _SetupGuidanceCard(onClose: () => setState(() {}))
             else
-              Expanded(
-                child: _view == _CalendarView.week
-                    ? _WeekView(
-                        focusDate: _focusDate,
-                        events: _events,
-                        onEventTap: (e) => _showEditEventDialog(context, e),
-                        onAddEvent: (day) => _showNewEventDialog(context, day),
-                      )
-                    : _MonthView(
-                        focusDate: _focusDate,
-                        events: _events,
-                        onDayTap: _goToDay,
-                        onEventTap: (e) => _showEditEventDialog(context, e),
-                        onAddEvent: (day) => _showNewEventDialog(context, day),
-                      ),
-              ),
+              Expanded(child: _buildCalendarBody(context)),
           ],
         ),
       ),
@@ -124,9 +284,18 @@ class _CalendarPanelState extends State<CalendarPanel> {
   }
 
   Widget _buildHeader(CalendarSyncService sync) {
-    final title = _view == _CalendarView.week
-        ? _weekTitle()
-        : DateFormat.yMMMM().format(_focusDate);
+    String title;
+    switch (_view) {
+      case _CalendarView.day:
+        title = DateFormat.yMMMMEEEEd().format(_focusDate);
+        break;
+      case _CalendarView.week:
+        title = _weekTitle();
+        break;
+      case _CalendarView.month:
+        title = DateFormat.yMMMM().format(_focusDate);
+        break;
+    }
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 28, 8, 12),
@@ -141,7 +310,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
               size: 18, color: AppColors.accent),
           const SizedBox(width: 8),
           Text(
-            'Calendar',
+            title,
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
@@ -151,16 +320,49 @@ class _CalendarPanelState extends State<CalendarPanel> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textSecondary,
-                letterSpacing: -0.2,
+            child: CompositedTransformTarget(
+              link: _searchLayerLink,
+              child: Container(
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.4),
+                      width: 0.5),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  onChanged: _onSearchChanged,
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    hintText: 'Search...',
+                    hintStyle: TextStyle(
+                        fontSize: 13, color: AppColors.textTertiary),
+                    prefixIcon: Icon(Icons.search_rounded,
+                        size: 16, color: AppColors.textTertiary),
+                    prefixIconConstraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 0),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? GestureDetector(
+                            onTap: _dismissSearch,
+                            child: Icon(Icons.close_rounded,
+                                size: 15, color: AppColors.textTertiary),
+                          )
+                        : null,
+                    suffixIconConstraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 0),
+                    border: InputBorder.none,
+                    contentPadding:
+                        const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
               ),
             ),
           ),
+          const SizedBox(width: 8),
           _navButton(Icons.chevron_left_rounded, () => _navigate(-1)),
           const SizedBox(width: 2),
           _navButton(Icons.today_rounded, () {
@@ -169,32 +371,19 @@ class _CalendarPanelState extends State<CalendarPanel> {
           }),
           const SizedBox(width: 2),
           _navButton(Icons.chevron_right_rounded, () => _navigate(1)),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           HoverButton(
             onTap: () => _showNewEventDialog(context, _focusDate),
             borderRadius: BorderRadius.circular(8),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              width: 30,
+              height: 30,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: AppColors.accent,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.add_rounded, size: 14, color: AppColors.onAccent),
-                  const SizedBox(width: 4),
-                  Text(
-                    'New Event',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.onAccent,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                ],
-              ),
+              child: Icon(Icons.add_rounded,
+                  size: 16, color: AppColors.onAccent),
             ),
           ),
           const SizedBox(width: 4),
@@ -238,62 +427,155 @@ class _CalendarPanelState extends State<CalendarPanel> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          _viewChip('Week', _CalendarView.week),
-          const SizedBox(width: 8),
-          _viewChip('Month', _CalendarView.month),
+          _buildSegmentedControl(),
           const Spacer(),
           for (final source in EventSource.values) ...[
-            Container(
-              width: 20,
-              height: 12,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(3),
-                color: AppColors.colorForSource(source),
-              ),
-            ),
+            _sourceToggle(source),
             const SizedBox(width: 6),
-            Text(
-              AppColors.labelForSource(source),
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textSecondary,
-              ),
-            ),
-            const SizedBox(width: 14),
           ],
         ],
       ),
     );
   }
 
-  Widget _viewChip(String label, _CalendarView v) {
+  Widget _buildSegmentedControl() {
+    const views = _CalendarView.values;
+    const labels = {'day': 'Day', 'week': 'Week', 'month': 'Month'};
+    return Container(
+      height: 28,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        color: AppColors.card,
+        border: Border.all(
+          color: AppColors.border.withValues(alpha: 0.5),
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < views.length; i++) ...[
+            _segmentButton(labels[views[i].name]!, views[i]),
+            if (i < views.length - 1)
+              Container(
+                width: 0.5,
+                height: 16,
+                color: AppColors.border.withValues(alpha: 0.4),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _segmentButton(String label, _CalendarView v) {
     final selected = _view == v;
-    return HoverButton(
+    return GestureDetector(
       onTap: () => _switchView(v),
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? AppColors.accent : AppColors.card,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: selected
-                ? AppColors.accent
-                : AppColors.border.withValues(alpha: 0.5),
-            width: 0.5,
-          ),
+          borderRadius: BorderRadius.circular(5),
+          color: selected ? AppColors.accent : Colors.transparent,
         ),
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: FontWeight.w600,
             color: selected ? AppColors.onAccent : AppColors.textSecondary,
+            letterSpacing: -0.1,
           ),
         ),
       ),
     );
+  }
+
+  Widget _sourceToggle(EventSource source) {
+    final active = !_hiddenSources.contains(source);
+    final color = AppColors.colorForSource(source);
+
+    return HoverButton(
+      onTap: () {
+        setState(() {
+          if (active) {
+            _hiddenSources.add(source);
+          } else {
+            _hiddenSources.remove(source);
+          }
+        });
+      },
+      borderRadius: BorderRadius.circular(6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: active ? color.withValues(alpha: 0.15) : AppColors.card,
+          border: Border.all(
+            color: active
+                ? color.withValues(alpha: 0.4)
+                : AppColors.border.withValues(alpha: 0.3),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: active
+                    ? color
+                    : AppColors.textTertiary.withValues(alpha: 0.3),
+              ),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              AppColors.labelForSource(source),
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: active
+                    ? AppColors.textSecondary
+                    : AppColors.textTertiary.withValues(alpha: 0.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalendarBody(BuildContext context) {
+    switch (_view) {
+      case _CalendarView.day:
+        return _DayView(
+          focusDate: _focusDate,
+          events: _filteredEvents,
+          onEventTap: (e) => _showEditEventDialog(context, e),
+          onAddEvent: (day) => _showNewEventDialog(context, day),
+        );
+      case _CalendarView.week:
+        return _WeekView(
+          focusDate: _focusDate,
+          events: _filteredEvents,
+          onEventTap: (e) => _showEditEventDialog(context, e),
+          onAddEvent: (day) => _showNewEventDialog(context, day),
+        );
+      case _CalendarView.month:
+        return _MonthView(
+          focusDate: _focusDate,
+          events: _filteredEvents,
+          onDayTap: _goToDay,
+          onEventTap: (e) => _showEditEventDialog(context, e),
+          onAddEvent: (day) => _showNewEventDialog(context, day),
+        );
+    }
   }
 
   String _weekTitle() {
@@ -332,6 +614,102 @@ class _CalendarPanelState extends State<CalendarPanel> {
         onSaved: () => _loadEvents(),
         onDeleted: () => _loadEvents(),
         parentContext: parentContext,
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Search result row (used in the overlay dropdown)
+// ---------------------------------------------------------------------------
+
+class _SearchResultRow extends StatefulWidget {
+  final CalendarEvent event;
+  final VoidCallback onTap;
+
+  const _SearchResultRow({required this.event, required this.onTap});
+
+  @override
+  State<_SearchResultRow> createState() => _SearchResultRowState();
+}
+
+class _SearchResultRowState extends State<_SearchResultRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final event = widget.event;
+    final sourceColor = AppColors.colorForSource(event.source);
+    final localStart = event.startTime.toLocal();
+    final dateStr = DateFormat.MMMd().format(localStart);
+    final timeStr = DateFormat.jm().format(localStart);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          color: _hovered
+              ? AppColors.accent.withValues(alpha: 0.08)
+              : Colors.transparent,
+          child: Row(
+            children: [
+              Container(
+                width: 3,
+                height: 28,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(1.5),
+                  color: sourceColor,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      event.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      '$dateStr \u00B7 $timeStr',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textTertiary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (event.inviteeName != null && event.inviteeName!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Text(
+                    event.inviteeName!,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 4),
+              Icon(Icons.arrow_forward_ios_rounded,
+                  size: 10, color: AppColors.textTertiary),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -604,8 +982,8 @@ class _DayHeaderState extends State<_DayHeader> {
                       opacity: _isHovered ? 1.0 : 0.0,
                       duration: const Duration(milliseconds: 150),
                       child: Container(
-                        width: 18,
-                        height: 18,
+                        width: 22,
+                        height: 22,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: AppColors.accent,
@@ -618,7 +996,7 @@ class _DayHeaderState extends State<_DayHeader> {
                         ),
                         child: Icon(
                           Icons.add_rounded,
-                          size: 12,
+                          size: 14,
                           color: AppColors.onAccent,
                         ),
                       ),
@@ -908,6 +1286,165 @@ class _SmsQuickButton extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Day View (single-day time grid, mirrors _WeekView but for one day)
+// ---------------------------------------------------------------------------
+
+class _DayView extends StatefulWidget {
+  final DateTime focusDate;
+  final List<CalendarEvent> events;
+  final ValueChanged<CalendarEvent> onEventTap;
+  final ValueChanged<DateTime> onAddEvent;
+
+  const _DayView({
+    required this.focusDate,
+    required this.events,
+    required this.onEventTap,
+    required this.onAddEvent,
+  });
+
+  @override
+  State<_DayView> createState() => _DayViewState();
+}
+
+class _DayViewState extends State<_DayView> {
+  static const _startHour = 0;
+  static const _endHour = 23;
+  static const _hourHeight = 52.0;
+
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToNow());
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToNow() {
+    final now = DateTime.now();
+    final targetHour = (now.hour - 1).clamp(_startHour, _endHour);
+    final offset = (targetHour - _startHour) * _hourHeight;
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(
+        offset.clamp(0, _scrollController.position.maxScrollExtent),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final isToday = widget.focusDate.year == now.year &&
+        widget.focusDate.month == now.month &&
+        widget.focusDate.day == now.day;
+    final dayEvents = widget.events.where((e) {
+      final s = e.startTime.toLocal();
+      return s.year == widget.focusDate.year &&
+          s.month == widget.focusDate.month &&
+          s.day == widget.focusDate.day;
+    }).toList();
+
+    return Column(
+      children: [
+        Container(
+          height: 44,
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            border: Border(
+              bottom: BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+            ),
+          ),
+          child: Center(
+            child: Text(
+              DateFormat.EEEE().format(widget.focusDate),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isToday
+                    ? AppColors.accent
+                    : AppColors.textSecondary,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      right: BorderSide(
+                          color: AppColors.border.withValues(alpha: 0.6),
+                          width: 0.5),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      for (var h = _startHour; h <= _endHour; h++)
+                        SizedBox(
+                          height: _hourHeight,
+                          child: Align(
+                            alignment: Alignment.topRight,
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.only(right: 6, top: 0),
+                              child: Text(
+                                _formatHour(h),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.accent,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _DayColumn(
+                    day: widget.focusDate,
+                    events: dayEvents,
+                    startHour: _startHour,
+                    endHour: _endHour,
+                    hourHeight: _hourHeight,
+                    isToday: isToday,
+                    now: now,
+                    onEventTap: widget.onEventTap,
+                    onAddEvent: widget.onAddEvent,
+                    showRightBorder: false,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatHour(int h) {
+    if (h == 0 || h == 24) return '12a';
+    if (h < 12) return '${h}a';
+    if (h == 12) return '12p';
+    return '${h - 12}p';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Month View
 // ---------------------------------------------------------------------------
 
@@ -929,11 +1466,17 @@ class _MonthView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final firstOfMonth = DateTime(focusDate.year, focusDate.month, 1);
-    final startWeekday = firstOfMonth.weekday % 7;
+    final startWeekday = firstOfMonth.weekday % 7; // 0 = Sun
     final daysInMonth =
         DateTime(focusDate.year, focusDate.month + 1, 0).day;
     final now = DateTime.now();
-    final dayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    final prevMonthDays =
+        DateTime(focusDate.year, focusDate.month, 0).day;
+    final totalCells = startWeekday + daysInMonth;
+    final rowCount = ((totalCells + 6) ~/ 7);
+    final gridCells = rowCount * 7;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -941,18 +1484,20 @@ class _MonthView extends StatelessWidget {
         children: [
           Container(
             decoration: BoxDecoration(
-              color: AppColors.surface,
               border: Border(
                 bottom: BorderSide(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5),
+                    width: 0.5),
               ),
             ),
             child: Row(
               children: dayLabels
                   .map((d) => Expanded(
-                        child: Center(
+                        child: Align(
+                          alignment: Alignment.centerRight,
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            padding: const EdgeInsets.only(
+                                top: 6, bottom: 6, right: 6),
                             child: Text(
                               d,
                               style: TextStyle(
@@ -971,16 +1516,33 @@ class _MonthView extends StatelessWidget {
           Expanded(
             child: GridView.builder(
               physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 7,
                 childAspectRatio: 1.05,
               ),
-              itemCount: startWeekday + daysInMonth,
+              itemCount: gridCells,
               itemBuilder: (context, index) {
-                if (index < startWeekday) return const SizedBox.shrink();
-                final dayNum = index - startWeekday + 1;
-                final day = DateTime(
-                    focusDate.year, focusDate.month, dayNum);
+                final int dayNum;
+                final bool isCurrentMonth;
+                final DateTime day;
+
+                if (index < startWeekday) {
+                  dayNum = prevMonthDays - startWeekday + index + 1;
+                  day = DateTime(
+                      focusDate.year, focusDate.month - 1, dayNum);
+                  isCurrentMonth = false;
+                } else if (index >= startWeekday + daysInMonth) {
+                  dayNum = index - startWeekday - daysInMonth + 1;
+                  day = DateTime(
+                      focusDate.year, focusDate.month + 1, dayNum);
+                  isCurrentMonth = false;
+                } else {
+                  dayNum = index - startWeekday + 1;
+                  day = DateTime(
+                      focusDate.year, focusDate.month, dayNum);
+                  isCurrentMonth = true;
+                }
+
                 final isToday = day.year == now.year &&
                     day.month == now.month &&
                     day.day == now.day;
@@ -991,14 +1553,36 @@ class _MonthView extends StatelessWidget {
                       s.day == day.day;
                 }).toList();
 
-                return _MonthDayCell(
-                  day: day,
-                  dayNum: dayNum,
-                  isToday: isToday,
-                  events: dayEvents,
-                  onTap: () => onDayTap(day),
-                  onEventTap: onEventTap,
-                  onAdd: () => onAddEvent(day),
+                final col = index % 7;
+                final row = index ~/ 7;
+
+                return Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      right: col < 6
+                          ? BorderSide(
+                              color:
+                                  AppColors.border.withValues(alpha: 0.25),
+                              width: 0.5)
+                          : BorderSide.none,
+                      bottom: row < rowCount - 1
+                          ? BorderSide(
+                              color:
+                                  AppColors.border.withValues(alpha: 0.25),
+                              width: 0.5)
+                          : BorderSide.none,
+                    ),
+                  ),
+                  child: _MonthDayCell(
+                    day: day,
+                    dayNum: dayNum,
+                    isToday: isToday,
+                    isCurrentMonth: isCurrentMonth,
+                    events: dayEvents,
+                    onTap: () => onDayTap(day),
+                    onEventTap: onEventTap,
+                    onAdd: () => onAddEvent(day),
+                  ),
                 );
               },
             ),
@@ -1013,6 +1597,7 @@ class _MonthDayCell extends StatefulWidget {
   final DateTime day;
   final int dayNum;
   final bool isToday;
+  final bool isCurrentMonth;
   final List<CalendarEvent> events;
   final VoidCallback onTap;
   final ValueChanged<CalendarEvent> onEventTap;
@@ -1022,6 +1607,7 @@ class _MonthDayCell extends StatefulWidget {
     required this.day,
     required this.dayNum,
     required this.isToday,
+    required this.isCurrentMonth,
     required this.events,
     required this.onTap,
     required this.onEventTap,
@@ -1050,6 +1636,7 @@ class _MonthDayCellState extends State<_MonthDayCell> {
   Widget build(BuildContext context) {
     final visible = widget.events.take(_maxPills).toList();
     final overflow = widget.events.length - _maxPills;
+    final dimmed = !widget.isCurrentMonth;
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -1057,90 +1644,89 @@ class _MonthDayCellState extends State<_MonthDayCell> {
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         onTap: widget.onTap,
-        child: Container(
-          margin: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: widget.isToday
-                ? AppColors.accent.withValues(alpha: 0.12)
-                : Colors.transparent,
-          ),
-          child: Stack(
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2, left: 2, right: 2),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Align(
-                      alignment: Alignment.topCenter,
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2, left: 2, right: 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 4, top: 1),
                       child: Text(
                         '${widget.dayNum}',
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 22,
                           fontWeight: widget.isToday
-                              ? FontWeight.w700
-                              : FontWeight.w500,
+                              ? FontWeight.w600
+                              : FontWeight.w300,
                           color: widget.isToday
                               ? AppColors.accent
-                              : AppColors.textPrimary,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    for (final ev in visible)
-                      _EventPill(
-                        event: ev,
-                        shortTime: _shortTime,
-                        onTap: () => widget.onEventTap(ev),
-                      ),
-                    if (overflow > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 2, top: 1),
-                        child: Text(
-                          '+$overflow more',
-                          style: TextStyle(
-                            fontSize: 7,
-                            color: AppColors.textTertiary,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              if (_hovered)
-                Positioned(
-                  right: 2,
-                  top: 2,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      onTap: widget.onAdd,
-                      child: Container(
-                        width: 16,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppColors.accent,
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.accent.withValues(alpha: 0.4),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                          Icons.add_rounded,
-                          size: 11,
-                          color: AppColors.onAccent,
+                              : dimmed
+                                  ? AppColors.textTertiary
+                                      .withValues(alpha: 0.35)
+                                  : AppColors.textSecondary
+                                      .withValues(alpha: 0.7),
+                          height: 1.1,
                         ),
                       ),
                     ),
                   ),
+                  const SizedBox(height: 1),
+                  for (final ev in visible)
+                    _EventPill(
+                      event: ev,
+                      shortTime: _shortTime,
+                      onTap: () => widget.onEventTap(ev),
+                    ),
+                  if (overflow > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 2, top: 1),
+                      child: Text(
+                        '+$overflow more',
+                        style: TextStyle(
+                          fontSize: 7,
+                          color: AppColors.textTertiary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (_hovered)
+              Positioned(
+                left: 2,
+                top: 3,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: widget.onAdd,
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.accent,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.accent.withValues(alpha: 0.4),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.add_rounded,
+                        size: 14,
+                        color: AppColors.onAccent,
+                      ),
+                    ),
+                  ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
@@ -2896,6 +3482,33 @@ class _EditEventDialogState extends State<_EditEventDialog> {
 
     await CallHistoryDb.updateCalendarEvent(updated, markLocallyModified: true);
 
+    // ── Update or create contact in DB ──
+    if (name.isNotEmpty || phone.isNotEmpty || email.isNotEmpty) {
+      try {
+        final query = name.isNotEmpty ? name : email;
+        final existing = query.isNotEmpty
+            ? await CallHistoryDb.searchContacts(query)
+            : <Map<String, dynamic>>[];
+
+        if (existing.isNotEmpty) {
+          final contactId = existing.first['id'] as int;
+          final updates = <String, dynamic>{};
+          if (phone.isNotEmpty) updates['phone_number'] = phone;
+          if (email.isNotEmpty) updates['email'] = email;
+          if (name.isNotEmpty) updates['display_name'] = name;
+          if (updates.isNotEmpty) {
+            await CallHistoryDb.updateContact(contactId, updates);
+          }
+        } else if (name.isNotEmpty) {
+          await CallHistoryDb.insertContact(
+            displayName: name,
+            phoneNumber: phone,
+            email: email.isEmpty ? null : email,
+          );
+        }
+      } catch (_) {}
+    }
+
     // ── Calendly sync ──
     // For existing Calendly events: cancel the old booking, then re-invite
     // at the new time so the invitee gets notified of the change.
@@ -2951,8 +3564,8 @@ class _EditEventDialogState extends State<_EditEventDialog> {
 
     // ── Google Calendar sync ──
     // Ensure the 'Calendly' calendar exists; create it if missing.
-    // Skip events that already have a googleCalendarEventId (already pushed).
-    if (_syncToGoogle && mounted && evt.googleCalendarEventId == null) {
+    // Push new events or re-push updated ones.
+    if (_syncToGoogle && mounted) {
       try {
         final gcal = widget.parentContext.read<GoogleCalendarService>();
         final dateStr =

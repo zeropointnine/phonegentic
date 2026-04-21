@@ -34,7 +34,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 19,
+        version: 20,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -133,6 +133,7 @@ class CallHistoryDb {
     await _createAgentRemindersTable(db);
     await _createTransferRulesTable(db);
     await _createSessionMessagesTable(db);
+    await _createPocketTtsVoicesTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -259,6 +260,13 @@ class CallHistoryDb {
       await db.execute(
           'ALTER TABLE calendar_events ADD COLUMN locally_modified INTEGER DEFAULT 0');
     }
+
+    if (oldVersion < 20) {
+      await _createPocketTtsVoicesTable(db);
+      await db.execute(
+        'ALTER TABLE job_functions ADD COLUMN pocket_tts_voice_id INTEGER',
+      );
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -274,6 +282,7 @@ class CallHistoryDb {
         whisper_by_default INTEGER NOT NULL DEFAULT 0,
         elevenlabs_voice_id TEXT,
         kokoro_voice_style TEXT,
+        pocket_tts_voice_id INTEGER,
         mute_policy_override INTEGER,
         comfort_noise_path TEXT,
         created_at TEXT NOT NULL,
@@ -1595,6 +1604,21 @@ class CallHistoryDb {
     ''');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sm_ts ON session_messages(timestamp)');
+  }
+
+  static Future<void> _createPocketTtsVoicesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pocket_tts_voices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        accent TEXT,
+        gender TEXT,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        audio_path TEXT,
+        embedding BLOB,
+        created_at TEXT NOT NULL
+      )
+    ''');
   }
 
   static Future<void> insertSessionMessage(Map<String, dynamic> row) async {

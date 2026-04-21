@@ -853,6 +853,9 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                 }
             }
 
+            // In direct mode all audio is from the mic — always "host".
+            dominantSpeaker = "host"
+
             diagCounter += 1
             if diagCounter <= 5 || diagCounter % 500 == 1 {
                 NSLog("[AudioTap] flush: mode=direct bytes=%d sink=%@ playing=%@",

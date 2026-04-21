@@ -64,6 +64,12 @@ flutter:
     - assets/80s_telephone_ring_3-1776301545127.wav
     - assets/old_fashioned_paypho_2-1776301537305.wav
     - assets/phone_plus.svg
+    - assets/voices/reassuring_raj_indian_male.wav
+    - assets/voices/super_scott_american_male.wav
+    - assets/voices/Happy_Jose_spanish_male.wav
+    - assets/voices/Likable_Lacy_american_female.wav
+    - assets/voices/queen_anne_british_female.wav
+    - assets/voices/handly_harold.wav
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware.
   # For details regarding adding assets from package dependencies, see

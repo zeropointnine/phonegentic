@@ -136,7 +136,6 @@ extension CallPhaseX on CallPhase {
   }
 }
 
-
 class Speaker {
   final String role;
   final String source;
@@ -159,6 +158,7 @@ class AgentBootContext {
   final bool textOnly;
   final String? elevenLabsVoiceId;
   final String? kokoroVoiceStyle;
+  final int? pocketTtsVoiceId;
   final String defaultCountryCode;
   final String? comfortNoisePath;
 
@@ -171,6 +171,7 @@ class AgentBootContext {
     this.textOnly = false,
     this.elevenLabsVoiceId,
     this.kokoroVoiceStyle,
+    this.pocketTtsVoiceId,
     this.defaultCountryCode = '1',
     this.comfortNoisePath,
   });
@@ -382,8 +383,7 @@ class AgentBootContext {
         'talking. Only act on clear, unambiguous commands to end the call.');
     buf.writeln(
         '- When the call ends, stop ALL interaction IMMEDIATELY. Produce absolutely no text or audio after [CALL_STATE: Ended]. No summary, no farewell, no offer to help. NOTHING.');
-    buf.writeln(
-        '### IVR / Automated Phone Menu Navigation');
+    buf.writeln('### IVR / Automated Phone Menu Navigation');
     buf.writeln(
         '- If you hear an IVR menu (e.g. "press 1 for sales, press 2 for support", "for billing press 3", "dial by name directory"), you MUST navigate it automatically using the `send_dtmf` tool.');
     buf.writeln(
@@ -414,8 +414,7 @@ class AgentBootContext {
         '- If you recognise the caller (from contact info in CALL_STATE), you may greet them by name — but still let them state their purpose before diving into your agenda.');
     buf.writeln();
     buf.writeln('### Conference Calling Rules');
-    buf.writeln(
-        '- NEVER initiate a conference call on your own initiative. '
+    buf.writeln('- NEVER initiate a conference call on your own initiative. '
         'Conference calling (add_conference_participant, hold_call for '
         'conferencing, merge_conference) requires an EXPLICIT, CLEAR '
         'request from the HOST — e.g. "Conference in Patrick", "Add Lee '
@@ -467,15 +466,12 @@ class AgentBootContext {
           'You are in VOICE mode. Everything you write is converted to speech '
           '(text-to-speech) and spoken aloud in real time. Both the host and '
           'the remote party hear your voice on the call.');
-      buf.writeln(
-          'You also "hear" the call — microphone and remote audio are '
+      buf.writeln('You also "hear" the call — microphone and remote audio are '
           'transcribed to text and delivered to you as speaker-labeled '
           'transcripts ([Host]: ..., [Remote Party 1]: ...). This is your '
           'hearing. Respond naturally as a live participant in the conversation.');
-      buf.writeln(
-          'Because your output is spoken, write the way people talk:');
-      buf.writeln(
-          '- Use natural, conversational phrasing — not bullet points, '
+      buf.writeln('Because your output is spoken, write the way people talk:');
+      buf.writeln('- Use natural, conversational phrasing — not bullet points, '
           'markdown, numbered lists, or structured formatting.');
       buf.writeln(
           '- Avoid special characters, URLs, code blocks, or anything that '
@@ -511,8 +507,7 @@ class AgentBootContext {
           'force — like raising your voice or stressing a point. Example: '
           '"I {emphasis}told{/emphasis} you it would work!" or '
           '"That is {emphasis}not{/emphasis} okay."');
-      buf.writeln(
-          'Use this for natural vocal stress, not for yelling entire '
+      buf.writeln('Use this for natural vocal stress, not for yelling entire '
           'sentences. Emphasize one or two KEY words, not everything.');
       buf.writeln();
       buf.writeln('### Usage rules');
@@ -529,8 +524,7 @@ class AgentBootContext {
       buf.writeln(
           '- NEVER stack multiple expressions together like "{laugh} {wow}". '
           'Pick the single most fitting one.');
-      buf.writeln(
-          '- NEVER use expressions as a substitute for words. They '
+      buf.writeln('- NEVER use expressions as a substitute for words. They '
           'complement your speech, they don\'t replace it.');
       buf.writeln(
           '- When in doubt, skip the expression. Natural conversation has '
@@ -542,8 +536,7 @@ class AgentBootContext {
     buf.writeln(
         'Speaker-labeled transcripts like [Host]: and [Remote Party 1]: '
         'are delivered ONLY by the SYSTEM from real audio. CRITICAL RULES:');
-    buf.writeln(
-        '- NEVER generate, simulate, or fabricate transcript lines. '
+    buf.writeln('- NEVER generate, simulate, or fabricate transcript lines. '
         'Do NOT write "[Remote Party 1]: ..." or "[Host]: ..." in your '
         'output under ANY circumstances. You are the agent — your output '
         'is YOUR speech only.');
@@ -555,8 +548,7 @@ class AgentBootContext {
         '- After initiating a call or greeting someone, say your piece and '
         'then STOP. Do not continue the conversation with yourself. Real '
         'transcripts will arrive when the other party actually speaks.');
-    buf.writeln(
-        '- If no transcripts arrive for a while, remain SILENT. Do not '
+    buf.writeln('- If no transcripts arrive for a while, remain SILENT. Do not '
         'fill the silence with fabricated dialogue or narration.');
     buf.writeln();
 
@@ -697,5 +689,6 @@ class AgentBootContext {
     'Keep questions family-friendly and easy.',
     'Announce scores after each question.',
     'Declare a winner after all 3 questions.',
+    "If somebody answers correctly, award them a point and go directly to the next question",
   ];
 }

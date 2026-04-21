@@ -25,6 +25,7 @@ import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'db/call_history_db.dart';
+import 'db/pocket_tts_voice_db.dart';
 import 'manager_presence_service.dart';
 import 'native_actions_service.dart';
 import 'user_config_service.dart';
@@ -209,6 +210,11 @@ class AgentService extends ChangeNotifier {
     _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
     if (_bootContext.kokoroVoiceStyle != null && _localTts != null) {
       _localTts!.setVoice(_bootContext.kokoroVoiceStyle!);
+    }
+    if (_bootContext.pocketTtsVoiceId != null &&
+        _localTts != null &&
+        _ttsConfig?.provider == TtsProvider.pocketTts) {
+      _applyPocketTtsVoiceOverride(_bootContext.pocketTtsVoiceId!);
     }
     _pushInstructionsIfLive();
     notifyListeners();
@@ -476,6 +482,7 @@ class AgentService extends ChangeNotifier {
   Timer? _ttsGenEndTimer;
   Timer? _playbackSafetyTimer;
   Timer? _vadInterruptDebounce;
+  Timer? _postSpeechThinkingTimer;
   bool _ttsGenerationComplete = false;
 
   /// Consecutive agent responses without any genuine user transcript in between.
@@ -956,6 +963,7 @@ class AgentService extends ChangeNotifier {
             : (_muted ? 'Not Listening...' : 'Listening');
         if (!isSpeaking) {
           _speakingEndTime = DateTime.now();
+          _showPostSpeechThinking();
           _schedulePostSpeakFlush();
           _onTtsGenerationDone();
         }
@@ -1083,8 +1091,17 @@ class AgentService extends ChangeNotifier {
           return;
         }
         await pocket.setVoice(tc.kokoroVoiceStyle);
-        if (tc.pocketTtsVoiceClonePath.isNotEmpty) {
-          final ok = await pocket.cloneVoiceFromFile(tc.pocketTtsVoiceClonePath, 'user_clone');
+
+        // Encode embeddings for any DB voices that don't have them yet.
+        // This runs once per voice — subsequent starts use the cached blob.
+        await _encodeDefaultPocketVoices(pocket);
+
+        // Load voice from DB if a pocketTtsVoiceId is set.
+        final loaded = await _loadPocketTtsVoice(pocket, tc.pocketTtsVoiceId);
+
+        if (!loaded && tc.pocketTtsVoiceClonePath.isNotEmpty) {
+          final ok = await pocket.cloneVoiceFromFile(
+              tc.pocketTtsVoiceClonePath, 'user_clone');
           if (ok) await pocket.setVoice('user_clone');
         }
         await pocket.warmUpSynthesis();
@@ -1124,6 +1141,92 @@ class AgentService extends ChangeNotifier {
     });
 
     debugPrint('[AgentService] Pocket TTS active: voice=${tc.kokoroVoiceStyle}');
+  }
+
+  /// Encode embeddings for DB voices that don't have one yet.
+  /// Runs after PocketTTS init so the voice encoder is available.
+  Future<void> _encodeDefaultPocketVoices(PocketTtsService pocket) async {
+    try {
+      final voices = await PocketTtsVoiceDb.listVoices();
+      for (final v in voices) {
+        if (v.embedding != null && v.embedding!.isNotEmpty) continue;
+        if (v.audioPath == null || v.audioPath!.isEmpty) continue;
+        if (v.id == null) continue;
+
+        debugPrint('[AgentService] Encoding voice "${v.name}" from ${v.audioPath}');
+        final ok = await pocket.cloneVoiceFromFile(v.audioPath!, 'seed_${v.id}');
+        if (ok) {
+          final emb = await pocket.exportVoiceEmbedding('seed_${v.id}');
+          if (emb != null) {
+            await PocketTtsVoiceDb.updateVoiceEmbedding(v.id!, emb);
+            debugPrint('[AgentService] Cached embedding for "${v.name}" '
+                '(${emb.length} bytes)');
+          }
+        } else {
+          debugPrint('[AgentService] Failed to encode "${v.name}" — '
+              'will retry next launch');
+        }
+      }
+    } catch (e) {
+      debugPrint('[AgentService] _encodeDefaultPocketVoices: $e');
+    }
+  }
+
+  /// Load a specific voice from the DB into the PocketTTS engine.
+  /// Returns true if a voice was successfully loaded.
+  Future<bool> _loadPocketTtsVoice(
+      PocketTtsService pocket, int? voiceId) async {
+    if (voiceId == null) return false;
+    final voice = await PocketTtsVoiceDb.getVoice(voiceId);
+    if (voice == null) return false;
+
+    final tag = 'db_voice_${voice.id}';
+
+    if (voice.embedding != null && voice.embedding!.isNotEmpty) {
+      final ok = await pocket.importVoiceEmbedding(tag, voice.embedding!);
+      if (ok) {
+        await pocket.setVoice(tag);
+        debugPrint('[AgentService] Pocket TTS: loaded voice '
+            '"${voice.name}" from cached embedding');
+        return true;
+      }
+    }
+
+    if (voice.audioPath != null && voice.audioPath!.isNotEmpty) {
+      final ok = await pocket.cloneVoiceFromFile(voice.audioPath!, tag);
+      if (ok) {
+        await pocket.setVoice(tag);
+        final emb = await pocket.exportVoiceEmbedding(tag);
+        if (emb != null && voice.id != null) {
+          await PocketTtsVoiceDb.updateVoiceEmbedding(voice.id!, emb);
+        }
+        debugPrint('[AgentService] Pocket TTS: cloned voice '
+            '"${voice.name}" from audio file');
+        return true;
+      }
+    }
+
+    debugPrint('[AgentService] Pocket TTS: failed to load voice '
+        '"${voice.name}" (id=${voice.id})');
+    return false;
+  }
+
+  Future<void> _applyPocketTtsVoiceOverride(int voiceId) async {
+    try {
+      final voice = await PocketTtsVoiceDb.getVoice(voiceId);
+      if (voice == null || _localTts == null) return;
+      final pocket = _localTts as PocketTtsService;
+      final tag = 'db_voice_${voice.id}';
+      if (voice.embedding != null && voice.embedding!.isNotEmpty) {
+        await pocket.importVoiceEmbedding(tag, voice.embedding!);
+      } else if (voice.audioPath != null && voice.audioPath!.isNotEmpty) {
+        await pocket.cloneVoiceFromFile(voice.audioPath!, tag);
+      }
+      await pocket.setVoice(tag);
+      debugPrint('[AgentService] Pocket TTS voice override: "${voice.name}"');
+    } catch (e) {
+      debugPrint('[AgentService] Pocket TTS voice override failed: $e');
+    }
   }
 
   // ── Local STT initialisation ──────────────────────────────────────────────
@@ -2724,25 +2827,38 @@ class AgentService extends ChangeNotifier {
     caseSensitive: false,
   );
 
-  /// Detects repeated-word hallucinations like "Good, good, good" or
-  /// "Perfect, perfect, perfect" — WhisperKit echoes/duplicates words
-  /// when it processes overlapping carry-over buffers or ambient noise.
+  /// Detects repeated-word hallucinations like "Good, good, good",
+  /// "Perfect, perfect, perfect", or numeric loops "1, 2, 3, 1, 2, 3" —
+  /// WhisperKit echoes/duplicates words when it processes overlapping
+  /// carry-over buffers or ambient noise.
   static bool _isRepeatedWordHallucination(String text) {
     final words = text
         .toLowerCase()
         .replaceAll(RegExp(r'[,.\-!?;:]'), '')
         .split(RegExp(r'\s+'))
-        .where((w) => w.length > 1)
+        .where((w) => w.isNotEmpty)
         .toList();
     if (words.length < 3) return false;
     final unique = words.toSet();
-    // If 2 or fewer distinct words make up 3+ total words, it's repetition.
     if (unique.length <= 2 && words.length >= 3) return true;
     // Check for consecutive repetition: same word 3+ times in a row.
     int streak = 1;
     for (int i = 1; i < words.length; i++) {
       streak = words[i] == words[i - 1] ? streak + 1 : 1;
       if (streak >= 3) return true;
+    }
+    // Cyclic repetition: a short period (≤ 4 tokens) repeating 2+ full cycles.
+    // Catches patterns like "1 2 3 1 2 3", "you to you to", etc.
+    for (int period = 1; period <= 4 && period * 2 <= words.length; period++) {
+      int matchCount = 0;
+      for (int i = period; i < words.length; i++) {
+        if (words[i] == words[i % period]) {
+          matchCount++;
+        } else {
+          break;
+        }
+      }
+      if (matchCount >= period * 2) return true;
     }
     return false;
   }
@@ -2861,7 +2977,7 @@ class AgentService extends ChangeNotifier {
         _speaking = false;
         _speakingEndTime = DateTime.now();
         _statusText = _muted ? 'Not Listening...' : 'Listening';
-        notifyListeners();
+        _showPostSpeechThinking();
         _schedulePostSpeakFlush();
       }
       debugPrint('[AgentService] Gen-done UI transition (isTtsPlaying still gated)');
@@ -2890,6 +3006,26 @@ class AgentService extends ChangeNotifier {
     if (spokenMs < 2000) return (_echoGuardMs * 0.25).round().clamp(400, 600);
     if (spokenMs < 4000) return (_echoGuardMs * 0.5).round().clamp(600, 1000);
     return _echoGuardMs;
+  }
+
+  /// Show three-dot thinking indicator after TTS finishes so the user
+  /// knows the agent isn't ready to listen yet (echo guard window).
+  /// Clears automatically after the guard expires.
+  void _showPostSpeechThinking() {
+    _postSpeechThinkingTimer?.cancel();
+    if (!_thinking) {
+      _thinking = true;
+      notifyListeners();
+    }
+    _postSpeechThinkingTimer = Timer(
+      Duration(milliseconds: _effectiveEchoGuardMs),
+      () {
+        if (_thinking && !_speaking) {
+          _thinking = false;
+          notifyListeners();
+        }
+      },
+    );
   }
 
   /// Schedule a flush of buffered transcripts after the echo guard window.
@@ -2926,6 +3062,10 @@ class AgentService extends ChangeNotifier {
       if (_isWhisperHallucination(text)) {
         debugPrint('[AgentService] Buffered hallucination dropped: "$text"');
         continue;
+      }
+      if (!_thinking) {
+        _thinking = true;
+        notifyListeners();
       }
       _processTranscript(event);
     }
@@ -2983,9 +3123,11 @@ class AgentService extends ChangeNotifier {
     _playbackEndDebounce?.cancel();
     _playbackSafetyTimer?.cancel();
     _postSpeakFlushTimer?.cancel();
+    _postSpeechThinkingTimer?.cancel();
     _vadInterruptDebounce?.cancel();
 
     _speaking = false;
+    _thinking = false;
     _speakingEndTime = DateTime.now();
     _statusText = _muted ? 'Not Listening...' : 'Listening';
 
@@ -3035,10 +3177,12 @@ class AgentService extends ChangeNotifier {
     _playbackEndDebounce?.cancel();
     _playbackSafetyTimer?.cancel();
     _postSpeakFlushTimer?.cancel();
+    _postSpeechThinkingTimer?.cancel();
     _vadInterruptDebounce?.cancel();
 
     // 5. Transition from speaking → listening immediately.
     _speaking = false;
+    _thinking = false;
     _speakingEndTime = DateTime.now();
     _statusText = _muted ? 'Not Listening...' : 'Listening';
 
@@ -3236,6 +3380,10 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
+    if (!_thinking) {
+      _thinking = true;
+      notifyListeners();
+    }
     _processTranscript(event);
   }
 
@@ -3634,6 +3782,23 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
+      // If the response arrived as a single final event (no prior streaming
+      // deltas), TTS was never started. Start → send → end in one shot.
+      if (!_ttsMuted && !_muted && _hasTts && _streamingMessageId == null) {
+        final ttsText = _flattenMarkdownForTtsDelta(
+            _stripBracketsForTts(
+                VocalExpressionRegistry.stripForDisplay(event.text)));
+        debugPrint('[AgentService] Final-TTS: ttsText=${ttsText.length} chars, '
+            'localTts=${_localTts != null}, tts=${_tts != null}');
+        if (ttsText.trim().isNotEmpty) {
+          _activeTtsStartGeneration();
+          _activeTtsSendText(ttsText);
+        }
+      } else if (event.text.isNotEmpty) {
+        debugPrint('[AgentService] Final-TTS SKIPPED: '
+            'ttsMuted=$_ttsMuted muted=$_muted hasTts=$_hasTts '
+            'streamingId=$_streamingMessageId');
+      }
       if (!_ttsMuted && !_muted) _activeTtsEndGeneration();
       _vocalExprState = StreamingExpressionState();
 
@@ -6005,6 +6170,46 @@ class AgentService extends ChangeNotifier {
     var voiceId = args['voice_id'] as String?;
     final voiceName = args['voice_name'] as String?;
 
+    // Pocket TTS: resolve by name from local DB
+    if (_ttsConfig?.provider == TtsProvider.pocketTts && _localTts != null) {
+      if (voiceName != null && voiceName.isNotEmpty) {
+        final voices = await PocketTtsVoiceDb.listVoices();
+        final nameLower = voiceName.toLowerCase();
+        final match = voices.cast<PocketTtsVoice?>().firstWhere(
+              (v) => v!.name.toLowerCase() == nameLower,
+              orElse: () => null,
+            );
+        final resolved = match ??
+            voices.cast<PocketTtsVoice?>().firstWhere(
+                  (v) => v!.name.toLowerCase().contains(nameLower),
+                  orElse: () => null,
+                );
+        if (resolved == null) {
+          return 'No Pocket TTS voice found matching "$voiceName". '
+              'Use list_voices to see available options.';
+        }
+        final pocket = _localTts as PocketTtsService;
+        if (resolved.embedding != null && resolved.embedding!.isNotEmpty) {
+          await pocket.importVoiceEmbedding(
+              'db_voice_${resolved.id}', resolved.embedding!);
+        } else if (resolved.audioPath != null) {
+          await pocket.cloneVoiceFromFile(
+              resolved.audioPath!, 'db_voice_${resolved.id}');
+        }
+        await pocket.setVoice('db_voice_${resolved.id}');
+        _addMsg(ChatMessage.system('Agent voice changed to "${resolved.name}"'));
+        notifyListeners();
+        return 'Voice updated to "${resolved.name}".';
+      }
+      if (voiceId != null && voiceId.isNotEmpty) {
+        await _localTts!.setVoice(voiceId);
+        _addMsg(ChatMessage.system('Agent voice changed to $voiceId'));
+        notifyListeners();
+        return 'Voice updated to $voiceId.';
+      }
+      return 'Provide either voice_id or voice_name.';
+    }
+
     if ((voiceId == null || voiceId.isEmpty) &&
         (voiceName != null && voiceName.isNotEmpty)) {
       final apiKey = _ttsConfig?.elevenLabsApiKey ?? '';
@@ -6058,6 +6263,32 @@ class AgentService extends ChangeNotifier {
   }
 
   Future<String> _handleListVoices() async {
+    // Pocket TTS: list from local DB
+    if (_ttsConfig?.provider == TtsProvider.pocketTts) {
+      try {
+        final voices = await PocketTtsVoiceDb.listVoices();
+        if (voices.isEmpty) {
+          return 'No Pocket TTS voices configured. '
+              'Add voices in Settings > Voice Output.';
+        }
+        final currentId = _ttsConfig?.pocketTtsVoiceId;
+        final buf = StringBuffer(
+            'Available Pocket TTS voices (${voices.length}):\n');
+        for (final v in voices) {
+          final active = v.id == currentId ? ' [ACTIVE]' : '';
+          final meta = v.subtitle.isNotEmpty ? ' (${v.subtitle})' : '';
+          final tag = v.isDefault ? ' [built-in]' : '';
+          buf.writeln('- ${v.name}$meta$tag$active');
+        }
+        buf.writeln(
+            '\nUse set_agent_voice with voice_name to switch.');
+        return buf.toString();
+      } catch (e) {
+        debugPrint('[AgentService] list_voices (pocket) failed: $e');
+        return 'Failed to list voices: $e';
+      }
+    }
+
     final apiKey = _ttsConfig?.elevenLabsApiKey ?? '';
     if (apiKey.isEmpty) {
       return 'ElevenLabs API key is not configured. '
@@ -6955,8 +7186,10 @@ class AgentService extends ChangeNotifier {
       _settleTranscripts.clear();
       _settleAccumulatedTexts.clear();
       _postSpeakFlushTimer?.cancel();
+      _postSpeechThinkingTimer?.cancel();
       _playbackEndDebounce?.cancel();
       _ttsGenerationComplete = false;
+      _thinking = false;
       _stopTtsLevelDrain();
       _whisper.resetSpeakerIdentifier();
       _whisper.stopResponseAudio();
@@ -7750,8 +7983,8 @@ class AgentService extends ChangeNotifier {
             if (_speaking) {
               _speaking = false;
               _statusText = _muted ? 'Not Listening...' : 'Listening';
-              notifyListeners();
             }
+            _showPostSpeechThinking();
             _schedulePostSpeakFlush();
             if (_isLocalSttMode) {
               _whisperKitStt?.notifyPlaybackEnded();
@@ -7884,6 +8117,7 @@ class AgentService extends ChangeNotifier {
     _muted = false;
     _ttsMuted = false;
     _ttsInterrupted = false;
+    _consecutiveAgentResponses = 0;
     _userMuteOverride = false;
     _awayMuteSaved = false;
     _callPhase = CallPhase.idle;
@@ -7905,6 +8139,7 @@ class AgentService extends ChangeNotifier {
     _cancelSettleTimer();
     _cancelConnectedGreeting();
     _postSpeakFlushTimer?.cancel();
+    _postSpeechThinkingTimer?.cancel();
     _playbackEndDebounce?.cancel();
     _ttsGenerationComplete = false;
     _stopTtsLevelDrain();

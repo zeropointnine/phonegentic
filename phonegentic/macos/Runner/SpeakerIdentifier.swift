@@ -254,9 +254,33 @@ final class SpeakerIdentifier {
                     // Contact voiceprints should only match on remote/caller
                     // audio. When mic audio matches a contact, it's a false
                     // positive (the host's voice happened to be similar).
+                    // Fall back to the host_user profile if available.
                     if !isRemote && speaker.id.hasPrefix("contact_") {
                         NSLog("[SpeakerID] Mic ignored contact match: %@ (conf=%.2f) — contacts only match on caller audio",
                               speaker.name, confidence)
+
+                        if !self.hostLocked,
+                           let hostSpeaker = diarizer.speakerManager.getSpeaker(for: "host_user") {
+                            let hostConf = 1.0 - Double(cosineDistance(
+                                hostSpeaker.currentEmbedding, embedding
+                            ))
+                            if hostConf >= 0.5 {
+                                if hostSpeaker.name == self.lastHostCandidate {
+                                    self.hostConsecutiveHits += 1
+                                } else {
+                                    self.lastHostCandidate = hostSpeaker.name
+                                    self.hostConsecutiveHits = 1
+                                }
+                                self.identifiedHostSpeaker = hostSpeaker.name
+                                self.hostConfidence = hostConf
+                                if hostConf >= SpeakerIdentifier.lockThreshold && self.hostConsecutiveHits >= 2 {
+                                    self.hostLocked = true
+                                    NSLog("[SpeakerID] Mic fallback LOCKED: %@ (conf=%.2f)", hostSpeaker.name, hostConf)
+                                } else {
+                                    NSLog("[SpeakerID] Mic fallback to host: %@ (conf=%.2f)", hostSpeaker.name, hostConf)
+                                }
+                            }
+                        }
                         return
                     }
 

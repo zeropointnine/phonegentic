@@ -35,6 +35,7 @@ class JobFunction {
   final bool whisperByDefault;
   final String? elevenLabsVoiceId;
   final String? kokoroVoiceStyle;
+  final int? pocketTtsVoiceId;
   /// Per-job mute policy override. null = use global setting.
   /// 0 = autoToggle, 1 = stayMuted, 2 = stayUnmuted (matches AgentMutePolicy.index).
   final int? mutePolicyOverride;
@@ -54,6 +55,7 @@ class JobFunction {
     this.whisperByDefault = false,
     this.elevenLabsVoiceId,
     this.kokoroVoiceStyle,
+    this.pocketTtsVoiceId,
     this.mutePolicyOverride,
     this.comfortNoisePath,
     DateTime? createdAt,
@@ -76,6 +78,8 @@ class JobFunction {
     String? elevenLabsVoiceId,
     String? kokoroVoiceStyle,
     bool clearKokoroVoice = false,
+    int? pocketTtsVoiceId,
+    bool clearPocketTtsVoice = false,
     int? mutePolicyOverride,
     bool clearMutePolicy = false,
     String? comfortNoisePath,
@@ -93,6 +97,7 @@ class JobFunction {
         whisperByDefault: whisperByDefault ?? this.whisperByDefault,
         elevenLabsVoiceId: elevenLabsVoiceId ?? this.elevenLabsVoiceId,
         kokoroVoiceStyle: clearKokoroVoice ? null : (kokoroVoiceStyle ?? this.kokoroVoiceStyle),
+        pocketTtsVoiceId: clearPocketTtsVoice ? null : (pocketTtsVoiceId ?? this.pocketTtsVoiceId),
         mutePolicyOverride: clearMutePolicy ? null : (mutePolicyOverride ?? this.mutePolicyOverride),
         comfortNoisePath: clearComfortNoise ? null : (comfortNoisePath ?? this.comfortNoisePath),
         createdAt: createdAt,
@@ -110,6 +115,7 @@ class JobFunction {
         'whisper_by_default': whisperByDefault ? 1 : 0,
         'elevenlabs_voice_id': elevenLabsVoiceId,
         'kokoro_voice_style': kokoroVoiceStyle,
+        'pocket_tts_voice_id': pocketTtsVoiceId,
         'mute_policy_override': mutePolicyOverride,
         'comfort_noise_path': comfortNoisePath,
         'created_at': createdAt.toIso8601String(),
@@ -134,6 +140,7 @@ class JobFunction {
       whisperByDefault: (map['whisper_by_default'] as int? ?? 0) == 1,
       elevenLabsVoiceId: map['elevenlabs_voice_id'] as String?,
       kokoroVoiceStyle: map['kokoro_voice_style'] as String?,
+      pocketTtsVoiceId: map['pocket_tts_voice_id'] as int?,
       mutePolicyOverride: map['mute_policy_override'] as int?,
       comfortNoisePath: map['comfort_noise_path'] as String?,
       createdAt: DateTime.tryParse(map['created_at'] as String? ?? '') ??

@@ -120,6 +120,10 @@ class PocketTtsChannel: NSObject, FlutterStreamHandler {
     }
 
     private func handleInitialize(result: @escaping FlutterResult) {
+        if isInitialized, engine != nil {
+            DispatchQueue.main.async { result(true) }
+            return
+        }
         synthesisQueue.async { [weak self] in
             guard let self = self else { return }
 

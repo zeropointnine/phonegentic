@@ -154,6 +154,8 @@ class TtsConfig {
   final String elevenLabsModelId;
   final String kokoroVoiceStyle;
   final String pocketTtsVoiceClonePath;
+  /// Selected Pocket TTS voice ID from the pocket_tts_voices SQLite table.
+  final int? pocketTtsVoiceId;
 
   const TtsConfig({
     this.provider = TtsProvider.none,
@@ -162,6 +164,7 @@ class TtsConfig {
     this.elevenLabsModelId = 'eleven_flash_v2_5',
     this.kokoroVoiceStyle = 'af_heart',
     this.pocketTtsVoiceClonePath = '',
+    this.pocketTtsVoiceId,
   });
 
   bool get isConfigured {
@@ -184,6 +187,8 @@ class TtsConfig {
     String? elevenLabsModelId,
     String? kokoroVoiceStyle,
     String? pocketTtsVoiceClonePath,
+    int? pocketTtsVoiceId,
+    bool clearPocketTtsVoiceId = false,
   }) {
     return TtsConfig(
       provider: provider ?? this.provider,
@@ -192,6 +197,7 @@ class TtsConfig {
       elevenLabsModelId: elevenLabsModelId ?? this.elevenLabsModelId,
       kokoroVoiceStyle: kokoroVoiceStyle ?? this.kokoroVoiceStyle,
       pocketTtsVoiceClonePath: pocketTtsVoiceClonePath ?? this.pocketTtsVoiceClonePath,
+      pocketTtsVoiceId: clearPocketTtsVoiceId ? null : (pocketTtsVoiceId ?? this.pocketTtsVoiceId),
     );
   }
 }
@@ -373,6 +379,7 @@ class AgentConfigService {
   static Future<TtsConfig> loadTtsConfig() async {
     final prefs = await SharedPreferences.getInstance();
     final providerIdx = prefs.getInt('${_prefix}tts_provider') ?? 0;
+    final pocketVoiceId = prefs.getInt('${_prefix}tts_pocket_voice_id');
     return TtsConfig(
       provider: TtsProvider
           .values[providerIdx.clamp(0, TtsProvider.values.length - 1)],
@@ -387,6 +394,7 @@ class AgentConfigService {
           prefs.getString('${_prefix}tts_kokoro_voice') ?? 'af_heart',
       pocketTtsVoiceClonePath:
           prefs.getString('${_prefix}tts_pocket_clone_path') ?? '',
+      pocketTtsVoiceId: pocketVoiceId,
     );
   }
 
@@ -403,6 +411,12 @@ class AgentConfigService {
         '${_prefix}tts_kokoro_voice', config.kokoroVoiceStyle);
     await prefs.setString(
         '${_prefix}tts_pocket_clone_path', config.pocketTtsVoiceClonePath);
+    if (config.pocketTtsVoiceId != null) {
+      await prefs.setInt(
+          '${_prefix}tts_pocket_voice_id', config.pocketTtsVoiceId!);
+    } else {
+      await prefs.remove('${_prefix}tts_pocket_voice_id');
+    }
   }
 
   // -- STT config (on-device WhisperKit) -------------------------------------
