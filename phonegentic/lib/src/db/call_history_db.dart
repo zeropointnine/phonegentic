@@ -370,6 +370,16 @@ class CallHistoryDb {
     return blobToEmbedding(blob);
   }
 
+  /// Upsert the host user's own voiceprint embedding (contact_id = 0).
+  static Future<void> upsertHostEmbedding(List<double> embedding) async {
+    await upsertSpeakerEmbedding(contactId: 0, embedding: embedding);
+  }
+
+  /// Get the host user's voiceprint embedding, or null if not stored.
+  static Future<List<double>?> getHostEmbedding() async {
+    return getSpeakerEmbedding(0);
+  }
+
   /// Get all stored speaker embeddings with their contact info.
   /// Each result map includes 'contact_id', 'display_name', 'phone_number',
   /// and 'decoded_embedding' (List<double>).

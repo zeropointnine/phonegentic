@@ -160,6 +160,31 @@ class WhisperRealtimeService {
     }
   }
 
+  /// Register the host user as a known speaker so mic audio shows their
+  /// name instead of "unknown mic user".
+  Future<void> registerHostSpeaker(String name, List<double> embedding) async {
+    try {
+      await _methodChannel.invokeMethod('registerHostSpeaker', {
+        'name': name,
+        'embedding': embedding,
+      });
+    } catch (e) {
+      debugPrint('[Whisper] registerHostSpeaker failed: $e');
+    }
+  }
+
+  /// Retrieve the current host speaker's voiceprint embedding (for storage).
+  /// Returns null if no host speaker was identified.
+  Future<List<double>?> getHostSpeakerEmbedding() async {
+    try {
+      final result = await _methodChannel.invokeMethod<List>('getHostSpeakerEmbedding');
+      return result?.cast<double>();
+    } catch (e) {
+      debugPrint('[Whisper] getHostSpeakerEmbedding failed: $e');
+      return null;
+    }
+  }
+
   /// Reset the speaker identifier state (call at end of each call).
   Future<void> resetSpeakerIdentifier() async {
     try {

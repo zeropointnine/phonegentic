@@ -133,6 +133,17 @@ final class SpeakerIdentifier {
         }
     }
 
+    /// Register the host user as a known speaker so mic audio shows their
+    /// name instead of "unknown mic user". Called from Dart with the user's
+    /// configured manager name.
+    func registerHostSpeaker(name: String, embedding: [Double]) {
+        guard let diarizer = diarizer else { return }
+        let floatEmbed = embedding.map { Float($0) }
+        let speaker = Speaker(id: "host_user", name: name, currentEmbedding: floatEmbed)
+        diarizer.initializeKnownSpeakers([speaker])
+        NSLog("[SpeakerID] Registered host speaker: %@", name)
+    }
+
     // MARK: - Audio Accumulation
 
     /// Feed remote party PCM16 24kHz audio for embedding extraction.
@@ -222,7 +233,7 @@ final class SpeakerIdentifier {
                         self.lastMicIsAgentVoice = true
                         self.lastMicAgentVoiceTime = Date().timeIntervalSince1970
                     }
-                    NSLog("[SpeakerID] Suppressed agent echo (voiceprint match, isRemote=%d)", isRemote ? 1 : 0)
+                    NSLog("[SpeakerID] Suppressed agent echo on %@ (voiceprint match)", isRemote ? "caller audio" : "mic")
                     return
                 }
                 if !isRemote {
@@ -240,19 +251,37 @@ final class SpeakerIdentifier {
                         speaker.currentEmbedding, embedding
                     ))
 
+                    // Contact voiceprints should only match on remote/caller
+                    // audio. When mic audio matches a contact, it's a false
+                    // positive (the host's voice happened to be similar).
+                    if !isRemote && speaker.id.hasPrefix("contact_") {
+                        NSLog("[SpeakerID] Mic ignored contact match: %@ (conf=%.2f) — contacts only match on caller audio",
+                              speaker.name, confidence)
+                        return
+                    }
+
+                    // Agent TTS voice should never be assigned as a speaker
+                    // identity — it's handled by the isAgentVoice check above.
+                    if speaker.id == "agent_tts" {
+                        NSLog("[SpeakerID] Ignored agent_tts match on %@ (conf=%.2f)",
+                              isRemote ? "caller" : "mic", confidence)
+                        return
+                    }
+
+                    let label = self.speakerLabel(speaker.name, isRemote: isRemote)
+
                     if isRemote {
                         if self.remoteLocked {
-                            NSLog("[SpeakerID] Remote locked as %@ — ignoring %@ (conf=%.2f)",
-                                  self.identifiedRemoteSpeaker, speaker.name, confidence)
+                            NSLog("[SpeakerID] Caller voice (%@) — ignoring %@ (conf=%.2f)",
+                                  self.remoteLabel(), label, confidence)
                             return
                         }
                         if confidence < 0.6 {
-                            NSLog("[SpeakerID] Remote low-conf ignored: %@ (conf=%.2f)", speaker.name, confidence)
+                            NSLog("[SpeakerID] Caller low-conf ignored: %@ (conf=%.2f)", label, confidence)
                             self.lastRemoteCandidate = ""
                             self.remoteConsecutiveHits = 0
                             return
                         }
-                        // Track consecutive same-speaker hits before locking.
                         if speaker.name == self.lastRemoteCandidate {
                             self.remoteConsecutiveHits += 1
                         } else {
@@ -263,20 +292,20 @@ final class SpeakerIdentifier {
                         self.remoteConfidence = confidence
                         if confidence >= SpeakerIdentifier.lockThreshold && self.remoteConsecutiveHits >= 2 {
                             self.remoteLocked = true
-                            NSLog("[SpeakerID] Remote LOCKED: %@ (conf=%.2f, hits=%d)",
-                                  speaker.name, confidence, self.remoteConsecutiveHits)
+                            NSLog("[SpeakerID] Caller LOCKED: %@ (conf=%.2f, hits=%d)",
+                                  label, confidence, self.remoteConsecutiveHits)
                         } else {
-                            NSLog("[SpeakerID] Remote identified: %@ (conf=%.2f, hits=%d)",
-                                  speaker.name, confidence, self.remoteConsecutiveHits)
+                            NSLog("[SpeakerID] Caller identified: %@ (conf=%.2f, hits=%d)",
+                                  label, confidence, self.remoteConsecutiveHits)
                         }
                     } else {
                         if self.hostLocked {
-                            NSLog("[SpeakerID] Host locked as %@ — ignoring %@ (conf=%.2f)",
-                                  self.identifiedHostSpeaker, speaker.name, confidence)
+                            NSLog("[SpeakerID] Mic (%@) — ignoring %@ (conf=%.2f)",
+                                  self.hostLabel(), label, confidence)
                             return
                         }
                         if confidence < 0.6 {
-                            NSLog("[SpeakerID] Host low-conf ignored: %@ (conf=%.2f)", speaker.name, confidence)
+                            NSLog("[SpeakerID] Mic low-conf ignored: %@ (conf=%.2f)", label, confidence)
                             self.lastHostCandidate = ""
                             self.hostConsecutiveHits = 0
                             return
@@ -291,11 +320,11 @@ final class SpeakerIdentifier {
                         self.hostConfidence = confidence
                         if confidence >= SpeakerIdentifier.lockThreshold && self.hostConsecutiveHits >= 2 {
                             self.hostLocked = true
-                            NSLog("[SpeakerID] Host LOCKED: %@ (conf=%.2f, hits=%d)",
-                                  speaker.name, confidence, self.hostConsecutiveHits)
+                            NSLog("[SpeakerID] Mic LOCKED: %@ (conf=%.2f, hits=%d)",
+                                  label, confidence, self.hostConsecutiveHits)
                         } else {
-                            NSLog("[SpeakerID] Host identified: %@ (conf=%.2f, hits=%d)",
-                                  speaker.name, confidence, self.hostConsecutiveHits)
+                            NSLog("[SpeakerID] Mic identified: %@ (conf=%.2f, hits=%d)",
+                                  label, confidence, self.hostConsecutiveHits)
                         }
                     }
                 }
@@ -303,6 +332,26 @@ final class SpeakerIdentifier {
                 NSLog("[SpeakerID] Embedding extraction failed: %@", error.localizedDescription)
             }
         }
+    }
+
+    /// Human-readable label for a speaker name, showing role context.
+    /// Known speakers keep their real name; auto-assigned "Speaker N" gets
+    /// replaced with the source role so logs read "Mic (you)" or "Caller (contact-name)".
+    private func speakerLabel(_ name: String, isRemote: Bool) -> String {
+        if name.hasPrefix("Speaker ") {
+            return isRemote ? "unknown caller" : "unknown mic user"
+        }
+        return name
+    }
+
+    private func remoteLabel() -> String {
+        let name = identifiedRemoteSpeaker
+        return name.hasPrefix("Speaker ") ? "locked caller" : name
+    }
+
+    private func hostLabel() -> String {
+        let name = identifiedHostSpeaker
+        return name.hasPrefix("Speaker ") ? "locked mic user" : name
     }
 
     private func extractAgentEmbedding() {
@@ -318,7 +367,16 @@ final class SpeakerIdentifier {
             do {
                 let embedding = try diarizer.extractSpeakerEmbedding(from: samples)
                 self.agentEmbedding = embedding
-                NSLog("[SpeakerID] Agent voiceprint captured (%d-dim)", embedding.count)
+
+                // Also register the agent as a known speaker so it shows
+                // "Agent" in identification logs rather than "Speaker N".
+                let agentSpeaker = Speaker(
+                    id: "agent_tts",
+                    name: "Agent",
+                    currentEmbedding: embedding
+                )
+                diarizer.initializeKnownSpeakers([agentSpeaker])
+                NSLog("[SpeakerID] Agent voiceprint captured and registered (%d-dim)", embedding.count)
             } catch {
                 NSLog("[SpeakerID] Agent embedding failed: %@", error.localizedDescription)
             }
@@ -368,6 +426,20 @@ final class SpeakerIdentifier {
         for id in allIds {
             if let speaker = diarizer.speakerManager.getSpeaker(for: id),
                speaker.name == identifiedRemoteSpeaker {
+                return speaker.currentEmbedding.map { Double($0) }
+            }
+        }
+        return nil
+    }
+
+    /// Returns the latest embedding for the identified host speaker, if any.
+    /// Used to capture the host's voiceprint for storage.
+    func getHostSpeakerEmbedding() -> [Double]? {
+        guard let diarizer = diarizer, !identifiedHostSpeaker.isEmpty else { return nil }
+        let allIds = diarizer.speakerManager.speakerIds
+        for id in allIds {
+            if let speaker = diarizer.speakerManager.getSpeaker(for: id),
+               speaker.name == identifiedHostSpeaker {
                 return speaker.currentEmbedding.map { Double($0) }
             }
         }

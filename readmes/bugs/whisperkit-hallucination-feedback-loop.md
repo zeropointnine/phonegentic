@@ -114,9 +114,14 @@ A six-layer fix across Dart, Swift, and native audio:
 - **Root cause**: `AVAudioPlayerNode.scheduleBuffer` fires a per-buffer completion callback. With 3 audio chunks per TTS response, 3 completion callbacks fire sequentially. Each intermediate callback started a 0.15s timer that sent `onPlaybackComplete` to Flutter before the remaining buffers finished — producing "ghost" events spaced ~1.6s apart
 - Between ghost events, native mic suppression expired and re-engaged, creating gaps where 42-47KB of echo-contaminated audio leaked into the WhisperKit buffer. WhisperKit hallucinated speech from this leaked audio, which reset the loop-breaker counter and restarted the self-talk cycle
 - **Fix**: Added `pendingBufferCount` in `AudioTapChannel.swift`. Incremented when `handlePlayAudio` queues a buffer, decremented in the `scheduleBuffer` completion callback. `schedulePlaybackEnd()` only fires when count reaches zero — exactly ONE `onPlaybackComplete` per TTS response
-- Reset in `stopPlayback()` and `clearTTSQueue` for clean state
-- Removed the Dart-side ghost guard (`_lastGhostFlushTime`, ghost flush logic) from `agent_service.dart` — no longer needed since ghosts don't occur
+- Completion callback guards with `pendingBufferCount > 0` before decrementing — if `clearTTSQueue` reset the count, stale callbacks are harmless no-ops
+- `clearTTSQueue` now stops `playerNode` to cancel in-flight buffers, invalidates `playbackEndTimer`, and resets `isPlayingResponse` — previously it only cleared WebRTC buffers, leaving the `AVAudioPlayerNode` playing and firing ghost completions
+- Dart-side ghost guard (`if !isTtsPlaying && !_speaking → flush and break`) restored as defense-in-depth in `_handleNativeTapCall`
 - Simplified counter reset in `_processTranscript` to use `_speakingEndTime` directly instead of the more complex `echoWindowEnd` calculation
+
+### 14. Echo Detection for Short Fragments (agent_service.dart)
+- **Bug**: "better though" (2 significant words) attributed to user instead of agent. Agent said "...make your day better, though?" but WhisperKit transcribed the tail as "Better though." — punctuation differences prevented substring match, and word-overlap check required 3+ words
+- **Fix**: Lowered word-overlap threshold from 3 words to 2. For 2-word fragments, require 100% word overlap (both words must appear in agent text) to avoid false positives. For 3+ words, keep the existing 35% threshold
 
 ## Files
 

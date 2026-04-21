@@ -58,10 +58,15 @@ class AgentService extends ChangeNotifier {
   bool _active = false;
   bool _muted = false;
   bool _speaking = false;
+  bool _thinking = false;
   bool _whisperMode = false;
   bool _isLocalSttMode = false;
   String _statusText = 'Initializing...';
   AgentMutePolicy _globalMutePolicy = AgentMutePolicy.autoToggle;
+
+  /// Saved mute state before the manager went away so we can restore it.
+  bool _awayMuteSaved = false;
+  bool _mutedBeforeAway = false;
   bool _userMuteOverride = false;
 
   final Queue<double> _levels = Queue<double>();
@@ -135,6 +140,8 @@ class AgentService extends ChangeNotifier {
   String? _localIdentity;
   bool _isOutbound = true;
   bool _callDialPending = false;
+  bool _idleCallConfirmed = false;
+  Map<String, dynamic>? _pendingIdleCall;
   bool _isConferenceLeg = false;
   String? _lastDialedNumber;
   String? _priorCallTranscript;
@@ -537,6 +544,7 @@ class AgentService extends ChangeNotifier {
   bool get active => _active;
   bool get muted => _muted;
   bool get speaking => _speaking || _ttsLevelTimer != null;
+  bool get thinking => _thinking;
   bool get whisperMode => _splitPipeline ? _ttsMuted : _whisperMode;
   bool get canToggleWhisper => true;
 
@@ -942,6 +950,7 @@ class AgentService extends ChangeNotifier {
           _ttsGenEndTimer?.cancel();
         }
         _speaking = isSpeaking;
+        if (isSpeaking) _thinking = false;
         _statusText = isSpeaking
             ? 'Speaking'
             : (_muted ? 'Not Listening...' : 'Listening');
@@ -1103,6 +1112,7 @@ class AgentService extends ChangeNotifier {
       if (speaking) {
         _ttsGenerationComplete = false;
         _speaking = true;
+        _thinking = false;
         _speakingStartTime = DateTime.now();
         if (!_muted) {
           _statusText = 'Speaking';
@@ -1273,6 +1283,7 @@ class AgentService extends ChangeNotifier {
         _ttsGenerationComplete = false;
         _ttsGenEndTimer?.cancel();
         _speaking = true;
+        _thinking = false;
         _speakingStartTime = DateTime.now();
         if (!_muted) {
           _statusText = 'Speaking';
@@ -1324,6 +1335,7 @@ class AgentService extends ChangeNotifier {
       if (speaking) {
         _ttsGenerationComplete = false;
         _speaking = true;
+        _thinking = false;
         _speakingStartTime = DateTime.now();
         if (!_muted) {
           _statusText = 'Speaking';
@@ -2574,12 +2586,33 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  bool _hostVoiceprintCaptured = false;
+
+  /// Capture and store the host user's voiceprint from mic audio.
+  /// Called periodically when the speaker identifier has locked the mic.
+  Future<void> _captureHostVoiceprint() async {
+    if (_hostVoiceprintCaptured) return;
+    final name = _agentManagerConfig.name;
+    if (name.isEmpty) return;
+
+    try {
+      final embedding = await _whisper.getHostSpeakerEmbedding();
+      if (embedding == null || embedding.isEmpty) return;
+
+      await CallHistoryDb.upsertHostEmbedding(embedding);
+      await _whisper.registerHostSpeaker(name, embedding);
+      _hostVoiceprintCaptured = true;
+      debugPrint('[AgentService] Host voiceprint captured and stored for "$name"');
+    } catch (e) {
+      debugPrint('[AgentService] Failed to capture host voiceprint: $e');
+    }
+  }
+
   /// Load stored speaker voiceprint embeddings from SQLite and push them
   /// to the native speaker identifier so it can match voices on new calls.
   Future<void> _loadKnownSpeakerEmbeddings() async {
     try {
       final rows = await CallHistoryDb.getAllSpeakerEmbeddingsDecoded();
-      if (rows.isEmpty) return;
 
       final speakers = <Map<String, dynamic>>[];
       for (final row in rows) {
@@ -2599,6 +2632,14 @@ class AgentService extends ChangeNotifier {
         await _whisper.loadKnownSpeakers(speakers);
         debugPrint(
             '[AgentService] Loaded ${speakers.length} known speaker voiceprints');
+      }
+
+      // Register the host user's voiceprint so the mic shows their name.
+      final hostName = _agentManagerConfig.name;
+      final hostEmbed = await CallHistoryDb.getHostEmbedding();
+      if (hostEmbed != null && hostName.isNotEmpty) {
+        await _whisper.registerHostSpeaker(hostName, hostEmbed);
+        debugPrint('[AgentService] Registered host speaker: "$hostName"');
       }
     } catch (e) {
       debugPrint('[AgentService] Failed to load speaker embeddings: $e');
@@ -2773,16 +2814,16 @@ class AgentService extends ChangeNotifier {
     if (_recentAgentTexts.isEmpty) return false;
     final lower = text.toLowerCase().trim();
     if (lower.length < 4) return false;
+    final tWords = _significantWords(lower);
     for (final agentText in _recentAgentTexts) {
       final agentLower = agentText.toLowerCase();
       if (agentLower.contains(lower)) return true;
-      final tWords = _significantWords(lower);
-      if (tWords.length < 3) continue;
+      if (tWords.length < 2) continue;
       final aWords = _significantWords(agentLower);
-      if (aWords.isNotEmpty) {
-        final overlap = tWords.intersection(aWords).length;
-        if (overlap / tWords.length >= 0.35) return true;
-      }
+      if (aWords.isEmpty) continue;
+      final overlap = tWords.intersection(aWords).length;
+      final threshold = tWords.length <= 2 ? 1.0 : 0.35;
+      if (overlap / tWords.length >= threshold) return true;
     }
     return false;
   }
@@ -3285,6 +3326,13 @@ class AgentService extends ChangeNotifier {
       }
     }
 
+    // When a make_call was blocked by the idle guard and the user's follow-up
+    // transcript arrives, unlock so the LLM can retry the call.
+    if (_pendingIdleCall != null && _callPhase == CallPhase.idle && !isRemote) {
+      _idleCallConfirmed = true;
+      debugPrint('[AgentService] Idle call unlocked — user responded: "$text"');
+    }
+
     final lowConfidence = confidence > 0.0 && confidence < 0.5;
 
     // If voiceprint identified a name with reasonable confidence and the
@@ -3358,7 +3406,21 @@ class AgentService extends ChangeNotifier {
       _postGreetGraceUntil = null;
     }
 
+    debugPrint('[AgentService] → TextAgent [$label]: "$text" '
+        '(phase=${_callPhase.name} conf=${confidence.toStringAsFixed(2)} '
+        'src=$source)');
+
     _textAgent?.addTranscript(label, text);
+
+    if (!_thinking) {
+      _thinking = true;
+      notifyListeners();
+    }
+
+    // Capture the host's voiceprint once the mic has been identified.
+    if (!_hostVoiceprintCaptured && !isRemote && _callPhase == CallPhase.idle) {
+      _captureHostVoiceprint();
+    }
 
     // Fill the silence between the remote finishing and TTS audio arriving
     // with comfort noise. Playback stops automatically when the first TTS
@@ -3695,6 +3757,7 @@ class AgentService extends ChangeNotifier {
       }
     }
 
+    _thinking = false;
     final initialText = deferAgentTextForTts ? '' : displayDelta;
     final msg = ChatMessage.agent(initialText, isStreaming: true);
     _streamingMessageId = msg.id;
@@ -3929,6 +3992,16 @@ class AgentService extends ChangeNotifier {
     try {
       switch (req.name) {
         case 'make_call':
+          if (_callPhase == CallPhase.idle && !_idleCallConfirmed) {
+            _pendingIdleCall = req.arguments;
+            result = 'BLOCKED: You are in idle mode with no active call. '
+                'Ask the user to confirm they want to place this call before proceeding. '
+                'Do NOT call make_call again until the user explicitly confirms.';
+            debugPrint('[AgentService] Idle call guard: blocked make_call to '
+                '${req.arguments['number']}');
+            break;
+          }
+          _idleCallConfirmed = false;
           result = await _handleMakeCall(req.arguments);
           break;
         case 'check_locale':
@@ -5190,6 +5263,8 @@ class AgentService extends ChangeNotifier {
         return 'Failed to make call: SIP not connected. User needs to register first.';
       }
       _callDialPending = true;
+      _pendingIdleCall = null;
+      _idleCallConfirmed = false;
       final displayNum = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(number)
           : number;
@@ -6772,6 +6847,8 @@ class AgentService extends ChangeNotifier {
 
     _callPhase = phase;
     _callDialPending = false;
+    _pendingIdleCall = null;
+    _idleCallConfirmed = false;
     _partyCount = partyCount;
     if (remoteIdentity != null) _remoteIdentity = remoteIdentity;
     if (remoteDisplayName != null) _remoteDisplayName = remoteDisplayName;
@@ -7658,10 +7735,10 @@ class AgentService extends ChangeNotifier {
     switch (call.method) {
       case 'onPlaybackComplete':
         if (_splitPipeline) {
-          // Native pendingBufferCount ensures this fires exactly once per
-          // TTS response (when the LAST buffer is consumed). Debounce is
-          // still needed for the gap between generation-complete and the
-          // final buffer drain.
+          if (!_whisper.isTtsPlaying && !_speaking) {
+            if (_isLocalSttMode) _whisperKitStt?.flushAudioBuffer();
+            break;
+          }
           _playbackEndDebounce?.cancel();
           final debounce = _ttsGenerationComplete
               ? const Duration(milliseconds: 300)
@@ -7748,6 +7825,35 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Save the current mute state and force-mute while the manager is away.
+  void muteForAway() {
+    if (!_active) return;
+    _mutedBeforeAway = _muted;
+    _awayMuteSaved = true;
+    if (!_muted) {
+      _muted = true;
+      _whisper.muted = true;
+      if (!_speaking) _statusText = 'Not Listening...';
+      _pushInstructionsIfLive();
+      notifyListeners();
+    }
+    debugPrint('[AgentService] Muted for away (was ${_mutedBeforeAway ? "muted" : "unmuted"})');
+  }
+
+  /// Restore the mute state that was saved before the manager went away.
+  void restoreFromAway() {
+    if (!_active || !_awayMuteSaved) return;
+    _awayMuteSaved = false;
+    if (!_mutedBeforeAway && _muted) {
+      _muted = false;
+      _whisper.muted = false;
+      if (!_speaking) _statusText = 'Listening';
+      _pushInstructionsIfLive();
+      notifyListeners();
+    }
+    debugPrint('[AgentService] Restored from away (muted=$_muted)');
+  }
+
   Future<void> reconnect() async {
     _textAgentToolSub?.cancel();
     _textAgentSub?.cancel();
@@ -7779,8 +7885,11 @@ class AgentService extends ChangeNotifier {
     _ttsMuted = false;
     _ttsInterrupted = false;
     _userMuteOverride = false;
+    _awayMuteSaved = false;
     _callPhase = CallPhase.idle;
     _callDialPending = false;
+    _pendingIdleCall = null;
+    _idleCallConfirmed = false;
     _levels.clear();
     _smsHistoryLoadedPhones.clear();
     _resetVoiceUiSyncState();

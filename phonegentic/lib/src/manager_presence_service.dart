@@ -75,6 +75,7 @@ class ManagerPresenceService extends ChangeNotifier
     _manuallyAway = true;
     _awayTimer?.cancel();
     if (_lastUnfocusedAt == null) _lastUnfocusedAt = DateTime.now();
+    _agent?.muteForAway();
     debugPrint('[ManagerPresence] Manually set away');
     notifyListeners();
   }
@@ -84,7 +85,10 @@ class ManagerPresenceService extends ChangeNotifier
     _manuallyAway = false;
     _isAway = false;
     debugPrint('[ManagerPresence] Manually set available');
-    if (wasAway) _handleReturnFromAway();
+    if (wasAway) {
+      _agent?.restoreFromAway();
+      _handleReturnFromAway();
+    }
     notifyListeners();
   }
 
@@ -144,6 +148,7 @@ class ManagerPresenceService extends ChangeNotifier
     _awayTimer?.cancel();
     _awayTimer = Timer(_awayThreshold, () {
       _isAway = true;
+      _agent?.muteForAway();
       debugPrint('[ManagerPresence] Manager is now away');
       notifyListeners();
     });
@@ -155,6 +160,7 @@ class ManagerPresenceService extends ChangeNotifier
     _awayTimer?.cancel();
 
     if (_isAway && !_manuallyAway) {
+      _agent?.restoreFromAway();
       _handleReturnFromAway();
     }
 

@@ -20,6 +20,8 @@ static const char* kMethodPlayAudioResponse = "playAudioResponse";
 static const char* kMethodStopAudioPlayback = "stopAudioPlayback";
 static const char* kMethodInitSpeakerIdentifier = "initSpeakerIdentifier";
 static const char* kMethodLoadKnownSpeakers = "loadKnownSpeakers";
+static const char* kMethodRegisterHostSpeaker = "registerHostSpeaker";
+static const char* kMethodGetHostSpeakerEmbedding = "getHostSpeakerEmbedding";
 static const char* kMethodResetSpeakerIdentifier = "resetSpeakerIdentifier";
 static const char* kMethodGetRemoteSpeakerEmbedding = "getRemoteSpeakerEmbedding";
 static const char* kMethodGetDominantSpeaker = "getDominantSpeaker";
@@ -592,6 +594,12 @@ static void method_call_handler(FlMethodChannel* channel, FlMethodCall* method_c
     response = init_speaker_identifier();
   } else if (strcmp(method, kMethodLoadKnownSpeakers) == 0) {
     response = load_known_speakers();
+  } else if (strcmp(method, kMethodRegisterHostSpeaker) == 0) {
+    g_debug("[AudioTap] registerHostSpeaker - not implemented on Linux");
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+  } else if (strcmp(method, kMethodGetHostSpeakerEmbedding) == 0) {
+    g_debug("[AudioTap] getHostSpeakerEmbedding - not implemented on Linux");
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (strcmp(method, kMethodResetSpeakerIdentifier) == 0) {
     response = reset_speaker_identifier();
   } else if (strcmp(method, kMethodGetRemoteSpeakerEmbedding) == 0) {

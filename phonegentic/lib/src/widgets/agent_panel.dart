@@ -231,6 +231,7 @@ class _AgentPanelState extends State<AgentPanel> {
                       scrollController: _scrollController,
                       hasMore: agent.hasMoreSessionHistory,
                       onLoadMore: () => agent.loadMoreHistory(),
+                      thinking: agent.thinking,
                       onAction: (action) {
                         _controller.text = action.value;
                         _send(agent);
@@ -307,7 +308,7 @@ class _AgentPanelState extends State<AgentPanel> {
 // Header with integrated waveform + status
 // ---------------------------------------------------------------------------
 
-class _AgentHeader extends StatelessWidget {
+class _AgentHeader extends StatefulWidget {
   final AgentService agent;
   final Widget? dragHandle;
   final VoidCallback? onDownloadTranscript;
@@ -317,16 +318,68 @@ class _AgentHeader extends StatelessWidget {
     this.onDownloadTranscript,
   });
 
+  @override
+  State<_AgentHeader> createState() => _AgentHeaderState();
+}
+
+class _AgentHeaderState extends State<_AgentHeader> {
+  bool _wasSpeaking = false;
+  bool _showSpeaking = false;
+  Timer? _transitionTimer;
+
+  AgentService get agent => widget.agent;
+
+  @override
+  void initState() {
+    super.initState();
+    _wasSpeaking = agent.speaking;
+    _showSpeaking = agent.speaking;
+    agent.addListener(_onAgentChanged);
+  }
+
+  @override
+  void dispose() {
+    agent.removeListener(_onAgentChanged);
+    _transitionTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_AgentHeader old) {
+    super.didUpdateWidget(old);
+    if (old.agent != widget.agent) {
+      old.agent.removeListener(_onAgentChanged);
+      widget.agent.addListener(_onAgentChanged);
+    }
+  }
+
+  void _onAgentChanged() {
+    final nowSpeaking = agent.speaking;
+    if (_wasSpeaking && !nowSpeaking) {
+      _transitionTimer?.cancel();
+      _transitionTimer = Timer(const Duration(milliseconds: 500), () {
+        if (mounted) setState(() => _showSpeaking = false);
+      });
+    } else if (nowSpeaking && !_wasSpeaking) {
+      _transitionTimer?.cancel();
+      setState(() => _showSpeaking = true);
+    }
+    _wasSpeaking = nowSpeaking;
+    if (mounted) setState(() {});
+  }
+
   String get _statusLabel {
     if (!agent.active) return agent.statusText;
-    if (agent.speaking) return 'Speaking';
+    if (_showSpeaking) return 'Speaking';
+    if (agent.thinking) return 'Thinking...';
     if (agent.muted) return 'Not Listening...';
     return 'Listening';
   }
 
   Color get _statusColor {
     if (!agent.active) return AppColors.textTertiary;
-    if (agent.speaking) return AppColors.green;
+    if (_showSpeaking) return AppColors.green;
+    if (agent.thinking) return AppColors.burntAmber;
     return AppColors.accent;
   }
 
@@ -346,7 +399,7 @@ class _AgentHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          if (dragHandle != null) ...[dragHandle!, const SizedBox(width: 8)],
+          if (widget.dragHandle != null) ...[widget.dragHandle!, const SizedBox(width: 8)],
           _WaveformPill(
             levels: agent.levels,
             color: _statusColor,
@@ -423,7 +476,7 @@ class _AgentHeader extends StatelessWidget {
             icon: Icons.download_rounded,
             color: AppColors.textTertiary,
             bgColor: AppColors.card,
-            onTap: onDownloadTranscript,
+            onTap: widget.onDownloadTranscript,
             tooltip: 'Download transcript',
           ),
           const SizedBox(width: 6),
@@ -2116,6 +2169,7 @@ class _MessageList extends StatefulWidget {
   final bool hasMore;
   final Future<bool> Function() onLoadMore;
   final ValueChanged<MessageAction> onAction;
+  final bool thinking;
 
   const _MessageList({
     required this.messages,
@@ -2123,6 +2177,7 @@ class _MessageList extends StatefulWidget {
     required this.hasMore,
     required this.onLoadMore,
     required this.onAction,
+    this.thinking = false,
   });
 
   @override
@@ -2147,7 +2202,7 @@ class _MessageListState extends State<_MessageList> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.messages.isEmpty) {
+    if (widget.messages.isEmpty && !widget.thinking) {
       return Center(
         child: Text(
           'No messages yet',
@@ -2156,7 +2211,9 @@ class _MessageListState extends State<_MessageList> {
       );
     }
 
+    final thinkingItem = widget.thinking ? 1 : 0;
     final extraItem = (widget.hasMore || _loadingMore) ? 1 : 0;
+    final totalItems = widget.messages.length + thinkingItem + extraItem;
 
     return NotificationListener<ScrollNotification>(
       onNotification: _onScrollNotification,
@@ -2164,10 +2221,13 @@ class _MessageListState extends State<_MessageList> {
         controller: widget.scrollController,
         reverse: true,
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-        itemCount: widget.messages.length + extraItem,
+        itemCount: totalItems,
         itemBuilder: (context, index) {
-          // Extra item at the end of the reversed list = visual top = loading indicator.
-          if (index == widget.messages.length) {
+          if (index == 0 && widget.thinking) {
+            return const _ThinkingBubble();
+          }
+          final adjusted = index - thinkingItem;
+          if (adjusted >= widget.messages.length) {
             return const Padding(
               padding: EdgeInsets.symmetric(vertical: 12),
               child: Center(
@@ -2179,7 +2239,7 @@ class _MessageListState extends State<_MessageList> {
               ),
             );
           }
-          final msgIdx = widget.messages.length - 1 - index;
+          final msgIdx = widget.messages.length - 1 - adjusted;
           final msg = widget.messages[msgIdx];
           final isLast = msgIdx == widget.messages.length - 1;
           return _MessageBubble(
@@ -2245,6 +2305,87 @@ Future<void> _sendReminderSms(
         const SnackBar(content: Text('Failed to send SMS')),
       );
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Thinking Bubble (three-dot typing indicator)
+// ---------------------------------------------------------------------------
+
+class _ThinkingBubble extends StatefulWidget {
+  const _ThinkingBubble();
+
+  @override
+  State<_ThinkingBubble> createState() => _ThinkingBubbleState();
+}
+
+class _ThinkingBubbleState extends State<_ThinkingBubble>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8, right: 60),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.3),
+              width: 0.5,
+            ),
+          ),
+          child: AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, __) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(3, (i) {
+                  final delay = i * 0.25;
+                  final t = ((_ctrl.value - delay) % 1.0).clamp(0.0, 1.0);
+                  final y = -3.0 * (1.0 - (2.0 * t - 1.0) * (2.0 * t - 1.0));
+                  return Container(
+                    margin: EdgeInsets.only(right: i < 2 ? 4 : 0),
+                    child: Transform.translate(
+                      offset: Offset(0, y),
+                      child: Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.textTertiary.withValues(
+                            alpha: 0.4 + 0.6 * (1.0 - t),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ),
+      ),
+    );
   }
 }
 

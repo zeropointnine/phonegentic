@@ -145,10 +145,14 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "clearTTSQueue":
             WebRTCAudioProcessor.shared.clearTTSBuffers()
             pendingBufferCount = 0
+            playbackEndTimer?.invalidate()
+            playbackEndTimer = nil
+            playerNode?.stop()
             callModePlaybackTimer?.invalidate()
             callModePlaybackTimer = nil
             lastCallModeTTSTime = 0
-            NSLog("[AudioTap] clearTTSQueue — buffers flushed, playback timer cancelled")
+            isPlayingResponse = false
+            NSLog("[AudioTap] clearTTSQueue — buffers flushed, player stopped")
             methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
             result(nil)
         case "setMicMute":
@@ -177,6 +181,15 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                 SpeakerIdentifier.shared.loadKnownSpeakers(speakers)
             }
             result(nil)
+        case "registerHostSpeaker":
+            if let args = call.arguments as? [String: Any],
+               let name = args["name"] as? String,
+               let embedding = args["embedding"] as? [Double] {
+                SpeakerIdentifier.shared.registerHostSpeaker(name: name, embedding: embedding)
+            }
+            result(nil)
+        case "getHostSpeakerEmbedding":
+            result(SpeakerIdentifier.shared.getHostSpeakerEmbedding())
         case "resetSpeakerIdentifier":
             SpeakerIdentifier.shared.reset()
             result(nil)
@@ -561,8 +574,9 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         player.scheduleBuffer(pcmBuffer) { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard self.pendingBufferCount > 0 else { return }
                 self.pendingBufferCount -= 1
-                if self.pendingBufferCount <= 0 {
+                if self.pendingBufferCount == 0 {
                     self.schedulePlaybackEnd()
                 }
             }
