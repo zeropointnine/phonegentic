@@ -1529,7 +1529,10 @@ class AgentService extends ChangeNotifier {
         '- "in an hour and a half" → delay_hours=1, delay_minutes=30\n'
         'Only use remind_at as a last resort for fully-specified absolute datetimes '
         'like "April 25 2026 at 3 PM". '
-        'Always offer to also add important reminders to Google Calendar.');
+        'Always offer to also add important reminders to Google Calendar.\n\n'
+        'When you receive an [UPCOMING MEETING] system event, give a brief '
+        'friendly heads-up like "Hey, you\'ve got your meeting with X coming up '
+        'at Y." Do NOT say "reminder" — just naturally mention the meeting.');
     if (appleRemindersConfig.enabled) {
       buf.write(
           ' The Apple Reminders integration is ENABLED — also offer to sync '
@@ -4048,6 +4051,14 @@ class AgentService extends ChangeNotifier {
     _smsSendLog.remove(normalizedFrom);
     _smsConsecutiveRateLimits.remove(normalizedFrom);
 
+    // If the manager texts in, clear the confirmation cooldown so the agent
+    // can reply to them.
+    if (_agentManagerConfig.isConfigured &&
+        normalizedFrom == ensureE164(_agentManagerConfig.phoneNumber)) {
+      _smsManagerCooldownUntil = null;
+      _smsThirdPartySendAt = null;
+    }
+
     String? contactName;
     if (contactService != null) {
       final contact = contactService!.lookupByPhone(msg.from);
@@ -4143,6 +4154,14 @@ class AgentService extends ChangeNotifier {
   final Map<String, int> _smsConsecutiveRateLimits = {};
   static const _smsMaxConsecutiveRateLimits = 2;
 
+  /// After sending SMS to a third party, the LLM often sends multiple
+  /// "confirmation" texts to the manager. The first confirmation is allowed
+  /// through, then a cooldown blocks further SMS to the manager's number.
+  /// Cleared when the manager texts back.
+  DateTime? _smsManagerCooldownUntil;
+  DateTime? _smsThirdPartySendAt;
+  static const _smsManagerCooldownSeconds = 30;
+
   bool _isSmsRateLimited(String normalizedTo) {
     final now = DateTime.now();
     final cutoff = now.subtract(const Duration(seconds: _smsRateWindowSeconds));
@@ -4163,6 +4182,16 @@ class AgentService extends ChangeNotifier {
     _smsSendLog.putIfAbsent(normalizedTo, () => []).add(DateTime.now());
     _smsLastSent[normalizedTo] = (text: text, sentAt: DateTime.now());
     _smsConsecutiveRateLimits.remove(normalizedTo);
+
+    // Track when we last sent to a third party so the manager-confirmation
+    // cooldown logic knows whether the next manager-bound SMS is a
+    // confirmation or a standalone message.
+    if (_agentManagerConfig.isConfigured) {
+      final managerE164 = ensureE164(_agentManagerConfig.phoneNumber);
+      if (normalizedTo != managerE164) {
+        _smsThirdPartySendAt = DateTime.now();
+      }
+    }
   }
 
   String _handleSmsRateLimit(String normalizedTo, String displayTo) {
@@ -4174,6 +4203,19 @@ class AgentService extends ChangeNotifier {
       _textAgent?.cancelCurrentResponse();
       debugPrint('[AgentService] Force-cancelled LLM response after '
           '$count consecutive SMS rate limits to $normalizedTo');
+
+      // Nudge the LLM to re-attempt the user's request without SMS so that
+      // non-SMS actions (calls, reminders, conversational replies) aren't
+      // silently dropped by the cancellation.
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _textAgent?.addSystemContext(
+          '[SYSTEM] Your previous response was cancelled because you '
+          'exceeded the SMS rate limit to $displayTo. You MUST NOT send '
+          'any more SMS to that number. If the user asked you to do '
+          'something other than send a text, do that now. Otherwise, '
+          'respond conversationally without sending SMS.',
+        );
+      });
     }
     return 'Rate limited: you already sent $_smsRateMaxPerWindow messages to '
         'this number in the last $_smsRateWindowSeconds seconds. '
@@ -4193,14 +4235,55 @@ class AgentService extends ChangeNotifier {
     final displayTo = (demoModeService?.enabled ?? false)
         ? demoModeService!.maskPhone(to)
         : to;
+
+    // After sending to a third party, the LLM often sends multiple
+    // "confirmation" texts to the manager. Allow the first one through
+    // (the legitimate confirmation), then block subsequent ones during
+    // the cooldown window. The cooldown is cleared when the manager texts
+    // back, so real replies to manager commands are never blocked.
+    if (_agentManagerConfig.isConfigured &&
+        normalizedTo == ensureE164(_agentManagerConfig.phoneNumber)) {
+      if (_smsManagerCooldownUntil != null &&
+          DateTime.now().isBefore(_smsManagerCooldownUntil!)) {
+        return 'The confirmation was already sent to the manager. Do NOT '
+            'send another — they saw it. If the manager sent you a new '
+            'instruction, respond conversationally or execute the action '
+            'instead of texting them.';
+      }
+      // If a third-party send happened recently, this is the first
+      // confirmation — let it through but start the cooldown now.
+      if (_smsThirdPartySendAt != null &&
+          DateTime.now().difference(_smsThirdPartySendAt!).inSeconds <
+              _smsManagerCooldownSeconds) {
+        _smsManagerCooldownUntil = DateTime.now()
+            .add(const Duration(seconds: _smsManagerCooldownSeconds));
+      }
+    }
+
+    // Resolve contact name early so we can check for name mismatches and
+    // include it in the tool result.
+    String? contactName;
+    if (contactService != null) {
+      final contact = contactService!.lookupByPhone(to);
+      if (contact != null) {
+        contactName = contact['display_name'] as String?;
+      }
+    }
+
+    // Guard: if the message addresses someone by a different name than the
+    // stored contact, block the send and warn the LLM.
+    final mismatch = _detectSmsNameMismatch(text, contactName);
+    if (mismatch != null) {
+      return mismatch;
+    }
+
     if (_isSmsRateLimited(normalizedTo)) {
       return _handleSmsRateLimit(normalizedTo, displayTo);
     }
     if (_isSmsDuplicate(normalizedTo, text)) {
       debugPrint('[AgentService] SMS dedup — suppressed duplicate to '
           '$normalizedTo: "$text"');
-      return 'Message sent from the manager\'s phone to $displayTo. Do NOT '
-          'send another message to this number — wait for their reply.';
+      return _smsSentResult(displayTo, contactName);
     }
     final mediaUrl = args['media_url'] as String?;
     final mediaUrls =
@@ -4209,13 +4292,6 @@ class AgentService extends ChangeNotifier {
         .sendMessage(to: to, text: text, mediaUrls: mediaUrls);
     if (msg != null) {
       _recordSmsSend(normalizedTo, text);
-      String? contactName;
-      if (contactService != null) {
-        final contact = contactService!.lookupByPhone(to);
-        if (contact != null) {
-          contactName = contact['display_name'] as String?;
-        }
-      }
       _addMsg(ChatMessage.sms(
         'SMS sent to $displayTo: "$text"',
         direction: 'outbound',
@@ -4223,10 +4299,43 @@ class AgentService extends ChangeNotifier {
         contactName: contactName,
       ));
       notifyListeners();
-      return 'Message sent from the manager\'s phone to $displayTo. Do NOT '
-          'send another message to this number — wait for their reply.';
+      return _smsSentResult(displayTo, contactName);
     }
     return 'Failed to send message.';
+  }
+
+  /// Build a consistent tool result for successful SMS sends.
+  String _smsSentResult(String displayTo, String? contactName) {
+    final recipient = contactName != null
+        ? '$contactName ($displayTo)'
+        : displayTo;
+    return 'Message sent from the manager\'s phone to $recipient. Do NOT '
+        'send another message to this number — wait for their reply.';
+  }
+
+  /// Check if the SMS body addresses someone by a different first name than
+  /// the stored contact. Returns a warning string if mismatch, null if OK.
+  String? _detectSmsNameMismatch(String messageText, String? contactName) {
+    if (contactName == null || contactName.isEmpty) return null;
+
+    final contactFirst = contactName.split(RegExp(r'\s+')).first;
+    if (contactFirst.isEmpty) return null;
+
+    // Look for "Hi <Name>" / "Hey <Name>" / "Hello <Name>" / "Dear <Name>"
+    // at the start of the message.
+    final greetingRe = RegExp(
+      r'^(?:hi|hey|hello|dear|good\s+(?:morning|afternoon|evening))\s*,?\s+(\w+)',
+      caseSensitive: false,
+    );
+    final match = greetingRe.firstMatch(messageText.trim());
+    if (match == null) return null;
+
+    final addressedName = match.group(1)!;
+    if (addressedName.toLowerCase() == contactFirst.toLowerCase()) return null;
+
+    return 'WARNING: This phone number belongs to $contactName, but your '
+        'message addresses "$addressedName". The message was NOT sent. '
+        'Please verify the correct recipient and name before resending.';
   }
 
   Future<String> _handleReplySms(Map<String, dynamic> args) async {
@@ -4243,25 +4352,29 @@ class AgentService extends ChangeNotifier {
     final displayTo = (demoModeService?.enabled ?? false)
         ? demoModeService!.maskPhone(selected)
         : selected;
+
+    String? contactName;
+    if (contactService != null) {
+      final contact = contactService!.lookupByPhone(selected);
+      if (contact != null) {
+        contactName = contact['display_name'] as String?;
+      }
+    }
+
+    final mismatch = _detectSmsNameMismatch(text, contactName);
+    if (mismatch != null) return mismatch;
+
     if (_isSmsRateLimited(selected)) {
       return _handleSmsRateLimit(selected, displayTo);
     }
     if (_isSmsDuplicate(selected, text)) {
       debugPrint('[AgentService] SMS reply dedup — suppressed duplicate to '
           '$selected: "$text"');
-      return 'Reply sent from the manager\'s phone to $displayTo. Do NOT '
-          'send another message — wait for their reply.';
+      return _smsReplyResult(displayTo, contactName);
     }
     final msg = await messagingService!.reply(text);
     if (msg != null) {
       _recordSmsSend(selected, text);
-      String? contactName;
-      if (contactService != null) {
-        final contact = contactService!.lookupByPhone(selected);
-        if (contact != null) {
-          contactName = contact['display_name'] as String?;
-        }
-      }
       _addMsg(ChatMessage.sms(
         'SMS reply to $displayTo: "$text"',
         direction: 'outbound',
@@ -4269,10 +4382,17 @@ class AgentService extends ChangeNotifier {
         contactName: contactName,
       ));
       notifyListeners();
-      return 'Reply sent from the manager\'s phone to $displayTo. Do NOT '
-          'send another message — wait for their reply.';
+      return _smsReplyResult(displayTo, contactName);
     }
     return 'Failed to send reply.';
+  }
+
+  String _smsReplyResult(String displayTo, String? contactName) {
+    final recipient = contactName != null
+        ? '$contactName ($displayTo)'
+        : displayTo;
+    return 'Reply sent from the manager\'s phone to $recipient. Do NOT '
+        'send another message — wait for their reply.';
   }
 
   Future<String> _handleSearchMessages(Map<String, dynamic> args) async {
@@ -5030,6 +5150,19 @@ class AgentService extends ChangeNotifier {
     if (sipHelper == null) return 'SIP helper not available.';
     final number = args['number'] as String?;
     if (number == null || number.isEmpty) return 'No number provided.';
+
+    final cleaned = ensureE164(number.contains('@') ? number : number);
+
+    // Guard: don't dial the number already on the active call — this causes
+    // an SDP m-line mismatch crash that kills SIP entirely.
+    if (_remoteIdentity != null) {
+      final remoteE164 = ensureE164(_remoteIdentity!);
+      if (cleaned == remoteE164) {
+        return 'Cannot add $cleaned as a conference participant — they are '
+            'already on the active call.';
+      }
+    }
+
     if (conferenceService != null && conferenceService!.atCapacity) {
       final max = conferenceService!.config.effectiveMaxParticipants;
       return 'Conference is at capacity ($max participants). '
@@ -5041,8 +5174,6 @@ class AgentService extends ChangeNotifier {
     if (active.state != CallStateEnum.HOLD) {
       active.hold();
     }
-
-    final cleaned = ensureE164(number.contains('@') ? number : number);
     try {
       final stream = await navigator.mediaDevices
           .getUserMedia(<String, dynamic>{'audio': true, 'video': false});
@@ -6374,15 +6505,19 @@ class AgentService extends ChangeNotifier {
     }
   }
 
-  void addReminderMessage(String text, {int? reminderId}) {
+  void addReminderMessage(String text,
+      {int? reminderId, String? contactName}) {
     _addMsg(ChatMessage.reminder(
       text,
       reminderId: reminderId,
+      contactName: contactName,
       actions: [
         if (reminderId != null) ...[
           const MessageAction(label: 'Dismiss', value: 'dismiss_reminder'),
           const MessageAction(label: 'Snooze 15m', value: 'snooze_reminder'),
         ],
+        if (contactName != null && contactName.isNotEmpty)
+          const MessageAction(label: 'SMS', value: 'sms_contact'),
         const MessageAction(label: 'Tell me more', value: 'tell_me_more'),
       ],
     ));
@@ -6988,6 +7123,12 @@ class AgentService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   void _firePreGreeting() {
+    // Cancel any in-flight LLM response (e.g. from a make_call tool result
+    // that is being suppressed by _callDialPending). Without this, the
+    // sendUserMessage below may queue behind the stale response and never
+    // produce a greeting.
+    _textAgent?.cancelCurrentResponse();
+
     _preGreetInFlight = true;
     _preGreetTextBuffer = StringBuffer();
     _preGreetFinalText = null;

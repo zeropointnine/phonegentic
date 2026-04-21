@@ -402,23 +402,61 @@ class GoogleCalendarService extends ChangeNotifier {
 
   // ── Sync: push local events to Google Calendar ──────────────────────
 
+  /// Only pushes events that originated locally (not ones already from GCal
+  /// or Calendly, whose own integration handles GCal sync).
   Future<int> syncToGoogle(List<CalendarEvent> localEvents) async {
     int created = 0;
+
+    // Ensure the 'Calendly' calendar exists
+    var calendars = await listCalendars();
+    var calendlyCalendar = calendars
+        .where((c) => (c['name'] ?? '').toLowerCase().contains('calendly'))
+        .toList();
+    if (calendlyCalendar.isEmpty) {
+      await createCalendar(name: 'Calendly');
+      calendars = await listCalendars();
+      calendlyCalendar = calendars
+          .where((c) => (c['name'] ?? '').toLowerCase().contains('calendly'))
+          .toList();
+    }
+    final calId =
+        calendlyCalendar.isNotEmpty ? calendlyCalendar.first['id'] : null;
+
     for (final event in localEvents) {
+      if (event.source == EventSource.google) continue;
+      if (event.source == EventSource.calendly) continue;
+      if (event.googleCalendarEventId != null) continue;
+
+      final dateStr =
+          '${event.startTime.year}-${event.startTime.month.toString().padLeft(2, '0')}-${event.startTime.day.toString().padLeft(2, '0')}';
+      final startStr =
+          '${event.startTime.hour.toString().padLeft(2, '0')}:${event.startTime.minute.toString().padLeft(2, '0')}';
+
       final ok = await createEvent(
         title: event.title,
-        date:
-            '${event.startTime.year}-${event.startTime.month.toString().padLeft(2, '0')}-${event.startTime.day.toString().padLeft(2, '0')}',
-        startTime:
-            '${event.startTime.hour.toString().padLeft(2, '0')}:${event.startTime.minute.toString().padLeft(2, '0')}',
+        date: dateStr,
+        startTime: startStr,
         endTime:
             '${event.endTime.hour.toString().padLeft(2, '0')}:${event.endTime.minute.toString().padLeft(2, '0')}',
         description: event.description,
         location: event.location,
+        calendarId: calId,
       );
-      if (ok) created++;
+      if (ok) {
+        final gcalId = gcalCompositeId(event.title, dateStr, startStr);
+        await CallHistoryDb.updateCalendarEvent(
+          event.copyWith(googleCalendarEventId: gcalId),
+        );
+        created++;
+      }
     }
     return created;
+  }
+
+  /// Build a stable composite ID for a scraped Google Calendar event so we
+  /// can deduplicate across sync cycles.
+  static String gcalCompositeId(String title, String dateStr, String startTime) {
+    return 'gcal:$dateStr:$startTime:$title';
   }
 
   // ── Sync: pull Google Calendar events into local SQLite ─────────────
@@ -435,7 +473,10 @@ class GoogleCalendarService extends ChangeNotifier {
         final startDt = _parseDateTime(dateStr, ge.startTime) ?? current;
         final endDt =
             _parseDateTime(dateStr, ge.endTime) ?? startDt.add(const Duration(hours: 1));
+        final compositeId = gcalCompositeId(ge.title, dateStr, ge.startTime);
         final local = CalendarEvent(
+          googleCalendarEventId: compositeId,
+          source: EventSource.google,
           title: ge.title,
           startTime: startDt,
           endTime: endDt,
@@ -464,10 +505,9 @@ class GoogleCalendarService extends ChangeNotifier {
       final start = now.subtract(const Duration(days: 1));
       final end = now.add(const Duration(days: 14));
 
-      // Pull from Google into local
       final imported = await syncFromGoogle(start, end);
 
-      // Push local events to Google
+      // Only push local-origin events to Google (skips google/calendly sources)
       final localEvents = await CallHistoryDb.getEventsBetween(start, end);
       final pushed = await syncToGoogle(localEvents);
 

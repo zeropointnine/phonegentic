@@ -1,6 +1,25 @@
+enum EventSource { local, calendly, google }
+
+extension EventSourceSerialization on EventSource {
+  String toDbString() => name;
+
+  static EventSource fromDbString(String? value) {
+    switch (value) {
+      case 'calendly':
+        return EventSource.calendly;
+      case 'google':
+        return EventSource.google;
+      default:
+        return EventSource.local;
+    }
+  }
+}
+
 class CalendarEvent {
   final int? id;
   final String? calendlyEventId;
+  final String? googleCalendarEventId;
+  final EventSource source;
   final String title;
   final String? description;
   final DateTime startTime;
@@ -17,6 +36,8 @@ class CalendarEvent {
   const CalendarEvent({
     this.id,
     this.calendlyEventId,
+    this.googleCalendarEventId,
+    this.source = EventSource.local,
     required this.title,
     this.description,
     required this.startTime,
@@ -34,6 +55,8 @@ class CalendarEvent {
   CalendarEvent copyWith({
     int? id,
     String? calendlyEventId,
+    String? googleCalendarEventId,
+    EventSource? source,
     String? title,
     String? description,
     DateTime? startTime,
@@ -50,6 +73,9 @@ class CalendarEvent {
     return CalendarEvent(
       id: id ?? this.id,
       calendlyEventId: calendlyEventId ?? this.calendlyEventId,
+      googleCalendarEventId:
+          googleCalendarEventId ?? this.googleCalendarEventId,
+      source: source ?? this.source,
       title: title ?? this.title,
       description: description ?? this.description,
       startTime: startTime ?? this.startTime,
@@ -69,6 +95,8 @@ class CalendarEvent {
     return {
       if (id != null) 'id': id,
       'calendly_event_id': calendlyEventId,
+      'google_calendar_event_id': googleCalendarEventId,
+      'source': source.toDbString(),
       'title': title,
       'description': description,
       'start_time': startTime.toIso8601String(),
@@ -88,6 +116,9 @@ class CalendarEvent {
     return CalendarEvent(
       id: map['id'] as int?,
       calendlyEventId: map['calendly_event_id'] as String?,
+      googleCalendarEventId: map['google_calendar_event_id'] as String?,
+      source: EventSourceSerialization.fromDbString(
+          map['source'] as String?),
       title: map['title'] as String? ?? '',
       description: map['description'] as String?,
       startTime: DateTime.parse(map['start_time'] as String),

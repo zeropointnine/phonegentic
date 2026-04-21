@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:math' show pi;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../calendar_sync_service.dart';
+import '../chrome/google_calendar_service.dart';
 import '../db/call_history_db.dart';
 import '../job_function_service.dart';
+import '../manager_presence_service.dart';
+import '../messaging/messaging_service.dart';
 import '../models/calendar_event.dart';
 import '../theme_provider.dart';
 
@@ -84,6 +88,9 @@ class _CalendarPanelState extends State<CalendarPanel> {
   @override
   Widget build(BuildContext context) {
     final syncService = context.watch<CalendarSyncService>();
+    final gcalService = context.watch<GoogleCalendarService>();
+    final hasAnyIntegration = syncService.hasCalendly || gcalService.config.enabled;
+
     return Container(
       color: AppColors.bg,
       child: SafeArea(
@@ -91,21 +98,25 @@ class _CalendarPanelState extends State<CalendarPanel> {
           children: [
             _buildHeader(syncService),
             _buildViewToggle(),
-            Expanded(
-              child: _view == _CalendarView.week
-                  ? _WeekView(
-                      focusDate: _focusDate,
-                      events: _events,
-                      onEventTap: (e) => _showEditEventDialog(context, e),
-                      onAddEvent: (day) => _showNewEventDialog(context, day),
-                    )
-                  : _MonthView(
-                      focusDate: _focusDate,
-                      events: _events,
-                      onDayTap: _goToDay,
-                      onAddEvent: (day) => _showNewEventDialog(context, day),
-                    ),
-            ),
+            if (!hasAnyIntegration && _events.isEmpty)
+              _SetupGuidanceCard(onClose: () => setState(() {}))
+            else
+              Expanded(
+                child: _view == _CalendarView.week
+                    ? _WeekView(
+                        focusDate: _focusDate,
+                        events: _events,
+                        onEventTap: (e) => _showEditEventDialog(context, e),
+                        onAddEvent: (day) => _showNewEventDialog(context, day),
+                      )
+                    : _MonthView(
+                        focusDate: _focusDate,
+                        events: _events,
+                        onDayTap: _goToDay,
+                        onEventTap: (e) => _showEditEventDialog(context, e),
+                        onAddEvent: (day) => _showNewEventDialog(context, day),
+                      ),
+              ),
           ],
         ),
       ),
@@ -158,6 +169,34 @@ class _CalendarPanelState extends State<CalendarPanel> {
           }),
           const SizedBox(width: 2),
           _navButton(Icons.chevron_right_rounded, () => _navigate(1)),
+          const SizedBox(width: 8),
+          HoverButton(
+            onTap: () => _showNewEventDialog(context, _focusDate),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: AppColors.accent,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_rounded, size: 14, color: AppColors.onAccent),
+                  const SizedBox(width: 4),
+                  Text(
+                    'New Event',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.onAccent,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(width: 4),
           HoverButton(
             onTap: sync.close,
@@ -202,6 +241,27 @@ class _CalendarPanelState extends State<CalendarPanel> {
           _viewChip('Week', _CalendarView.week),
           const SizedBox(width: 8),
           _viewChip('Month', _CalendarView.month),
+          const Spacer(),
+          for (final source in EventSource.values) ...[
+            Container(
+              width: 20,
+              height: 12,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(3),
+                color: AppColors.colorForSource(source),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              AppColors.labelForSource(source),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 14),
+          ],
         ],
       ),
     );
@@ -341,7 +401,7 @@ class _WeekViewState extends State<_WeekView> {
           children: [
             Container(
               width: 44,
-              height: 40,
+              height: 50,
               decoration: BoxDecoration(
                 color: AppColors.surface,
                 border: Border(
@@ -465,7 +525,7 @@ class _DayHeaderState extends State<_DayHeader> {
 
   @override
   Widget build(BuildContext context) {
-    final String dayLabel = DateFormat.E().format(widget.day).substring(0, 2);
+    final String dayLabel = DateFormat.EEEE().format(widget.day);
     final String dayNum = widget.day.day.toString();
 
     return Container(
@@ -485,7 +545,7 @@ class _DayHeaderState extends State<_DayHeader> {
           behavior: HitTestBehavior.opaque,
           onTap: () => widget.onAddEvent(widget.day),
           child: Container(
-            height: 40,
+            height: 50,
             decoration: BoxDecoration(
               color: AppColors.surface,
               border: Border(
@@ -502,17 +562,18 @@ class _DayHeaderState extends State<_DayHeader> {
                       Text(
                         dayLabel,
                         style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                           color: widget.isToday
-                              ? AppColors.accent
-                              : AppColors.textSecondary,
+                              ? AppColors.textSecondary
+                              : AppColors.textTertiary,
+                          letterSpacing: 0.2,
                         ),
                       ),
-                      const SizedBox(height: 1),
+                      const SizedBox(height: 2),
                       Container(
-                        width: 22,
-                        height: 22,
+                        width: 26,
+                        height: 26,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: widget.isToday
@@ -523,7 +584,7 @@ class _DayHeaderState extends State<_DayHeader> {
                           child: Text(
                             dayNum,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: widget.isToday
                                   ? AppColors.onAccent
@@ -648,20 +709,49 @@ class _DayColumn extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return Positioned(
-      top: top,
+      top: top - 10,
       left: 0,
       right: 0,
-      child: Container(
-        height: 1.5,
-        decoration: BoxDecoration(
-          color: AppColors.accent,
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.accent.withValues(alpha: 0.4),
-              blurRadius: 3,
+      height: 20,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 4,
+            height: 20,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(2),
+              gradient: LinearGradient(
+                transform: const GradientRotation(pi / 4),
+                colors: [AppColors.accentLight, AppColors.accent],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.accent.withValues(alpha: 0.5),
+                  blurRadius: 4,
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: Container(
+              height: 2,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(1),
+                gradient: LinearGradient(
+                  transform: const GradientRotation(pi / 4),
+                  colors: [AppColors.accentLight, AppColors.accent],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.accent.withValues(alpha: 0.35),
+                    blurRadius: 4,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -675,6 +765,9 @@ class _DayColumn extends StatelessWidget {
     final double top = startMin * hourHeight / 60;
     final double height =
         ((endMin - startMin).clamp(15, 9999)) * hourHeight / 60;
+
+    final sourceColor = AppColors.colorForSource(event.source);
+    final hasContact = event.inviteeName != null && event.inviteeName!.isNotEmpty;
 
     return Positioned(
       top: top.clamp(0, double.infinity),
@@ -690,26 +783,127 @@ class _DayColumn extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 1),
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.18),
+              color: sourceColor.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(4),
-              border: Border.all(
-                  color: AppColors.accent.withValues(alpha: 0.35), width: 0.5),
-            ),
-            child: Text(
-              event.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-                color: AppColors.accent,
-                height: 1.2,
+              border: Border(
+                left: BorderSide(color: sourceColor, width: 2.5),
               ),
+            ),
+            child: Stack(
+              children: [
+                Padding(
+                  padding: EdgeInsets.only(right: hasContact ? 14 : 0),
+                  child: Text(
+                    event.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w600,
+                      color: sourceColor,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+                if (hasContact)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: _SmsQuickButton(event: event, color: sourceColor),
+                  ),
+              ],
             ),
           ),
         ),
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quick SMS button on event cards
+// ---------------------------------------------------------------------------
+
+class _SmsQuickButton extends StatelessWidget {
+  final CalendarEvent event;
+  final Color color;
+  final double size;
+  const _SmsQuickButton({
+    required this.event,
+    required this.color,
+    this.size = 14,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final iconSize = size * 0.64;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _sendQuickSms(context),
+      child: Tooltip(
+        message: 'SMS ${event.inviteeName}',
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(size * 0.21),
+          ),
+          child: Icon(Icons.sms_rounded, size: iconSize, color: color),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendQuickSms(BuildContext ctx) async {
+    final name = event.inviteeName ?? '';
+    if (name.isEmpty) return;
+
+    final results = await CallHistoryDb.searchContacts(name);
+    final phone = results.isNotEmpty
+        ? results.first['phone_number'] as String? ?? ''
+        : '';
+    if (phone.isEmpty) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text('No phone number found for $name'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    final localStart = event.startTime.toLocal();
+    final h = localStart.hour > 12
+        ? localStart.hour - 12
+        : (localStart.hour == 0 ? 12 : localStart.hour);
+    final m = localStart.minute.toString().padLeft(2, '0');
+    final ap = localStart.hour >= 12 ? 'PM' : 'AM';
+    final dateStr = DateFormat.MMMd().format(localStart);
+    final contactName = name.split(' ').first;
+    final body = 'Hi $contactName, just a heads up about our '
+        'appointment at $h:$m $ap on $dateStr.';
+
+    try {
+      final messaging = ctx.read<MessagingService>();
+      await messaging.sendMessage(to: phone, text: body);
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text('SMS sent to $name'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (_) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(content: Text('Failed to send SMS')),
+        );
+      }
+    }
   }
 }
 
@@ -721,12 +915,14 @@ class _MonthView extends StatelessWidget {
   final DateTime focusDate;
   final List<CalendarEvent> events;
   final ValueChanged<DateTime> onDayTap;
+  final ValueChanged<CalendarEvent> onEventTap;
   final ValueChanged<DateTime> onAddEvent;
 
   const _MonthView({
     required this.focusDate,
     required this.events,
     required this.onDayTap,
+    required this.onEventTap,
     required this.onAddEvent,
   });
 
@@ -737,7 +933,7 @@ class _MonthView extends StatelessWidget {
     final daysInMonth =
         DateTime(focusDate.year, focusDate.month + 1, 0).day;
     final now = DateTime.now();
-    final dayLabels = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+    final dayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -761,8 +957,9 @@ class _MonthView extends StatelessWidget {
                               d,
                               style: TextStyle(
                                 fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.textSecondary,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textTertiary,
+                                letterSpacing: 0.2,
                               ),
                             ),
                           ),
@@ -776,7 +973,7 @@ class _MonthView extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 7,
-                childAspectRatio: 1.0,
+                childAspectRatio: 1.05,
               ),
               itemCount: startWeekday + daysInMonth,
               itemBuilder: (context, index) {
@@ -798,8 +995,9 @@ class _MonthView extends StatelessWidget {
                   day: day,
                   dayNum: dayNum,
                   isToday: isToday,
-                  eventCount: dayEvents.length,
+                  events: dayEvents,
                   onTap: () => onDayTap(day),
+                  onEventTap: onEventTap,
                   onAdd: () => onAddEvent(day),
                 );
               },
@@ -815,16 +1013,18 @@ class _MonthDayCell extends StatefulWidget {
   final DateTime day;
   final int dayNum;
   final bool isToday;
-  final int eventCount;
+  final List<CalendarEvent> events;
   final VoidCallback onTap;
+  final ValueChanged<CalendarEvent> onEventTap;
   final VoidCallback onAdd;
 
   const _MonthDayCell({
     required this.day,
     required this.dayNum,
     required this.isToday,
-    required this.eventCount,
+    required this.events,
     required this.onTap,
+    required this.onEventTap,
     required this.onAdd,
   });
 
@@ -835,8 +1035,22 @@ class _MonthDayCell extends StatefulWidget {
 class _MonthDayCellState extends State<_MonthDayCell> {
   bool _hovered = false;
 
+  static const _maxPills = 5;
+
+  String _shortTime(DateTime dt) {
+    final h = dt.hour > 12
+        ? dt.hour - 12
+        : (dt.hour == 0 ? 12 : dt.hour);
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ap = dt.hour >= 12 ? 'p' : 'a';
+    return '$h:$m$ap';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final visible = widget.events.take(_maxPills).toList();
+    final overflow = widget.events.length - _maxPills;
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -853,43 +1067,45 @@ class _MonthDayCellState extends State<_MonthDayCell> {
           ),
           child: Stack(
             children: [
-              Center(
+              Padding(
+                padding: const EdgeInsets.only(top: 2, left: 2, right: 2),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${widget.dayNum}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: widget.isToday
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                        color: widget.isToday
-                            ? AppColors.accent
-                            : AppColors.textPrimary,
+                    Align(
+                      alignment: Alignment.topCenter,
+                      child: Text(
+                        '${widget.dayNum}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: widget.isToday
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          color: widget.isToday
+                              ? AppColors.accent
+                              : AppColors.textPrimary,
+                        ),
                       ),
                     ),
-                    if (widget.eventCount > 0) ...[
-                      const SizedBox(height: 3),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          for (var i = 0;
-                              i < widget.eventCount.clamp(0, 3);
-                              i++)
-                            Container(
-                              width: 4,
-                              height: 4,
-                              margin: const EdgeInsets.symmetric(
-                                  horizontal: 1),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: AppColors.accent,
-                              ),
-                            ),
-                        ],
+                    const SizedBox(height: 1),
+                    for (final ev in visible)
+                      _EventPill(
+                        event: ev,
+                        shortTime: _shortTime,
+                        onTap: () => widget.onEventTap(ev),
                       ),
-                    ],
+                    if (overflow > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 2, top: 1),
+                        child: Text(
+                          '+$overflow more',
+                          style: TextStyle(
+                            fontSize: 7,
+                            color: AppColors.textTertiary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -921,6 +1137,69 @@ class _MonthDayCellState extends State<_MonthDayCell> {
                         ),
                       ),
                     ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EventPill extends StatelessWidget {
+  final CalendarEvent event;
+  final String Function(DateTime) shortTime;
+  final VoidCallback? onTap;
+
+  const _EventPill({required this.event, required this.shortTime, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final sourceColor = AppColors.colorForSource(event.source);
+    final localStart = event.startTime.toLocal();
+    final hasContact =
+        event.inviteeName != null && event.inviteeName!.isNotEmpty;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          height: 16,
+          margin: const EdgeInsets.only(bottom: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          decoration: BoxDecoration(
+            color: sourceColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(3),
+            border: Border(
+              left: BorderSide(color: sourceColor, width: 1.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${shortTime(localStart)} ${event.title}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    color: sourceColor,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+              if (hasContact)
+                Padding(
+                  padding: const EdgeInsets.only(left: 2),
+                  child: _SmsQuickButton(
+                    event: event,
+                    color: sourceColor,
+                    size: 11,
                   ),
                 ),
             ],
@@ -988,6 +1267,259 @@ Widget _buildField({
   );
 }
 
+Future<TimeOfDay?> _showQuickTimePicker(
+    BuildContext context, TimeOfDay current) async {
+  return showDialog<TimeOfDay>(
+    context: context,
+    builder: (ctx) => _QuickTimeInput(current: current),
+  );
+}
+
+class _QuickTimeInput extends StatefulWidget {
+  final TimeOfDay current;
+  const _QuickTimeInput({required this.current});
+  @override
+  State<_QuickTimeInput> createState() => _QuickTimeInputState();
+}
+
+class _QuickTimeInputState extends State<_QuickTimeInput> {
+  late final TextEditingController _hourCtrl;
+  late final TextEditingController _minCtrl;
+  late bool _isAm;
+  final _hourFocus = FocusNode();
+  final _minFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _hourCtrl = TextEditingController();
+    _minCtrl = TextEditingController();
+    _isAm = widget.current.period == DayPeriod.am;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _hourFocus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _hourCtrl.dispose();
+    _minCtrl.dispose();
+    _hourFocus.dispose();
+    _minFocus.dispose();
+    super.dispose();
+  }
+
+  String get _hourHint {
+    final h = widget.current.hourOfPeriod;
+    return (h == 0 ? 12 : h).toString();
+  }
+
+  String get _minHint => widget.current.minute.toString().padLeft(2, '0');
+
+  void _submit() {
+    final hText = _hourCtrl.text.trim();
+    final mText = _minCtrl.text.trim();
+    final h = hText.isEmpty
+        ? widget.current.hourOfPeriod
+        : int.tryParse(hText);
+    final m = mText.isEmpty ? widget.current.minute : int.tryParse(mText);
+    if (h == null || m == null || h < 1 || h > 12 || m < 0 || m > 59) {
+      return;
+    }
+    var hour24 = h % 12;
+    if (!_isAm) hour24 += 12;
+    Navigator.of(context).pop(TimeOfDay(hour: hour24, minute: m));
+  }
+
+  InputDecoration _fieldDeco(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w500,
+            color: AppColors.textTertiary.withValues(alpha: 0.35)),
+        filled: true,
+        fillColor: AppColors.card,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: AppColors.accent, width: 1),
+        ),
+        counterText: '',
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface,
+      insetPadding: const EdgeInsets.all(0),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: IntrinsicWidth(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Enter time',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textTertiary,
+                      letterSpacing: 0.4)),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 50,
+                    child: TextField(
+                      controller: _hourCtrl,
+                      focusNode: _hourFocus,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      maxLength: 2,
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textPrimary),
+                      decoration: _fieldDeco(_hourHint),
+                      onChanged: (v) {
+                        if (v.length == 2) _minFocus.requestFocus();
+                      },
+                      onSubmitted: (_) => _minFocus.requestFocus(),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(':',
+                        style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textTertiary)),
+                  ),
+                  SizedBox(
+                    width: 50,
+                    child: TextField(
+                      controller: _minCtrl,
+                      focusNode: _minFocus,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      maxLength: 2,
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textPrimary),
+                      decoration: _fieldDeco(_minHint),
+                      onSubmitted: (_) => _submit(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _amPmButton('AM', true),
+                      const SizedBox(height: 2),
+                      _amPmButton('PM', false),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  HoverButton(
+                    onTap: () => Navigator.of(context).pop(),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: AppColors.border.withValues(alpha: 0.5),
+                            width: 0.5),
+                      ),
+                      child: Text('Cancel',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  HoverButton(
+                    onTap: _submit,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.accent.withValues(alpha: 0.3),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text('OK',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.onAccent)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _amPmButton(String text, bool am) {
+    final selected = _isAm == am;
+    return GestureDetector(
+      onTap: () => setState(() => _isAm = am),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.accent.withValues(alpha: 0.2) : null,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected
+                ? AppColors.accent
+                : AppColors.border.withValues(alpha: 0.4),
+            width: 0.5,
+          ),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? AppColors.accent : AppColors.textTertiary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Widget _buildTimeSelector({
   required String label,
   required TimeOfDay value,
@@ -1010,22 +1542,7 @@ Widget _buildTimeSelector({
       const SizedBox(height: 5),
       HoverButton(
         onTap: () async {
-          final picked = await showTimePicker(
-            context: context,
-            initialTime: value,
-            builder: (ctx, child) {
-              return Theme(
-                data: Theme.of(ctx).copyWith(
-                  colorScheme: ColorScheme.dark(
-                    primary: AppColors.accent,
-                    surface: AppColors.surface,
-                    onSurface: AppColors.textPrimary,
-                  ),
-                ),
-                child: child!,
-              );
-            },
-          );
+          final picked = await _showQuickTimePicker(context, value);
           if (picked != null) onChanged(picked);
         },
         borderRadius: BorderRadius.circular(8),
@@ -1152,13 +1669,15 @@ class _NewEventDialogState extends State<_NewEventDialog> {
   final _emailCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _locationCtrl = TextEditingController();
-  final _searchCtrl = TextEditingController();
+  final _nameFocus = FocusNode();
 
   late DateTime _date;
   late TimeOfDay _startTime;
   late TimeOfDay _endTime;
   int? _selectedJfId;
-  bool _syncToCalendly = false;
+  late bool _syncToCalendly;
+  late bool _syncToGoogle;
+  bool _notifyRecipient = true;
   bool _isSaving = false;
 
   List<Map<String, dynamic>> _searchResults = [];
@@ -1172,6 +1691,11 @@ class _NewEventDialogState extends State<_NewEventDialog> {
     final now = TimeOfDay.now();
     _startTime = TimeOfDay(hour: now.hour + 1, minute: 0);
     _endTime = TimeOfDay(hour: now.hour + 1, minute: 30);
+    final sync = widget.parentContext.read<CalendarSyncService>();
+    final gcal = widget.parentContext.read<GoogleCalendarService>();
+    _syncToCalendly = sync.hasCalendly;
+    _syncToGoogle = gcal.config.enabled;
+    _nameFocus.addListener(_onNameFocusChanged);
   }
 
   @override
@@ -1182,45 +1706,215 @@ class _NewEventDialogState extends State<_NewEventDialog> {
     _emailCtrl.dispose();
     _descCtrl.dispose();
     _locationCtrl.dispose();
-    _searchCtrl.dispose();
+    _nameFocus.removeListener(_onNameFocusChanged);
+    _nameFocus.dispose();
     _searchDebounce?.cancel();
     super.dispose();
   }
 
-  void _onSearchChanged(String query) {
-    _searchDebounce?.cancel();
-    if (query.trim().isEmpty) {
-      setState(() {
-        _searchResults = [];
-        _showSearchResults = false;
+  String _fmtTime(TimeOfDay t) {
+    final h = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    final m = t.minute.toString().padLeft(2, '0');
+    final p = t.period == DayPeriod.am ? 'a' : 'p';
+    return '$h:$m$p';
+  }
+
+  void _onNameFocusChanged() {
+    if (_nameFocus.hasFocus) {
+      _runContactSearch(_nameCtrl.text);
+    } else {
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (mounted && !_nameFocus.hasFocus) {
+          setState(() => _showSearchResults = false);
+        }
       });
-      return;
     }
-    _searchDebounce = Timer(const Duration(milliseconds: 250), () async {
-      final results = await CallHistoryDb.searchContacts(query);
-      if (mounted) {
-        setState(() {
-          _searchResults = results;
-          _showSearchResults = results.isNotEmpty;
-        });
-      }
+  }
+
+  void _onNameChanged(String query) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+      _runContactSearch(query);
     });
   }
 
+  Future<void> _runContactSearch(String query) async {
+    if (query.trim().length < 2) {
+      if (_showSearchResults) {
+        setState(() {
+          _searchResults = [];
+          _showSearchResults = false;
+        });
+      }
+      return;
+    }
+    final results = await CallHistoryDb.searchContacts(query);
+    if (mounted) {
+      setState(() {
+        _searchResults = results;
+        _showSearchResults = results.isNotEmpty;
+      });
+    }
+  }
+
   void _selectContact(Map<String, dynamic> contact) {
-    _nameCtrl.text = contact['display_name'] as String? ?? '';
-    _phoneCtrl.text = contact['phone_number'] as String? ?? '';
-    _emailCtrl.text = contact['email'] as String? ?? '';
-    _searchCtrl.clear();
     setState(() {
+      _nameCtrl.text = contact['display_name'] as String? ?? '';
+      _phoneCtrl.text = contact['phone_number'] as String? ?? '';
+      _emailCtrl.text = contact['email'] as String? ?? '';
       _searchResults = [];
       _showSearchResults = false;
     });
   }
 
+  Widget _buildContactField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'CONTACT',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 5),
+        _buildMiniField(
+          icon: Icons.person_search_rounded,
+          controller: _nameCtrl,
+          hint: 'Search contacts...',
+          onChanged: _onNameChanged,
+          focusNode: _nameFocus,
+        ),
+        if (_showSearchResults)
+          Container(
+            constraints: const BoxConstraints(maxHeight: 140),
+            margin: const EdgeInsets.only(top: 4),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.5),
+                  width: 0.5),
+            ),
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: _searchResults.length,
+              itemBuilder: (_, i) {
+                final c = _searchResults[i];
+                final cName = c['display_name'] as String? ?? '';
+                final cPhone = c['phone_number'] as String? ?? '';
+                return InkWell(
+                  onTap: () => _selectContact(c),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.person_outline_rounded,
+                            size: 14, color: AppColors.textTertiary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                cName,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              if (cPhone.isNotEmpty)
+                                Text(
+                                  cPhone,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textTertiary,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 6),
+        _buildMiniField(
+          icon: Icons.phone_rounded,
+          controller: _phoneCtrl,
+          hint: 'Phone',
+        ),
+        const SizedBox(height: 6),
+        _buildMiniField(
+          icon: Icons.email_outlined,
+          controller: _emailCtrl,
+          hint: 'Email',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniField({
+    required IconData icon,
+    required TextEditingController controller,
+    required String hint,
+    ValueChanged<String>? onChanged,
+    FocusNode? focusNode,
+  }) {
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      focusNode: focusNode,
+      style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(
+            fontSize: 12,
+            color: AppColors.textTertiary.withValues(alpha: 0.5)),
+        prefixIcon:
+            Icon(icon, size: 14, color: AppColors.textTertiary),
+        prefixIconConstraints: const BoxConstraints(minWidth: 32),
+        filled: true,
+        fillColor: AppColors.card,
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(7),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.4),
+              width: 0.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(7),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.4),
+              width: 0.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(7),
+          borderSide: BorderSide(color: AppColors.accent, width: 1),
+        ),
+      ),
+    );
+  }
+
   Future<void> _create() async {
     if (_titleCtrl.text.trim().isEmpty) return;
     setState(() => _isSaving = true);
+
+    final name = _nameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
 
     final start = DateTime(
       _date.year, _date.month, _date.day,
@@ -1235,12 +1929,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
       title: _titleCtrl.text.trim(),
       startTime: start,
       endTime: end,
-      inviteeName: _nameCtrl.text.trim().isEmpty
-          ? null
-          : _nameCtrl.text.trim(),
-      inviteeEmail: _emailCtrl.text.trim().isEmpty
-          ? null
-          : _emailCtrl.text.trim(),
+      inviteeName: name.isEmpty ? null : name,
+      inviteeEmail: email.isEmpty ? null : email,
       description: _descCtrl.text.trim().isEmpty
           ? null
           : _descCtrl.text.trim(),
@@ -1254,27 +1944,61 @@ class _NewEventDialogState extends State<_NewEventDialog> {
 
     final localId = await CallHistoryDb.insertCalendarEvent(event);
 
+    // Save contact if name or phone provided
+    if (name.isNotEmpty || phone.isNotEmpty) {
+      final lookupPhone = phone.isNotEmpty ? phone : null;
+      final existing = lookupPhone != null
+          ? await CallHistoryDb.getContactByPhone(lookupPhone)
+          : null;
+      if (existing == null) {
+        await CallHistoryDb.insertContact(
+          displayName: name.isNotEmpty ? name : 'Unknown',
+          phoneNumber: phone,
+          email: email.isEmpty ? null : email,
+        );
+      }
+    }
+
+    // Sync to Calendly
     if (_syncToCalendly && mounted) {
       final sync = widget.parentContext.read<CalendarSyncService>();
       if (sync.hasCalendly && sync.calendlyService != null) {
         try {
           final eventTypes = await sync.calendlyService!.listEventTypes();
           if (eventTypes.isNotEmpty) {
-            final calendlyUri = await sync.calendlyService!.createInvitee(
-              eventTypeUri: eventTypes.first.uri,
-              startTime: start,
-              inviteeName: _nameCtrl.text.trim().isEmpty
-                  ? 'Guest'
-                  : _nameCtrl.text.trim(),
-              inviteeEmail: _emailCtrl.text.trim().isEmpty
-                  ? 'guest@example.com'
-                  : _emailCtrl.text.trim(),
-            );
-            if (calendlyUri != null) {
-              await CallHistoryDb.updateCalendarEvent(
-                event.copyWith(
-                    id: localId, calendlyEventId: calendlyUri),
+            if (_notifyRecipient && email.isNotEmpty) {
+              // Create invitee -- Calendly sends notification to recipient
+              final calendlyUri = await sync.calendlyService!.createInvitee(
+                eventTypeUri: eventTypes.first.uri,
+                startTime: start,
+                inviteeName: name.isEmpty ? 'Guest' : name,
+                inviteeEmail: email,
               );
+              if (calendlyUri != null) {
+                await CallHistoryDb.updateCalendarEvent(
+                  event.copyWith(
+                    id: localId,
+                    calendlyEventId: calendlyUri,
+                    source: EventSource.calendly,
+                  ),
+                );
+              }
+            } else {
+              // Create scheduling link without notifying
+              final link = await sync.calendlyService!.createSchedulingLink(
+                eventTypeUri: eventTypes.first.uri,
+              );
+              if (link != null) {
+                await CallHistoryDb.updateCalendarEvent(
+                  event.copyWith(
+                    id: localId,
+                    description: event.description != null
+                        ? '${event.description}\nScheduling link: $link'
+                        : 'Scheduling link: $link',
+                    source: EventSource.calendly,
+                  ),
+                );
+              }
             }
           }
         } catch (_) {}
@@ -1282,14 +2006,160 @@ class _NewEventDialogState extends State<_NewEventDialog> {
       }
     }
 
+    // Sync to Google Calendar — ensure 'Calendly' calendar exists
+    if (_syncToGoogle && mounted) {
+      try {
+        final gcal = widget.parentContext.read<GoogleCalendarService>();
+        final dateStr =
+            '${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}';
+        final startStr =
+            '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
+        final endStr =
+            '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}';
+
+        var calendars = await gcal.listCalendars();
+        var calendlyCalendar = calendars
+            .where((c) =>
+                (c['name'] ?? '').toLowerCase().contains('calendly'))
+            .toList();
+
+        if (calendlyCalendar.isEmpty) {
+          await gcal.createCalendar(name: 'Calendly');
+          calendars = await gcal.listCalendars();
+          calendlyCalendar = calendars
+              .where((c) =>
+                  (c['name'] ?? '').toLowerCase().contains('calendly'))
+              .toList();
+        }
+        final calId =
+            calendlyCalendar.isNotEmpty ? calendlyCalendar.first['id'] : null;
+
+        final ok = await gcal.createEvent(
+          title: _titleCtrl.text.trim(),
+          date: dateStr,
+          startTime: startStr,
+          endTime: endStr,
+          description: _descCtrl.text.trim(),
+          location: _locationCtrl.text.trim(),
+          calendarId: calId,
+        );
+        if (ok) {
+          final gcalId = GoogleCalendarService.gcalCompositeId(
+            _titleCtrl.text.trim(), dateStr, startStr);
+          await CallHistoryDb.updateCalendarEvent(
+            event.copyWith(
+              id: localId,
+              googleCalendarEventId: gcalId,
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+
+    // SMS the contact about the new event
+    if (_notifyRecipient && phone.isNotEmpty && mounted) {
+      try {
+        final messaging =
+            widget.parentContext.read<MessagingService>();
+        final contactName = name.isNotEmpty ? name : 'there';
+        final body = 'Hi $contactName, you have an appointment on '
+            '${DateFormat.MMMd().format(_date)} at '
+            '${_fmtTime(_startTime)}.';
+        await messaging.sendMessage(to: phone, text: body);
+      } catch (_) {}
+    }
+
+    // Schedule a 15-minute reminder
+    if (start.isAfter(DateTime.now().toUtc()) && mounted) {
+      try {
+        final remindAt = start.subtract(const Duration(minutes: 15));
+        await CallHistoryDb.insertReminder(
+          title: _titleCtrl.text.trim(),
+          description: name.isNotEmpty
+              ? 'Meeting with $name'
+              : null,
+          remindAt: remindAt,
+          source: 'calendar',
+        );
+        widget.parentContext
+            .read<ManagerPresenceService>()
+            .onReminderCreatedOrChanged();
+      } catch (_) {}
+    }
+
     widget.onCreated();
     if (mounted) Navigator.of(context).pop();
+  }
+
+  Widget _syncCheckbox({
+    required String label,
+    required bool value,
+    required Color color,
+    required VoidCallback onTap,
+    IconData? icon,
+  }) {
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: value ? color.withValues(alpha: 0.1) : AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: value
+                ? color.withValues(alpha: 0.4)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14,
+                  color: value ? color : AppColors.textTertiary),
+              const SizedBox(width: 6),
+            ] else ...[
+              Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  color: value ? color : Colors.transparent,
+                  border: Border.all(
+                    color: value ? color : AppColors.textTertiary,
+                    width: 1.5,
+                  ),
+                ),
+                child: value
+                    ? Icon(Icons.check_rounded,
+                        size: 12, color: AppColors.onAccent)
+                    : null,
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: value ? color : AppColors.textSecondary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final pCtx = widget.parentContext;
     final sync = pCtx.watch<CalendarSyncService>();
+    final gcalService = pCtx.watch<GoogleCalendarService>();
     final jfService = pCtx.read<JobFunctionService>();
 
     return Dialog(
@@ -1381,8 +2251,13 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                             label: 'Start',
                             value: _startTime,
                             context: context,
-                            onChanged: (t) =>
-                                setState(() => _startTime = t),
+                            onChanged: (t) => setState(() {
+                                _startTime = t;
+                                final mins = t.hour * 60 + t.minute + 30;
+                                _endTime = TimeOfDay(
+                                    hour: (mins ~/ 60) % 24,
+                                    minute: mins % 60);
+                              }),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -1398,148 +2273,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                       ],
                     ),
                     const SizedBox(height: 18),
-                    // Contact search
-                    Text(
-                      'CONTACT',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textTertiary,
-                        letterSpacing: 0.6,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    TextField(
-                      controller: _searchCtrl,
-                      onChanged: _onSearchChanged,
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textPrimary),
-                      decoration: InputDecoration(
-                        hintText: 'Search contacts...',
-                        hintStyle: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textTertiary.withValues(alpha: 0.6)),
-                        prefixIcon: Icon(Icons.search_rounded,
-                            size: 16, color: AppColors.textTertiary),
-                        prefixIconConstraints:
-                            const BoxConstraints(minWidth: 36),
-                        filled: true,
-                        fillColor: AppColors.card,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                              color: AppColors.accent, width: 1),
-                        ),
-                      ),
-                    ),
-                    if (_showSearchResults)
-                      Container(
-                        constraints:
-                            const BoxConstraints(maxHeight: 140),
-                        margin: const EdgeInsets.only(top: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.card,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
-                        ),
-                        child: ListView.builder(
-                          padding: EdgeInsets.zero,
-                          shrinkWrap: true,
-                          itemCount: _searchResults.length,
-                          itemBuilder: (_, i) {
-                            final c = _searchResults[i];
-                            final name =
-                                c['display_name'] as String? ?? '';
-                            final phone =
-                                c['phone_number'] as String? ?? '';
-                            return InkWell(
-                              onTap: () => _selectContact(c),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.person_outline_rounded,
-                                        size: 14,
-                                        color: AppColors.textTertiary),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            name,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color:
-                                                  AppColors.textPrimary,
-                                            ),
-                                          ),
-                                          if (phone.isNotEmpty)
-                                            Text(
-                                              phone,
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                color: AppColors
-                                                    .textTertiary,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    const SizedBox(height: 10),
-                    _buildField(
-                      label: 'Name',
-                      controller: _nameCtrl,
-                      hint: 'Invitee name',
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildField(
-                            label: 'Phone',
-                            controller: _phoneCtrl,
-                            hint: '+1 555-123-4567',
-                            keyboardType: TextInputType.phone,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildField(
-                            label: 'Email',
-                            controller: _emailCtrl,
-                            hint: 'email@example.com',
-                            keyboardType: TextInputType.emailAddress,
-                          ),
-                        ),
-                      ],
-                    ),
+                    _buildContactField(),
                     const SizedBox(height: 14),
                     _buildField(
                       label: 'Description',
@@ -1610,61 +2344,12 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                             setState(() => _selectedJfId = v),
                       ),
                     ),
-                    // Calendly sync
-                    if (sync.hasCalendly) ...[
-                      const SizedBox(height: 14),
-                      HoverButton(
-                        onTap: () => setState(
-                            () => _syncToCalendly = !_syncToCalendly),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: _syncToCalendly
-                                ? AppColors.accent.withValues(alpha: 0.1)
-                                : AppColors.card,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: _syncToCalendly
-                                  ? AppColors.accent.withValues(alpha: 0.4)
-                                  : AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                _syncToCalendly
-                                    ? Icons.check_circle_rounded
-                                    : Icons.circle_outlined,
-                                size: 16,
-                                color: _syncToCalendly
-                                    ? AppColors.accent
-                                    : AppColors.textTertiary,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Sync to Calendly',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: _syncToCalendly
-                                      ? AppColors.accent
-                                      : AppColors.textSecondary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 8),
                   ],
                 ),
               ),
             ),
-            // Footer
+            // Footer: checkboxes + buttons
             Container(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
               decoration: BoxDecoration(
@@ -1674,72 +2359,130 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                       width: 0.5),
                 ),
               ),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: HoverButton(
-                      onTap: () => Navigator.of(context).pop(),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'SYNC',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textTertiary,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      if (sync.hasCalendly) ...[
+                        Expanded(
+                          child: _syncCheckbox(
+                            label: 'Calendly',
+                            value: _syncToCalendly,
+                            color: AppColors.colorForSource(EventSource.calendly),
+                            onTap: () => setState(
+                                () => _syncToCalendly = !_syncToCalendly),
+                          ),
                         ),
-                        child: Center(
-                          child: Text(
-                            'Cancel',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textSecondary,
+                        const SizedBox(width: 8),
+                      ],
+                      if (gcalService.config.enabled) ...[
+                        Expanded(
+                          child: _syncCheckbox(
+                            label: 'Google',
+                            value: _syncToGoogle,
+                            color: AppColors.colorForSource(EventSource.google),
+                            onTap: () => setState(
+                                () => _syncToGoogle = !_syncToGoogle),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: _syncCheckbox(
+                          label: 'SMS Contact',
+                          value: _notifyRecipient,
+                          color: AppColors.accent,
+                          icon: Icons.sms_rounded,
+                          onTap: () => setState(
+                              () => _notifyRecipient = !_notifyRecipient),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Action buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: HoverButton(
+                          onTap: () => Navigator.of(context).pop(),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: AppColors.border.withValues(alpha: 0.5),
+                                  width: 0.5),
+                            ),
+                            child: Center(
+                              child: Text(
+                                'Cancel',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: HoverButton(
-                      onTap: _isSaving ? null : _create,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        decoration: BoxDecoration(
-                          color: AppColors.accent,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: HoverButton(
+                          onTap: _isSaving ? null : _create,
                           borderRadius: BorderRadius.circular(8),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.accent.withValues(alpha: 0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: _isSaving
-                              ? SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.onAccent,
-                                  ),
-                                )
-                              : Text(
-                                  'Create',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.onAccent,
-                                  ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: AppColors.accent,
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.accent.withValues(alpha: 0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
                                 ),
+                              ],
+                            ),
+                            child: Center(
+                              child: _isSaving
+                                  ? SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppColors.onAccent,
+                                      ),
+                                    )
+                                  : Text(
+                                      'Create',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.onAccent,
+                                      ),
+                                    ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -1779,14 +2522,19 @@ class _EditEventDialogState extends State<_EditEventDialog> {
   late final TextEditingController _emailCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _locationCtrl;
-  final _searchCtrl = TextEditingController();
+  final _nameFocus = FocusNode();
 
   late DateTime _date;
   late TimeOfDay _startTime;
   late TimeOfDay _endTime;
+  late final TimeOfDay _origStartTime;
+  late final TimeOfDay _origEndTime;
   late int? _selectedJfId;
   bool _isSaving = false;
   bool _confirmDelete = false;
+  late bool _syncToCalendly;
+  late bool _syncToGoogle;
+  bool _notifyRecipient = false;
 
   List<Map<String, dynamic>> _searchResults = [];
   bool _showSearchResults = false;
@@ -1807,7 +2555,28 @@ class _EditEventDialogState extends State<_EditEventDialog> {
     _date = DateTime(sl.year, sl.month, sl.day);
     _startTime = TimeOfDay(hour: sl.hour, minute: sl.minute);
     _endTime = TimeOfDay(hour: el.hour, minute: el.minute);
+    _origStartTime = _startTime;
+    _origEndTime = _endTime;
+    _lookupContactPhone();
     _selectedJfId = e.jobFunctionId;
+    final sync = widget.parentContext.read<CalendarSyncService>();
+    final gcal = widget.parentContext.read<GoogleCalendarService>();
+    _syncToCalendly = sync.hasCalendly;
+    _syncToGoogle = gcal.config.enabled;
+    _nameFocus.addListener(_onNameFocusChanged);
+  }
+
+  Future<void> _lookupContactPhone() async {
+    final name = _nameCtrl.text;
+    final email = _emailCtrl.text;
+    if (name.isEmpty && email.isEmpty) return;
+    final query = name.isNotEmpty ? name : email;
+    final results = await CallHistoryDb.searchContacts(query);
+    if (!mounted || results.isEmpty) return;
+    final phone = results.first['phone_number'] as String? ?? '';
+    if (phone.isNotEmpty && _phoneCtrl.text.isEmpty) {
+      setState(() => _phoneCtrl.text = phone);
+    }
   }
 
   @override
@@ -1818,45 +2587,288 @@ class _EditEventDialogState extends State<_EditEventDialog> {
     _emailCtrl.dispose();
     _descCtrl.dispose();
     _locationCtrl.dispose();
-    _searchCtrl.dispose();
+    _nameFocus.removeListener(_onNameFocusChanged);
+    _nameFocus.dispose();
     _searchDebounce?.cancel();
     super.dispose();
   }
 
-  void _onSearchChanged(String query) {
-    _searchDebounce?.cancel();
-    if (query.trim().isEmpty) {
-      setState(() {
-        _searchResults = [];
-        _showSearchResults = false;
+  void _onNameFocusChanged() {
+    if (_nameFocus.hasFocus) {
+      _runContactSearch(_nameCtrl.text);
+    } else {
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (mounted && !_nameFocus.hasFocus) {
+          setState(() => _showSearchResults = false);
+        }
       });
-      return;
     }
-    _searchDebounce = Timer(const Duration(milliseconds: 250), () async {
-      final results = await CallHistoryDb.searchContacts(query);
-      if (mounted) {
-        setState(() {
-          _searchResults = results;
-          _showSearchResults = results.isNotEmpty;
-        });
-      }
+  }
+
+  void _onNameChanged(String query) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+      _runContactSearch(query);
     });
   }
 
+  Future<void> _runContactSearch(String query) async {
+    if (query.trim().length < 2) {
+      if (_showSearchResults) {
+        setState(() {
+          _searchResults = [];
+          _showSearchResults = false;
+        });
+      }
+      return;
+    }
+    final results = await CallHistoryDb.searchContacts(query);
+    if (mounted) {
+      setState(() {
+        _searchResults = results;
+        _showSearchResults = results.isNotEmpty;
+      });
+    }
+  }
+
   void _selectContact(Map<String, dynamic> contact) {
-    _nameCtrl.text = contact['display_name'] as String? ?? '';
-    _phoneCtrl.text = contact['phone_number'] as String? ?? '';
-    _emailCtrl.text = contact['email'] as String? ?? '';
-    _searchCtrl.clear();
     setState(() {
+      _nameCtrl.text = contact['display_name'] as String? ?? '';
+      _phoneCtrl.text = contact['phone_number'] as String? ?? '';
+      _emailCtrl.text = contact['email'] as String? ?? '';
       _searchResults = [];
       _showSearchResults = false;
     });
   }
 
+  Widget _buildContactField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'CONTACT',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 5),
+        _buildMiniField(
+          icon: Icons.person_search_rounded,
+          controller: _nameCtrl,
+          hint: 'Search contacts...',
+          onChanged: _onNameChanged,
+          focusNode: _nameFocus,
+        ),
+        if (_showSearchResults)
+          Container(
+            constraints: const BoxConstraints(maxHeight: 140),
+            margin: const EdgeInsets.only(top: 4),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: AppColors.border.withValues(alpha: 0.5),
+                  width: 0.5),
+            ),
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: _searchResults.length,
+              itemBuilder: (_, i) {
+                final c = _searchResults[i];
+                final cName = c['display_name'] as String? ?? '';
+                final cPhone = c['phone_number'] as String? ?? '';
+                return InkWell(
+                  onTap: () => _selectContact(c),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(Icons.person_outline_rounded,
+                            size: 14, color: AppColors.textTertiary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                cName,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              if (cPhone.isNotEmpty)
+                                Text(
+                                  cPhone,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textTertiary,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 6),
+        _buildMiniField(
+          icon: Icons.phone_rounded,
+          controller: _phoneCtrl,
+          hint: 'Phone',
+        ),
+        const SizedBox(height: 6),
+        _buildMiniField(
+          icon: Icons.email_outlined,
+          controller: _emailCtrl,
+          hint: 'Email',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMiniField({
+    required IconData icon,
+    required TextEditingController controller,
+    required String hint,
+    ValueChanged<String>? onChanged,
+    FocusNode? focusNode,
+  }) {
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      focusNode: focusNode,
+      style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(
+            fontSize: 12,
+            color: AppColors.textTertiary.withValues(alpha: 0.5)),
+        prefixIcon:
+            Icon(icon, size: 14, color: AppColors.textTertiary),
+        prefixIconConstraints: const BoxConstraints(minWidth: 32),
+        filled: true,
+        fillColor: AppColors.card,
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(7),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.4),
+              width: 0.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(7),
+          borderSide: BorderSide(
+              color: AppColors.border.withValues(alpha: 0.4),
+              width: 0.5),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(7),
+          borderSide: BorderSide(color: AppColors.accent, width: 1),
+        ),
+      ),
+    );
+  }
+
+  bool get _timeChanged =>
+      _startTime != _origStartTime || _endTime != _origEndTime;
+
+  String _fmtTime(TimeOfDay t) {
+    final h = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+    final m = t.minute.toString().padLeft(2, '0');
+    final p = t.period == DayPeriod.am ? 'a' : 'p';
+    return '$h:$m$p';
+  }
+
+  String get _smsLabel {
+    if (!_timeChanged) return 'SMS Contact';
+    return 'SMS Contact  ${_fmtTime(_origStartTime)} → ${_fmtTime(_startTime)}';
+  }
+
+  Widget _syncCheckbox({
+    required String label,
+    required bool value,
+    required Color color,
+    required VoidCallback onTap,
+    IconData? icon,
+  }) {
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: value ? color.withValues(alpha: 0.1) : AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: value
+                ? color.withValues(alpha: 0.4)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14,
+                  color: value ? color : AppColors.textTertiary),
+              const SizedBox(width: 6),
+            ] else ...[
+              Container(
+                width: 16,
+                height: 16,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  color: value ? color : Colors.transparent,
+                  border: Border.all(
+                    color: value ? color : AppColors.textTertiary,
+                    width: 1.5,
+                  ),
+                ),
+                child: value
+                    ? Icon(Icons.check_rounded,
+                        size: 12, color: AppColors.onAccent)
+                    : null,
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: value ? color : AppColors.textSecondary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (_titleCtrl.text.trim().isEmpty) return;
     setState(() => _isSaving = true);
+
+    final name = _nameCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final evt = widget.event;
 
     final start = DateTime(
       _date.year, _date.month, _date.day,
@@ -1867,16 +2879,12 @@ class _EditEventDialogState extends State<_EditEventDialog> {
       _endTime.hour, _endTime.minute,
     ).toUtc();
 
-    final updated = widget.event.copyWith(
+    final updated = evt.copyWith(
       title: _titleCtrl.text.trim(),
       startTime: start,
       endTime: end,
-      inviteeName: _nameCtrl.text.trim().isEmpty
-          ? null
-          : _nameCtrl.text.trim(),
-      inviteeEmail: _emailCtrl.text.trim().isEmpty
-          ? null
-          : _emailCtrl.text.trim(),
+      inviteeName: name.isEmpty ? null : name,
+      inviteeEmail: email.isEmpty ? null : email,
       description: _descCtrl.text.trim().isEmpty
           ? null
           : _descCtrl.text.trim(),
@@ -1886,7 +2894,148 @@ class _EditEventDialogState extends State<_EditEventDialog> {
       jobFunctionId: _selectedJfId,
     );
 
-    await CallHistoryDb.updateCalendarEvent(updated);
+    await CallHistoryDb.updateCalendarEvent(updated, markLocallyModified: true);
+
+    // ── Calendly sync ──
+    // For existing Calendly events: cancel the old booking, then re-invite
+    // at the new time so the invitee gets notified of the change.
+    // For local events: create a new Calendly booking.
+    if (_syncToCalendly && mounted) {
+      final syncSvc = widget.parentContext.read<CalendarSyncService>();
+      if (syncSvc.hasCalendly && syncSvc.calendlyService != null) {
+        try {
+          if (evt.calendlyEventId != null) {
+            await syncSvc.calendlyService!.cancelEvent(
+              evt.calendlyEventId!,
+              reason: 'Rescheduled via Phonegentic',
+            );
+          }
+          final eventTypes =
+              await syncSvc.calendlyService!.listEventTypes();
+          if (eventTypes.isNotEmpty && email.isNotEmpty) {
+            final calendlyUri =
+                await syncSvc.calendlyService!.createInvitee(
+              eventTypeUri: eventTypes.first.uri,
+              startTime: start,
+              inviteeName: name.isEmpty ? 'Guest' : name,
+              inviteeEmail: email,
+            );
+            if (calendlyUri != null) {
+              await CallHistoryDb.updateCalendarEvent(
+                updated.copyWith(
+                  calendlyEventId: calendlyUri,
+                  source: EventSource.calendly,
+                ),
+              );
+            }
+          } else if (eventTypes.isNotEmpty) {
+            final link =
+                await syncSvc.calendlyService!.createSchedulingLink(
+              eventTypeUri: eventTypes.first.uri,
+            );
+            if (link != null) {
+              await CallHistoryDb.updateCalendarEvent(
+                updated.copyWith(
+                  description: updated.description != null
+                      ? '${updated.description}\nScheduling link: $link'
+                      : 'Scheduling link: $link',
+                  source: EventSource.calendly,
+                ),
+              );
+            }
+          }
+        } catch (_) {}
+        await syncSvc.syncNow();
+      }
+    }
+
+    // ── Google Calendar sync ──
+    // Ensure the 'Calendly' calendar exists; create it if missing.
+    // Skip events that already have a googleCalendarEventId (already pushed).
+    if (_syncToGoogle && mounted && evt.googleCalendarEventId == null) {
+      try {
+        final gcal = widget.parentContext.read<GoogleCalendarService>();
+        final dateStr =
+            '${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}';
+        final startStr =
+            '${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}';
+        final endStr =
+            '${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}';
+
+        var calendars = await gcal.listCalendars();
+        var calendlyCalendar = calendars
+            .where((c) =>
+                (c['name'] ?? '').toLowerCase().contains('calendly'))
+            .toList();
+
+        if (calendlyCalendar.isEmpty) {
+          await gcal.createCalendar(name: 'Calendly');
+          calendars = await gcal.listCalendars();
+          calendlyCalendar = calendars
+              .where((c) =>
+                  (c['name'] ?? '').toLowerCase().contains('calendly'))
+              .toList();
+        }
+        final calId = calendlyCalendar.isNotEmpty
+            ? calendlyCalendar.first['id']
+            : null;
+
+        final ok = await gcal.createEvent(
+          title: _titleCtrl.text.trim(),
+          date: dateStr,
+          startTime: startStr,
+          endTime: endStr,
+          calendarId: calId,
+        );
+        if (ok) {
+          final gcalId = GoogleCalendarService.gcalCompositeId(
+            _titleCtrl.text.trim(), dateStr, startStr);
+          await CallHistoryDb.updateCalendarEvent(
+            updated.copyWith(googleCalendarEventId: gcalId),
+          );
+        }
+      } catch (_) {}
+    }
+
+    // ── SMS the contact about the change ──
+    if (_notifyRecipient && phone.isNotEmpty && mounted) {
+      try {
+        final messaging =
+            widget.parentContext.read<MessagingService>();
+        final contactName = name.isNotEmpty ? name : 'there';
+        String body;
+        if (_timeChanged) {
+          body = 'Hi $contactName, your appointment has been '
+              'rescheduled from ${_fmtTime(_origStartTime)} to '
+              '${_fmtTime(_startTime)} on '
+              '${DateFormat.MMMd().format(_date)}.';
+        } else {
+          body = 'Hi $contactName, your appointment on '
+              '${DateFormat.MMMd().format(_date)} at '
+              '${_fmtTime(_startTime)} has been updated.';
+        }
+        await messaging.sendMessage(to: phone, text: body);
+      } catch (_) {}
+    }
+
+    // ── Schedule a 15-minute reminder ──
+    if (_timeChanged && start.isAfter(DateTime.now().toUtc()) && mounted) {
+      try {
+        final remindAt = start.subtract(const Duration(minutes: 15));
+        await CallHistoryDb.insertReminder(
+          title: _titleCtrl.text.trim(),
+          description: name.isNotEmpty
+              ? 'Meeting with $name'
+              : null,
+          remindAt: remindAt,
+          source: 'calendar',
+        );
+        widget.parentContext
+            .read<ManagerPresenceService>()
+            .onReminderCreatedOrChanged();
+      } catch (_) {}
+    }
+
     widget.onSaved();
     if (mounted) Navigator.of(context).pop();
   }
@@ -1906,7 +3055,10 @@ class _EditEventDialogState extends State<_EditEventDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final jfService = widget.parentContext.read<JobFunctionService>();
+    final pCtx = widget.parentContext;
+    final sync = pCtx.watch<CalendarSyncService>();
+    final gcalService = pCtx.watch<GoogleCalendarService>();
+    final jfService = pCtx.read<JobFunctionService>();
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -1997,8 +3149,13 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                             label: 'Start',
                             value: _startTime,
                             context: context,
-                            onChanged: (t) =>
-                                setState(() => _startTime = t),
+                            onChanged: (t) => setState(() {
+                                _startTime = t;
+                                final mins = t.hour * 60 + t.minute + 30;
+                                _endTime = TimeOfDay(
+                                    hour: (mins ~/ 60) % 24,
+                                    minute: mins % 60);
+                              }),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -2014,148 +3171,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                       ],
                     ),
                     const SizedBox(height: 18),
-                    // Contact search
-                    Text(
-                      'CONTACT',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textTertiary,
-                        letterSpacing: 0.6,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    TextField(
-                      controller: _searchCtrl,
-                      onChanged: _onSearchChanged,
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textPrimary),
-                      decoration: InputDecoration(
-                        hintText: 'Search contacts...',
-                        hintStyle: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textTertiary.withValues(alpha: 0.6)),
-                        prefixIcon: Icon(Icons.search_rounded,
-                            size: 16, color: AppColors.textTertiary),
-                        prefixIconConstraints:
-                            const BoxConstraints(minWidth: 36),
-                        filled: true,
-                        fillColor: AppColors.card,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide: BorderSide(
-                              color: AppColors.accent, width: 1),
-                        ),
-                      ),
-                    ),
-                    if (_showSearchResults)
-                      Container(
-                        constraints:
-                            const BoxConstraints(maxHeight: 140),
-                        margin: const EdgeInsets.only(top: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.card,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: AppColors.border.withValues(alpha: 0.5),
-                              width: 0.5),
-                        ),
-                        child: ListView.builder(
-                          padding: EdgeInsets.zero,
-                          shrinkWrap: true,
-                          itemCount: _searchResults.length,
-                          itemBuilder: (_, i) {
-                            final c = _searchResults[i];
-                            final name =
-                                c['display_name'] as String? ?? '';
-                            final phone =
-                                c['phone_number'] as String? ?? '';
-                            return InkWell(
-                              onTap: () => _selectContact(c),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.person_outline_rounded,
-                                        size: 14,
-                                        color: AppColors.textTertiary),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            name,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color:
-                                                  AppColors.textPrimary,
-                                            ),
-                                          ),
-                                          if (phone.isNotEmpty)
-                                            Text(
-                                              phone,
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                color: AppColors
-                                                    .textTertiary,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    const SizedBox(height: 10),
-                    _buildField(
-                      label: 'Name',
-                      controller: _nameCtrl,
-                      hint: 'Invitee name',
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildField(
-                            label: 'Phone',
-                            controller: _phoneCtrl,
-                            hint: '+1 555-123-4567',
-                            keyboardType: TextInputType.phone,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildField(
-                            label: 'Email',
-                            controller: _emailCtrl,
-                            hint: 'email@example.com',
-                            keyboardType: TextInputType.emailAddress,
-                          ),
-                        ),
-                      ],
-                    ),
+                    _buildContactField(),
                     const SizedBox(height: 14),
                     _buildField(
                       label: 'Description',
@@ -2241,117 +3257,307 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                       width: 0.5),
                 ),
               ),
-              child: Row(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Delete
-                  HoverButton(
-                    onTap: _delete,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: _confirmDelete
-                            ? AppColors.red.withValues(alpha: 0.15)
-                            : Colors.transparent,
-                        border: Border.all(
-                          color: _confirmDelete
-                              ? AppColors.red
-                              : AppColors.red.withValues(alpha: 0.4),
-                          width: 0.5,
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'SYNC',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textTertiary,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      if (sync.hasCalendly) ...[
+                        Expanded(
+                          child: _syncCheckbox(
+                            label: 'Calendly',
+                            value: _syncToCalendly,
+                            color: AppColors.colorForSource(
+                                EventSource.calendly),
+                            onTap: () => setState(
+                                () => _syncToCalendly = !_syncToCalendly),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      if (gcalService.config.enabled) ...[
+                        Expanded(
+                          child: _syncCheckbox(
+                            label: 'Google',
+                            value: _syncToGoogle,
+                            color: AppColors.colorForSource(
+                                EventSource.google),
+                            onTap: () => setState(
+                                () => _syncToGoogle = !_syncToGoogle),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: _syncCheckbox(
+                          label: _smsLabel,
+                          value: _notifyRecipient,
+                          color: AppColors.accent,
+                          icon: Icons.sms_rounded,
+                          onTap: () => setState(
+                              () => _notifyRecipient = !_notifyRecipient),
                         ),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.delete_outline_rounded,
-                              size: 14,
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      // Delete
+                      HoverButton(
+                        onTap: _delete,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: _confirmDelete
+                                ? AppColors.red.withValues(alpha: 0.15)
+                                : Colors.transparent,
+                            border: Border.all(
                               color: _confirmDelete
                                   ? AppColors.red
-                                  : AppColors.red.withValues(alpha: 0.7)),
-                          const SizedBox(width: 4),
-                          Text(
-                            _confirmDelete ? 'Confirm' : 'Delete',
+                                  : AppColors.red.withValues(alpha: 0.4),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.delete_outline_rounded,
+                                  size: 14,
+                                  color: _confirmDelete
+                                      ? AppColors.red
+                                      : AppColors.red.withValues(alpha: 0.7)),
+                              const SizedBox(width: 4),
+                              Text(
+                                _confirmDelete ? 'Confirm' : 'Delete',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: _confirmDelete
+                                      ? AppColors.red
+                                      : AppColors.red.withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      // Cancel
+                      HoverButton(
+                        onTap: () => Navigator.of(context).pop(),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: AppColors.border.withValues(alpha: 0.5),
+                                width: 0.5),
+                          ),
+                          child: Text(
+                            'Cancel',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: _confirmDelete
-                                  ? AppColors.red
-                                  : AppColors.red.withValues(alpha: 0.7),
+                              color: AppColors.textSecondary,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  // Cancel
-                  HoverButton(
-                    onTap: () => Navigator.of(context).pop(),
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: AppColors.border.withValues(alpha: 0.5),
-                            width: 0.5),
-                      ),
-                      child: Text(
-                        'Cancel',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary,
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  // Save
-                  HoverButton(
-                    onTap: _isSaving ? null : _save,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: AppColors.accent,
+                      const SizedBox(width: 10),
+                      // Save
+                      HoverButton(
+                        onTap: _isSaving ? null : _save,
                         borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.accent.withValues(alpha: 0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: AppColors.accent,
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.accent.withValues(alpha: 0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
                           ),
-                        ],
+                          child: _isSaving
+                              ? SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.onAccent,
+                                  ),
+                                )
+                              : Text(
+                                  'Save',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.onAccent,
+                                  ),
+                                ),
+                        ),
                       ),
-                      child: _isSaving
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppColors.onAccent,
-                              ),
-                            )
-                          : Text(
-                              'Save',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.onAccent,
-                              ),
-                            ),
-                    ),
+                    ],
                   ),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Setup Guidance Card
+// ---------------------------------------------------------------------------
+
+class _SetupGuidanceCard extends StatelessWidget {
+  final VoidCallback onClose;
+
+  const _SetupGuidanceCard({required this.onClose});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 360),
+          margin: const EdgeInsets.symmetric(horizontal: 24),
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.calendar_month_rounded,
+                  size: 36, color: AppColors.textTertiary),
+              const SizedBox(height: 16),
+              Text(
+                'Connect Your Calendars',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                  letterSpacing: -0.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Link Calendly and Google Calendar to see all your meetings in one place.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 24),
+              _integrationRow(
+                icon: Icons.event_available_rounded,
+                color: AppColors.colorForSource(EventSource.calendly),
+                label: 'Calendly',
+                sublabel: 'API key in Settings > User',
+              ),
+              const SizedBox(height: 12),
+              _integrationRow(
+                icon: Icons.public_rounded,
+                color: AppColors.colorForSource(EventSource.google),
+                label: 'Google Calendar',
+                sublabel: 'Chrome debug in Settings > User',
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'You can also create events directly using the + button on any day.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textTertiary,
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _integrationRow({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required String sublabel,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25), width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withValues(alpha: 0.15),
+            ),
+            child: Icon(icon, size: 14, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+                Text(
+                  sublabel,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

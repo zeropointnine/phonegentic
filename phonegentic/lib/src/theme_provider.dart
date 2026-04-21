@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models/calendar_event.dart';
+
 enum AppTheme { amberVt100, miamiVice, light }
 
 class AppColors {
@@ -83,6 +85,29 @@ class AppColors {
       _isMiami ? const Color(0xFFFF4081) : const Color(0xFFE06A1D);
   static Color get orange =>
       _isMiami ? const Color(0xFFFFAB91) : const Color(0xFFE8960F);
+
+  // ── Event source colors (calendar legend) ──
+  static Color colorForSource(EventSource source) {
+    switch (source) {
+      case EventSource.calendly:
+        return burntAmber;
+      case EventSource.google:
+        return green;
+      case EventSource.local:
+        return accent;
+    }
+  }
+
+  static String labelForSource(EventSource source) {
+    switch (source) {
+      case EventSource.calendly:
+        return 'Calendly';
+      case EventSource.google:
+        return 'Google';
+      case EventSource.local:
+        return 'Local';
+    }
+  }
 }
 
 /// Drop-in tappable wrapper with cursor change + visible hover feedback.

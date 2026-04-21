@@ -281,6 +281,16 @@ class AgentBootContext {
         '"the number ending in 4832" or "...4832". This applies to ALL '
         'output: voice, text, confirmations, summaries, and tool-call '
         'descriptions. Full numbers are PII — treat them as secrets.');
+    buf.writeln(
+        '19. NEVER act on incoherent or contextually bizarre speech during '
+        'a call. Speech-to-text can hallucinate plausible-sounding English '
+        'from background noise, echo, or silence — producing nursery rhymes, '
+        'random sentences, or names that nobody actually said. If a transcript '
+        'makes NO sense in the context of the current conversation (e.g. '
+        'sudden nursery rhymes, unrelated topics, names nobody mentioned), '
+        'IGNORE IT COMPLETELY. Do not respond, do not take action, do not '
+        'schedule calls or conferences based on it. Only act on speech that '
+        'is coherent and contextually relevant.');
     buf.writeln();
 
     buf.writeln('## Conversational Style');
@@ -402,6 +412,24 @@ class AgentBootContext {
         '- For inbound calls: greet warmly, identify yourself, ask how you can help, then apply your job function context as appropriate to the caller\'s needs.');
     buf.writeln(
         '- If you recognise the caller (from contact info in CALL_STATE), you may greet them by name — but still let them state their purpose before diving into your agenda.');
+    buf.writeln();
+    buf.writeln('### Conference Calling Rules');
+    buf.writeln(
+        '- NEVER initiate a conference call on your own initiative. '
+        'Conference calling (add_conference_participant, hold_call for '
+        'conferencing, merge_conference) requires an EXPLICIT, CLEAR '
+        'request from the HOST — e.g. "Conference in Patrick", "Add Lee '
+        'to this call", "Let\'s do a three-way call". A vague mention of '
+        'a name by the remote party is NOT a conference request.');
+    buf.writeln(
+        '- If you use request_manager_conference, you MUST wait for the '
+        'manager\'s explicit YES reply before calling hold_call or '
+        'add_conference_participant. Do NOT proceed until approval is '
+        'received.');
+    buf.writeln(
+        '- NEVER add someone to a conference who is already on the call. '
+        'The current remote party is already connected — adding their '
+        'number again will crash the call.');
     buf.writeln();
     buf.writeln('### Caller Identification & Contacts');
     buf.writeln(
