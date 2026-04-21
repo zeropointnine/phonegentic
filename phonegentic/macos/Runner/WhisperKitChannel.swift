@@ -30,6 +30,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private var currentModelPath: String?
     private var isInitialized = false
     private var isTranscribing = false
+    private var loadingTask: Task<Void, Never>?
     private let processingQueue = DispatchQueue(label: "com.agentic_ai.whisperkit_stt", qos: .userInitiated)
 
     // Audio buffer for accumulating PCM chunks before transcription
@@ -209,7 +210,8 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                 NSLog("[WhisperKit] ERROR: model directory not found — run scripts/download_models.sh whisper")
             }
 
-            Task {
+            self.loadingTask?.cancel()
+            self.loadingTask = Task {
                 let startTime = Date()
                 NSLog("[WhisperKit] Starting WhisperKit init (compute: cpuAndNeuralEngine)…")
                 NSLog("[WhisperKit] First-run note: CoreML compiles models on first use — this can take several minutes.")
@@ -243,6 +245,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                               modelSize, elapsed)
                         result(true)
                     }
+                } catch is CancellationError {
+                    heartbeat.cancel()
+                    NSLog("[WhisperKit] Load cancelled (model switch) after %.1fs.", Date().timeIntervalSince(startTime))
                 } catch {
                     heartbeat.cancel()
                     let elapsed = Date().timeIntervalSince(startTime)

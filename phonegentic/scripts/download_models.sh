@@ -6,7 +6,7 @@
 #   ./scripts/download_models.sh             # download all for current platform
 #   ./scripts/download_models.sh kokoro      # Kokoro TTS only
 #   ./scripts/download_models.sh whisper     # WhisperKit STT only
-#   ./scripts/download_models.sh pocket-tts  # Pocket TTS only (Linux only)
+#   ./scripts/download_models.sh pocket-tts  # Pocket TTS only
 #   ./scripts/download_models.sh status      # show model status
 #
 # Prerequisites: pip3 install huggingface_hub
@@ -285,11 +285,6 @@ print(f'  Converted {voice}: {pack.shape} → {npy_path}')
 # Downloads INT8-quantized synthesis models (~180 MB), the tokenizer, encoder, and reference voice sample.
 
 download_pocket_tts_linux() {
-    if [ "$OS" != "Linux" ]; then
-        warn "Pocket TTS ONNX is Linux-only (use MLX on macOS). Skipping."
-        return 0
-    fi
-
     info "Downloading Pocket TTS model (ONNX INT8, ~180 MB)..."
     mkdir -p "$POCKET_TTS_DIR/onnx"
 
@@ -342,9 +337,8 @@ print('Download complete.')
 
 download_pocket_tts() {
     case "$OS" in
-        Linux)  download_pocket_tts_linux ;;
-        Darwin) warn "Pocket TTS ONNX is Linux-only. Skipping on macOS." ;;
-        *)      err "Unsupported OS: $OS"; exit 1 ;;
+        Linux|Darwin) download_pocket_tts_linux ;;
+        *)            err "Unsupported OS: $OS"; exit 1 ;;
     esac
 }
 
@@ -427,8 +421,8 @@ show_status() {
         done
     fi
 
-    # Pocket TTS — Linux ONNX
-    if [ "$OS" = "Linux" ]; then
+    # Pocket TTS — ONNX
+    if [ "$OS" = "Linux" ] || [ "$OS" = "Darwin" ]; then
         local ptpath="$POCKET_TTS_DIR/onnx/flow_lm_main_int8.onnx"
         if [ -f "$ptpath" ]; then
             local fsize
@@ -561,8 +555,7 @@ esac
 show_status
 
 if [ "$OS" = "Darwin" ]; then
-    echo "Add models/ to Xcode's \"Copy Bundle Resources\" build phase,"
-    echo "then run: make build"
+    echo "Models ready. Run: make build"
 elif [ "$OS" = "Linux" ]; then
     echo "Models ready. Run: make build"
 fi

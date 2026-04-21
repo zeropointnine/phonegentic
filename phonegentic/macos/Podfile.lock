@@ -14,6 +14,7 @@ PODS:
   - just_audio (0.0.1):
     - Flutter
     - FlutterMacOS
+  - onnxruntime-c (1.25.0)
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -32,12 +33,14 @@ DEPENDENCIES:
   - flutter_webrtc (from `Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
+  - onnxruntime-c (~> 1.20)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
 
 SPEC REPOS:
   trunk:
+    - onnxruntime-c
     - WebRTC-SDK
 
 EXTERNAL SOURCES:
@@ -70,11 +73,12 @@ SPEC CHECKSUMS:
   flutter_webrtc: f1fb1a00c6080461bb2bc6caa5b93d07ddb68466
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
+  onnxruntime-c: d0b6084332f946dbc910afc0b9f65b57689fd1c4
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
   record_macos: 7f227161b93c49e7e34fe681c5891c8622c8cc8b
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
   WebRTC-SDK: ab9b5319e458c2bfebdc92b3600740da35d5630d
 
-PODFILE CHECKSUM: 26ee6f5033708847cf1376fbc9a71d19413c5b16
+PODFILE CHECKSUM: d00b79cccf8f4a9c902666724c3637e18e3a45e8
 
 COCOAPODS: 1.16.2
