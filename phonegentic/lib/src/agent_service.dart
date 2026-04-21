@@ -460,6 +460,7 @@ class AgentService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   DateTime _speakingEndTime = DateTime(2000);
+  DateTime _speakingStartTime = DateTime(2000);
   int _echoGuardMs = 2000;
 
   final List<TranscriptionEvent> _pendingTranscripts = [];
@@ -469,6 +470,12 @@ class AgentService extends ChangeNotifier {
   Timer? _playbackSafetyTimer;
   Timer? _vadInterruptDebounce;
   bool _ttsGenerationComplete = false;
+
+  /// Consecutive agent responses without any genuine user transcript in between.
+  /// Used to break the self-response loop: after [_maxConsecutiveAgentResponses]
+  /// the agent goes silent until real user speech arrives.
+  int _consecutiveAgentResponses = 0;
+  static const _maxConsecutiveAgentResponses = 2;
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -1093,6 +1100,7 @@ class AgentService extends ChangeNotifier {
       if (speaking) {
         _ttsGenerationComplete = false;
         _speaking = true;
+        _speakingStartTime = DateTime.now();
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
@@ -1158,13 +1166,18 @@ class AgentService extends ChangeNotifier {
       // the server does echo cancellation; whisper.cpp does not.)
       await _whisper.startAudioTap(captureInput: true, captureOutput: false);
 
+      // Initialize speaker identifier so voiceprint-based echo suppression
+      // can detect when the mic is picking up the agent's TTS output.
+      await _whisper.initSpeakerIdentifier();
+      await _loadKnownSpeakerEmbeddings();
+
       // Wire raw mic audio → whisper.cpp.
       await _whisperKitStt!.startTranscription();
       _localAudioSub = _whisper.rawAudio.listen((chunk) {
         // Gate audio during TTS playback — whisper.cpp has no AEC, so any
         // speaker bleed would be transcribed as user speech.  Dropping mic
         // input while TTS is active prevents acoustic echo from reaching
-        // inference.  ttsSuppressed includes a 300ms cooldown after playback
+        // inference.  ttsSuppressed includes an 800ms cooldown after playback
         // ends to catch the reverb tail.
         if (!_muted && !_speaking && !_whisper.ttsSuppressed) {
           _whisperKitStt?.feedAudio(chunk);
@@ -1255,6 +1268,7 @@ class AgentService extends ChangeNotifier {
       if (speaking) {
         _ttsGenEndTimer?.cancel();
         _speaking = true;
+        _speakingStartTime = DateTime.now();
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
@@ -1304,6 +1318,7 @@ class AgentService extends ChangeNotifier {
       if (speaking) {
         _ttsGenerationComplete = false;
         _speaking = true;
+        _speakingStartTime = DateTime.now();
         if (!_muted) {
           _statusText = 'Speaking';
           notifyListeners();
@@ -2655,9 +2670,35 @@ class AgentService extends ChangeNotifier {
     r'amara\.org|'
     r'ご視聴ありがとうございました|'
     r'\.\.\.$|'
-    r'[\.\,\!\?]+$)$',
+    r'[\.\,\!\?]+$|'
+    r'thank you\.?|thanks\.?|bye\.?|'
+    r"you$|the end\.?$|"
+    r"i'm sorry\.?$)$",
     caseSensitive: false,
   );
+
+  /// Detects repeated-word hallucinations like "Good, good, good" or
+  /// "Perfect, perfect, perfect" — WhisperKit echoes/duplicates words
+  /// when it processes overlapping carry-over buffers or ambient noise.
+  static bool _isRepeatedWordHallucination(String text) {
+    final words = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'[,.\-!?;:]'), '')
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length > 1)
+        .toList();
+    if (words.length < 3) return false;
+    final unique = words.toSet();
+    // If 2 or fewer distinct words make up 3+ total words, it's repetition.
+    if (unique.length <= 2 && words.length >= 3) return true;
+    // Check for consecutive repetition: same word 3+ times in a row.
+    int streak = 1;
+    for (int i = 1; i < words.length; i++) {
+      streak = words[i] == words[i - 1] ? streak + 1 : 1;
+      if (streak >= 3) return true;
+    }
+    return false;
+  }
 
   /// CJK / non-Latin script detection — Whisper hallucinates in random
   /// languages when it hears noise on an English-language call.
@@ -2665,25 +2706,38 @@ class AgentService extends ChangeNotifier {
     r'[\u3000-\u9FFF\uAC00-\uD7AF\u0400-\u04FF\u0600-\u06FF\u0E00-\u0E7F]',
   );
 
-  /// Non-speech segment tags in brackets or parentheses.
+  /// Non-speech segment tags in brackets, parentheses, or curly braces.
   static const String _nonSpeechTagPattern =
-    r'BLANK_AUDIO|BLANK audio|blank_audio|Music|Silence|Applause|Laughter|'
-    r'NOISE|noise|CLICK|click|clicking|typing|COUGH|cough|Sighs?|sighs?|'
+    r'BLANK_AUDIO|BLANK audio|blank_audio|Music|music playing|Silence|Applause|Laughter|'
+    r'NOISE|noise|CLICK|click|clicking|typing|keyboard|COUGH|cough|Sighs?|sighs?|'
     r'breathing|BREATHING|sneezing|clearing throat|'
     r'BEEP|beep|RING|ring|ringing|TONE|tone|dial tone|busy signal|'
-    r'phone ringing|crickets chirping|crickets|inaudible';
+    r'phone ringing|crickets chirping|crickets|inaudible|'
+    r'upbeat|bell dinging|bell|POP|Paper|sound|no audio|'
+    r'static|buzzing|humming|whistling|tapping|clapping|'
+    r'door|footsteps|background noise|crowd|wind|rain|thunder|'
+    r'alarm|siren|horn|engine|car|train|airplane|'
+    r'birds?|dog|cat|baby|children|laughing|crying|coughing|'
+    r'soft music|loud music|piano|guitar|drums|violin|trumpet|'
+    r'[a-z]+ music|[a-z]+ playing|[a-z]+ sound';
 
-  /// Matches `[tag]` or `(tag)` — full-transcript non-speech marker.
+  /// Matches `[tag]`, `(tag)`, or `{tag}` — full-transcript non-speech marker.
   static final RegExp _whisperBracketedTagRe = RegExp(
-    r'^[\[\(](' + _nonSpeechTagPattern + r')[\]\)]$',
+    r'^[\[\(\{]\s*(' + _nonSpeechTagPattern + r')\s*[\]\)\}]$',
     caseSensitive: false,
   );
 
-  /// Matches leading `(tag)` prefix that WhisperKit sometimes prepends to
-  /// real speech, e.g. "(crickets chirping) Yes". Used to strip artifacts
-  /// before further processing.
+  /// Matches transcripts composed entirely of bracketed/parenthetical tags
+  /// with no real speech between them, e.g. "(upbeat) (bell dinging)" or
+  /// "[POP] [Paper] [ sound]".
+  static final RegExp _entirelyNonSpeechRe = RegExp(
+    r'^(\s*[\[\(\{]\s*[^\]\)\}]*\s*[\]\)\}]\s*)+$',
+  );
+
+  /// Matches leading `(tag)`, `[tag]`, or `{tag}` prefix that WhisperKit
+  /// sometimes prepends to real speech, e.g. "(crickets chirping) Yes".
   static final RegExp _whisperParenPrefixRe = RegExp(
-    r'^\(' + _nonSpeechTagPattern + r'\)\s*',
+    r'^[\[\(\{]\s*(' + _nonSpeechTagPattern + r')\s*[\]\)\}]\s*',
     caseSensitive: false,
   );
 
@@ -2692,8 +2746,10 @@ class AgentService extends ChangeNotifier {
   static bool _isWhisperHallucination(String text) {
     if (text.length <= 2) return true;
     if (_whisperBracketedTagRe.hasMatch(text)) return true;
+    if (_entirelyNonSpeechRe.hasMatch(text)) return true;
     if (_whisperHallucinationRe.hasMatch(text)) return true;
     if (_nonLatinRe.hasMatch(text)) return true;
+    if (_isRepeatedWordHallucination(text)) return true;
     return false;
   }
 
@@ -2774,11 +2830,23 @@ class AgentService extends ChangeNotifier {
     });
   }
 
+  /// Effective echo guard based on how long the agent was speaking.
+  /// Short responses (< 2s) produce less mic bleed and need a shorter guard
+  /// so the user can reply quickly. Longer responses need the full window.
+  int get _effectiveEchoGuardMs {
+    final spokenMs =
+        _speakingEndTime.difference(_speakingStartTime).inMilliseconds;
+    if (spokenMs < 2000) return (_echoGuardMs * 0.5).round().clamp(800, 1200);
+    if (spokenMs < 4000) return (_echoGuardMs * 0.75).round();
+    return _echoGuardMs;
+  }
+
   /// Schedule a flush of buffered transcripts after the echo guard window.
   void _schedulePostSpeakFlush() {
     _postSpeakFlushTimer?.cancel();
+    final guardMs = _effectiveEchoGuardMs;
     _postSpeakFlushTimer = Timer(
-      Duration(milliseconds: _echoGuardMs),
+      Duration(milliseconds: guardMs),
       _flushPendingTranscripts,
     );
   }
@@ -2789,7 +2857,7 @@ class AgentService extends ChangeNotifier {
     if (_pendingTranscripts.isEmpty) return;
     if (_speaking) return; // still speaking, wait
     final msSince = DateTime.now().difference(_speakingEndTime).inMilliseconds;
-    if (msSince < _echoGuardMs) {
+    if (msSince < _effectiveEchoGuardMs) {
       _schedulePostSpeakFlush();
       return;
     }
@@ -2958,10 +3026,25 @@ class AgentService extends ChangeNotifier {
     if (!event.isFinal || event.text.trim().isEmpty) return;
     if (_muted) return;
 
-    // Strip parenthetical non-speech prefixes WhisperKit sometimes injects,
-    // e.g. "(crickets chirping) Yes" → "Yes".
-    final cleaned = event.text.trim().replaceAll(_whisperParenPrefixRe, '');
-    if (cleaned != event.text.trim() && cleaned.isNotEmpty) {
+    // Strip all bracketed/parenthetical non-speech tags WhisperKit injects,
+    // e.g. "(upbeat) (bell dinging) Yes" → "Yes", "[POP] hello" → "hello".
+    var cleaned = event.text.trim();
+    cleaned = cleaned.replaceAll(_whisperParenPrefixRe, '');
+    // Also strip inline/trailing non-speech tags.
+    cleaned = cleaned.replaceAll(
+      RegExp(r'[\[\(\{]\s*(' + _nonSpeechTagPattern + r')\s*[\]\)\}]',
+          caseSensitive: false),
+      '',
+    );
+    cleaned = cleaned.trim();
+    if (cleaned != event.text.trim()) {
+      if (cleaned.isEmpty) {
+        _hallucinationDropCount++;
+        if (_hallucinationDropCount <= 3 || _hallucinationDropCount % 25 == 0) {
+          debugPrint('[AgentService] Non-speech tags only, dropped: "${event.text.trim()}"');
+        }
+        return;
+      }
       event = TranscriptionEvent(
         text: cleaned,
         isFinal: event.isFinal,
@@ -3098,7 +3181,7 @@ class AgentService extends ChangeNotifier {
     }
     final msSinceSpoke =
         DateTime.now().difference(_speakingEndTime).inMilliseconds;
-    if (msSinceSpoke < _echoGuardMs) {
+    if (msSinceSpoke < _effectiveEchoGuardMs) {
       _pendingTranscripts.add(event);
       return;
     }
@@ -3127,7 +3210,7 @@ class AgentService extends ChangeNotifier {
     // not incorrectly suppressed.
     final msSinceSpoke =
         DateTime.now().difference(_speakingEndTime).inMilliseconds;
-    if (msSinceSpoke < _echoGuardMs * 2 && _isEchoOfAgentResponse(text)) {
+    if (msSinceSpoke < _effectiveEchoGuardMs * 2 && _isEchoOfAgentResponse(text)) {
       debugPrint('[AgentService] Echo suppressed (text match): "$text"');
       return;
     }
@@ -3142,13 +3225,38 @@ class AgentService extends ChangeNotifier {
     _lastTranscriptText = text;
     _lastTranscriptTime = now;
 
+    // Loop breaker: if the agent has responded N+ times without genuine user
+    // input, it's in a self-response loop (echo/hallucination feeding itself).
+    // Require a longer, more substantive transcript to break out — short
+    // fragments are almost certainly echo residue.
+    if (_consecutiveAgentResponses >= _maxConsecutiveAgentResponses) {
+      final wordCount = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+      if (wordCount < 4) {
+        debugPrint('[AgentService] Loop-breaker: dropped "$text" '
+            '(consecutive=$_consecutiveAgentResponses, words=$wordCount)');
+        return;
+      }
+      // Substantive speech — reset the counter and let it through.
+      debugPrint('[AgentService] Loop-breaker: allowing "$text" '
+          '(words=$wordCount, resetting consecutive counter)');
+      _consecutiveAgentResponses = 0;
+    }
+
     final info = await _whisper.getSpeakerInfo();
     final source = info['source'] as String? ?? 'unknown';
     final voiceprintName = info['identity'] as String? ?? '';
     final confidence = (info['confidence'] as num?)?.toDouble() ?? 0.0;
+    final isAgentVoice = info['isAgentVoice'] as bool? ?? false;
     final isRemote = source == 'remote';
     final role = isRemote ? ChatRole.remoteParty : ChatRole.host;
     final speaker = isRemote ? remoteSpeaker : hostSpeaker;
+
+    // Voiceprint-based echo suppression: if the mic audio that produced this
+    // transcript matches the agent's TTS voiceprint, it's echo — not the user.
+    if (isAgentVoice && _isLocalSttMode) {
+      debugPrint('[AgentService] Voiceprint echo suppressed: "$text"');
+      return;
+    }
 
     // When idle (no active call), filter likely background/ambient audio.
     // Low-confidence transcripts from the mic are probably TV, TikTok, etc.
@@ -3233,6 +3341,7 @@ class AgentService extends ChangeNotifier {
       _postGreetGraceUntil = null;
     }
 
+    _consecutiveAgentResponses = 0;
     _textAgent?.addTranscript(label, text);
 
     // Fill the silence between the remote finishing and TTS audio arriving
@@ -3410,7 +3519,8 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
-      debugPrint('[AgentService] Response final: '
+      _consecutiveAgentResponses++;
+      debugPrint('[AgentService] Response final (consecutive=$_consecutiveAgentResponses): '
           '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
 
       if (event.text.startsWith('Error:')) {

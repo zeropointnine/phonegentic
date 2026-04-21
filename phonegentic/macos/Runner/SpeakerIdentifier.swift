@@ -58,6 +58,9 @@ final class SpeakerIdentifier {
     private let agentEmbeddingLock = NSLock()
     private static let agentAccumulationBytes = 24000 * 2 * 3 // 3 seconds at 24kHz PCM16
 
+    /// Cached result of the last mic-vs-agent-voice check.
+    private(set) var lastMicIsAgentVoice = false
+
     private init() {}
 
     // MARK: - Initialization
@@ -196,9 +199,15 @@ final class SpeakerIdentifier {
                 let embedding = try diarizer.extractSpeakerEmbedding(from: samples)
 
                 // Check against agent voiceprint first
-                if isAgentVoice(embedding: embedding) {
-                    NSLog("[SpeakerID] Suppressed agent echo (voiceprint match)")
+                if self.isAgentVoice(embedding: embedding) {
+                    if !isRemote {
+                        self.lastMicIsAgentVoice = true
+                    }
+                    NSLog("[SpeakerID] Suppressed agent echo (voiceprint match, isRemote=%d)", isRemote ? 1 : 0)
                     return
+                }
+                if !isRemote {
+                    self.lastMicIsAgentVoice = false
                 }
 
                 let result = diarizer.speakerManager.assignSpeaker(
@@ -302,24 +311,31 @@ final class SpeakerIdentifier {
     /// Returns extended speaker info for the current dominant speaker:
     /// { "source": "remote"|"host", "identity": "name"|"", "confidence": Double }
     func speakerInfo(dominantSource: String) -> [String: Any] {
+        let hasAgentVoiceprint = agentEmbedding != nil
         switch dominantSource {
         case "remote":
             return [
                 "source": "remote",
                 "identity": identifiedRemoteSpeaker,
                 "confidence": remoteConfidence,
+                "isAgentVoice": false,
+                "hasAgentVoiceprint": hasAgentVoiceprint,
             ]
         case "host":
             return [
                 "source": "host",
                 "identity": identifiedHostSpeaker,
                 "confidence": hostConfidence,
+                "isAgentVoice": lastMicIsAgentVoice,
+                "hasAgentVoiceprint": hasAgentVoiceprint,
             ]
         default:
             return [
                 "source": dominantSource,
                 "identity": "",
                 "confidence": 0.0,
+                "isAgentVoice": lastMicIsAgentVoice,
+                "hasAgentVoiceprint": hasAgentVoiceprint,
             ]
         }
     }
