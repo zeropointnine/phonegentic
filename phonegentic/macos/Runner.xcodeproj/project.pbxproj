@@ -41,9 +41,9 @@
 		F1A2B3C400000002WKC00001 /* WhisperKitChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */; };
 		F1A2B3C400000003KSW00001 /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = F1A2B3C400000004KSW00002 /* KokoroSwift */; };
 		F1A2B3C400000003WKT00001 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = F1A2B3C400000004WKT00002 /* WhisperKit */; };
+		P1A2B3C400000002OCC00002 /* pocket_tts_onnx_engine.cc in Sources */ = {isa = PBXBuildFile; fileRef = P1A2B3C400000001OCC00001 /* pocket_tts_onnx_engine.cc */; };
 		P1A2B3C400000002PTC00002 /* PocketTtsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = P1A2B3C400000001PTC00001 /* PocketTtsChannel.swift */; };
 		P1A2B3C400000002PTM00002 /* PocketTtsEngine.mm in Sources */ = {isa = PBXBuildFile; fileRef = P1A2B3C400000001PTM00001 /* PocketTtsEngine.mm */; };
-		P1A2B3C400000002OCC00002 /* pocket_tts_onnx_engine.cc in Sources */ = {isa = PBXBuildFile; fileRef = P1A2B3C400000001OCC00001 /* pocket_tts_onnx_engine.cc */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -113,10 +113,10 @@
 		F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCompressor.swift; sourceTree = "<group>"; };
 		F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroTtsChannel.swift; sourceTree = "<group>"; };
 		F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitChannel.swift; sourceTree = "<group>"; };
+		P1A2B3C400000001OCC00001 /* pocket_tts_onnx_engine.cc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = pocket_tts_onnx_engine.cc; path = ../../native/pocket_tts/pocket_tts_onnx_engine.cc; sourceTree = "<group>"; };
 		P1A2B3C400000001PTC00001 /* PocketTtsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketTtsChannel.swift; sourceTree = "<group>"; };
 		P1A2B3C400000001PTH00001 /* PocketTtsEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PocketTtsEngine.h; sourceTree = "<group>"; };
 		P1A2B3C400000001PTM00001 /* PocketTtsEngine.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PocketTtsEngine.mm; sourceTree = "<group>"; };
-		P1A2B3C400000001OCC00001 /* pocket_tts_onnx_engine.cc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = pocket_tts_onnx_engine.cc; path = ../../native/pocket_tts/pocket_tts_onnx_engine.cc; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -657,6 +657,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 33E5194F232828860026EE4D /* AppInfo.xcconfig */;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CLANG_ENABLE_MODULES = YES;
@@ -664,7 +665,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = P3Q3YVXCLJ;
+				DEVELOPMENT_TEAM = 29LJ953TG9;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -684,7 +685,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/../native/pocket_tts",
-					"/opt/homebrew/include",
+					/opt/homebrew/include,
 				);
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -694,7 +695,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"/opt/homebrew/lib",
+					/opt/homebrew/lib,
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -824,6 +825,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 33E5194F232828860026EE4D /* AppInfo.xcconfig */;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CLANG_ENABLE_MODULES = YES;
@@ -831,7 +833,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = P3Q3YVXCLJ;
+				DEVELOPMENT_TEAM = 29LJ953TG9;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -851,7 +853,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/../native/pocket_tts",
-					"/opt/homebrew/include",
+					/opt/homebrew/include,
 				);
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -861,7 +863,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"/opt/homebrew/lib",
+					/opt/homebrew/lib,
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -879,6 +881,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 33E5194F232828860026EE4D /* AppInfo.xcconfig */;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CLANG_ENABLE_MODULES = YES;
@@ -886,7 +889,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = P3Q3YVXCLJ;
+				DEVELOPMENT_TEAM = 29LJ953TG9;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"HAS_ONNXRUNTIME=1",
 					"HAS_SENTENCEPIECE=1",
@@ -895,7 +898,7 @@
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/../native/pocket_tts",
-					"/opt/homebrew/include",
+					/opt/homebrew/include,
 				);
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
@@ -905,7 +908,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
-					"/opt/homebrew/lib",
+					/opt/homebrew/lib,
 				);
 				OTHER_LDFLAGS = (
 					"$(inherited)",

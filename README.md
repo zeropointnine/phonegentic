@@ -466,6 +466,7 @@ On-device providers require **macOS 15.0+** on Apple Silicon and a one-time Xcod
 | Xcode + CLI tools | App Store |
 | Metal Toolchain | `xcodebuild -downloadComponent MetalToolchain` |
 | Python 3 | `brew install python3` (or system python) |
+| Python 3 | `brew install sentencepiece` |
 | huggingface_hub | `pip3 install huggingface_hub` |
 
 Run `make preflight` to verify all of the above in one shot.
