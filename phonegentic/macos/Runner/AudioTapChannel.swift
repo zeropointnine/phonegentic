@@ -574,9 +574,12 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             // Suppression for speaker-to-mic reverb tail. Extended to 0.50s for
             // local STT (WhisperKit) — without server-side AEC the mic picks up
             // more TTS bleed, and shorter windows caused echo-driven loops.
-            let suppressionSeconds: TimeInterval = 0.50
+            let suppressionSeconds: TimeInterval = 0.75
             self.outputSuppressedUntil = Date().timeIntervalSince1970 + suppressionSeconds
             self.isPlayingResponse = false
+            // Clear stale agent-voice flag so it doesn't suppress real user
+            // speech that arrives after TTS finishes.
+            SpeakerIdentifier.shared.clearAgentVoiceFlag()
             self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
             NSLog("[AudioTap] Playback ended, notified Flutter, suppressed %.1fs", suppressionSeconds)
         }

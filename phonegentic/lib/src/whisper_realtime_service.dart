@@ -58,7 +58,7 @@ class WhisperRealtimeService {
   bool _vadActive = false;
   bool _isTtsPlaying = false;
   DateTime _ttsSuppressedUntil = DateTime(0);
-  static const int _ttsEchoCooldownMs = 800;
+  static const int _ttsEchoCooldownMs = 300;
 
   // Client-side silence gate: avoid sending near-silent audio to the API.
   // Once silence persists for _silenceGateFrames consecutive chunks the gate

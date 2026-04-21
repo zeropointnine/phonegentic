@@ -461,6 +461,7 @@ class AgentService extends ChangeNotifier {
 
   DateTime _speakingEndTime = DateTime(2000);
   DateTime _speakingStartTime = DateTime(2000);
+  DateTime _lastGhostFlushTime = DateTime(2000);
   int _echoGuardMs = 2000;
 
   final List<TranscriptionEvent> _pendingTranscripts = [];
@@ -473,9 +474,12 @@ class AgentService extends ChangeNotifier {
 
   /// Consecutive agent responses without any genuine user transcript in between.
   /// Used to break the self-response loop: after [_maxConsecutiveAgentResponses]
-  /// the agent goes silent until real user speech arrives.
+  /// the agent stops speaking until real user speech arrives.  The counter is
+  /// reset in _processTranscript when genuine speech reaches the LLM.
+  /// NOTE: this blocks the agent's OUTPUT, never the user's INPUT — user
+  /// transcripts always flow through regardless of the counter.
   int _consecutiveAgentResponses = 0;
-  static const _maxConsecutiveAgentResponses = 2;
+  static const _maxConsecutiveAgentResponses = 1;
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -1174,11 +1178,12 @@ class AgentService extends ChangeNotifier {
       // Wire raw mic audio → whisper.cpp.
       await _whisperKitStt!.startTranscription();
       _localAudioSub = _whisper.rawAudio.listen((chunk) {
-        // Gate audio during TTS playback — whisper.cpp has no AEC, so any
-        // speaker bleed would be transcribed as user speech.  Dropping mic
-        // input while TTS is active prevents acoustic echo from reaching
-        // inference.  ttsSuppressed includes an 800ms cooldown after playback
-        // ends to catch the reverb tail.
+        // Gate audio during TTS playback and for a short cooldown after.
+        // The native side suppresses mic audio for 0.3s after playback,
+        // and ttsSuppressed adds another 0.3s Dart-side cooldown to catch
+        // room reverb that the native suppression misses.  This doesn't
+        // add latency to the first transcript because the WhisperKit timer
+        // reset fires based on when isTtsPlaying went false.
         if (!_muted && !_speaking && !_whisper.ttsSuppressed) {
           _whisperKitStt?.feedAudio(chunk);
         }
@@ -1266,6 +1271,7 @@ class AgentService extends ChangeNotifier {
 
     _ttsSpeakingSub = _tts!.speakingState.listen((speaking) {
       if (speaking) {
+        _ttsGenerationComplete = false;
         _ttsGenEndTimer?.cancel();
         _speaking = true;
         _speakingStartTime = DateTime.now();
@@ -1274,6 +1280,7 @@ class AgentService extends ChangeNotifier {
           notifyListeners();
         }
       } else {
+        _ttsGenerationComplete = true;
         _onTtsGenerationDone();
       }
     });
@@ -2755,6 +2762,14 @@ class AgentService extends ChangeNotifier {
 
   /// Returns true if [text] is a fuzzy substring of any recent agent response,
   /// indicating it is likely the agent's own TTS being transcribed back.
+  static final _nonAlpha = RegExp(r'[^a-z0-9]');
+
+  static Set<String> _significantWords(String lower) => lower
+      .split(RegExp(r'\s+'))
+      .map((w) => w.replaceAll(_nonAlpha, ''))
+      .where((w) => w.length > 2)
+      .toSet();
+
   bool _isEchoOfAgentResponse(String text) {
     if (_recentAgentTexts.isEmpty) return false;
     final lower = text.toLowerCase().trim();
@@ -2762,16 +2777,12 @@ class AgentService extends ChangeNotifier {
     for (final agentText in _recentAgentTexts) {
       final agentLower = agentText.toLowerCase();
       if (agentLower.contains(lower)) return true;
-      // Word-overlap check — only for transcripts with 3+ significant words
-      // so short commands like "Call Lee" aren't blocked by common words.
-      final tWords =
-          lower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      final tWords = _significantWords(lower);
       if (tWords.length < 3) continue;
-      final aWords =
-          agentLower.split(RegExp(r'\s+')).where((w) => w.length > 2).toSet();
+      final aWords = _significantWords(agentLower);
       if (aWords.isNotEmpty) {
         final overlap = tWords.intersection(aWords).length;
-        if (overlap / tWords.length >= 0.4) return true;
+        if (overlap / tWords.length >= 0.35) return true;
       }
     }
     return false;
@@ -2836,8 +2847,8 @@ class AgentService extends ChangeNotifier {
   int get _effectiveEchoGuardMs {
     final spokenMs =
         _speakingEndTime.difference(_speakingStartTime).inMilliseconds;
-    if (spokenMs < 2000) return (_echoGuardMs * 0.5).round().clamp(800, 1200);
-    if (spokenMs < 4000) return (_echoGuardMs * 0.75).round();
+    if (spokenMs < 2000) return (_echoGuardMs * 0.25).round().clamp(400, 600);
+    if (spokenMs < 4000) return (_echoGuardMs * 0.5).round().clamp(600, 1000);
     return _echoGuardMs;
   }
 
@@ -2868,13 +2879,12 @@ class AgentService extends ChangeNotifier {
     for (final event in batch) {
       final text = event.text.trim();
       if (text.isEmpty) continue;
-      final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
-      if (words.length < 2) {
-        debugPrint('[AgentService] Buffered single-word dropped: "$text"');
-        continue;
-      }
       if (_isEchoOfAgentResponse(text)) {
         debugPrint('[AgentService] Buffered echo discarded: "$text"');
+        continue;
+      }
+      if (_isWhisperHallucination(text)) {
+        debugPrint('[AgentService] Buffered hallucination dropped: "$text"');
         continue;
       }
       _processTranscript(event);
@@ -3203,14 +3213,11 @@ class AgentService extends ChangeNotifier {
     // so the LLM has the full context of what was said before connected.
     _drainSettleTranscripts();
 
-    // Text-based echo suppression — only within a short window after the
-    // agent finishes speaking.  Outside this window the check is skipped so
-    // legitimate user commands that share common words with prior agent
-    // responses (e.g. "Call Lee" vs "would you like me to call Kali") are
-    // not incorrectly suppressed.
-    final msSinceSpoke =
-        DateTime.now().difference(_speakingEndTime).inMilliseconds;
-    if (msSinceSpoke < _effectiveEchoGuardMs * 2 && _isEchoOfAgentResponse(text)) {
+    // Text-based echo suppression — always run against recent agent texts.
+    // Ghost onPlaybackComplete events create echo windows lasting 8-12s,
+    // far beyond any timing gate.  The 35% word-overlap threshold with
+    // punctuation stripping is selective enough to avoid false positives.
+    if (_isEchoOfAgentResponse(text)) {
       debugPrint('[AgentService] Echo suppressed (text match): "$text"');
       return;
     }
@@ -3225,21 +3232,33 @@ class AgentService extends ChangeNotifier {
     _lastTranscriptText = text;
     _lastTranscriptTime = now;
 
-    // Loop breaker: if the agent has responded N+ times without genuine user
-    // input, it's in a self-response loop (echo/hallucination feeding itself).
-    // Require a longer, more substantive transcript to break out — short
-    // fragments are almost certainly echo residue.
-    if (_consecutiveAgentResponses >= _maxConsecutiveAgentResponses) {
-      final wordCount = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
-      if (wordCount < 4) {
-        debugPrint('[AgentService] Loop-breaker: dropped "$text" '
-            '(consecutive=$_consecutiveAgentResponses, words=$wordCount)');
-        return;
-      }
-      // Substantive speech — reset the counter and let it through.
-      debugPrint('[AgentService] Loop-breaker: allowing "$text" '
-          '(words=$wordCount, resetting consecutive counter)');
+    // Reset the consecutive-agent-response counter only when we're confident
+    // this is genuine user speech, not TTS echo picked up by the mic.
+    //
+    // Two paths to unlock:
+    //  1. 4+ words — always unlocks (a real question/command)
+    //  2. ANY words arriving 3+ seconds after the echo window closes —
+    //     use the later of TTS end and last ghost flush, since ghost
+    //     onPlaybackComplete events create echo windows lasting 8-12s
+    //
+    // Within the echo window, only 4+ word transcripts unlock.
+    final wordCount = text.split(RegExp(r'\s+')).length;
+    final echoWindowEnd = _lastGhostFlushTime.isAfter(_speakingEndTime)
+        ? _lastGhostFlushTime
+        : _speakingEndTime;
+    final msSinceEchoWindow = now.difference(echoWindowEnd).inMilliseconds;
+    if (wordCount >= 4 || msSinceEchoWindow > 3000) {
       _consecutiveAgentResponses = 0;
+    }
+
+    // If the loop breaker is active and this transcript didn't reset it,
+    // skip the LLM call entirely.  Sending short fragments to the LLM when
+    // the response will be suppressed anyway wastes API calls and — worse —
+    // the suppression triggers clearTTSQueue which can flush user audio.
+    if (_consecutiveAgentResponses > _maxConsecutiveAgentResponses) {
+      debugPrint('[AgentService] Loop-breaker active, skipping short '
+          'transcript ($wordCount words): "$text"');
+      return;
     }
 
     final info = await _whisper.getSpeakerInfo();
@@ -3253,9 +3272,17 @@ class AgentService extends ChangeNotifier {
 
     // Voiceprint-based echo suppression: if the mic audio that produced this
     // transcript matches the agent's TTS voiceprint, it's echo — not the user.
+    // Use the FULL (non-adaptive) echo guard here because a positive voiceprint
+    // match is high-confidence — we don't want the shortened adaptive window
+    // to let agent echo slip through and trigger ghost responses.
     if (isAgentVoice && _isLocalSttMode) {
-      debugPrint('[AgentService] Voiceprint echo suppressed: "$text"');
-      return;
+      final msSinceTts =
+          DateTime.now().difference(_speakingEndTime).inMilliseconds;
+      if (_whisper.isTtsPlaying || msSinceTts < _echoGuardMs) {
+        debugPrint('[AgentService] Voiceprint echo suppressed (${msSinceTts}ms): "$text"');
+        return;
+      }
+      debugPrint('[AgentService] Voiceprint flag stale (${msSinceTts}ms since TTS), allowing: "$text"');
     }
 
     // When idle (no active call), filter likely background/ambient audio.
@@ -3341,7 +3368,6 @@ class AgentService extends ChangeNotifier {
       _postGreetGraceUntil = null;
     }
 
-    _consecutiveAgentResponses = 0;
     _textAgent?.addTranscript(label, text);
 
     // Fill the silence between the remote finishing and TTS audio arriving
@@ -3528,6 +3554,31 @@ class AgentService extends ChangeNotifier {
       } else if (_pipelineError != null) {
         _pipelineError = null;
       }
+
+      // Loop breaker: if the agent has responded too many times without any
+      // genuine user transcript, it's talking to itself (echo → LLM → TTS →
+      // echo).  Suppress TTS and discard the response. User transcripts are
+      // NEVER blocked — only the agent's output is suppressed.
+      if (_consecutiveAgentResponses > _maxConsecutiveAgentResponses) {
+        debugPrint('[AgentService] Loop-breaker: suppressing agent response '
+            '(consecutive=$_consecutiveAgentResponses)');
+        _ttsInterrupted = true;
+        // Only stop/clear if TTS is actually playing — otherwise the
+        // clearTTSQueue fires a native onPlaybackComplete that ghost-flushes
+        // the WhisperKit buffer, discarding the user's real speech audio.
+        if (_whisper.isTtsPlaying || _speaking) {
+          _whisper.stopResponseAudio();
+          _whisper.clearTTSQueue();
+        }
+        if (_streamingMessageId != null) {
+          final idx = _messages.indexWhere((m) => m.id == _streamingMessageId);
+          if (idx >= 0) _removeMsgAt(idx);
+          _streamingMessageId = null;
+        }
+        _resetVoiceUiSyncState();
+        notifyListeners();
+        return;
+      }
     }
 
     if (event.isFinal) {
@@ -3623,7 +3674,8 @@ class AgentService extends ChangeNotifier {
       event.text, _vocalExprState);
     _vocalExprState = exprResult.state;
 
-    if (_hasTts && ttsActive && event.text.isNotEmpty && !suppressTts) {
+    final loopSuppressed = _consecutiveAgentResponses >= _maxConsecutiveAgentResponses;
+    if (_hasTts && ttsActive && event.text.isNotEmpty && !suppressTts && !loopSuppressed) {
       if (_streamingMessageId == null) {
         _ttsBracketDepth = 0;
         _activeTtsStartGeneration();
@@ -7616,6 +7668,21 @@ class AgentService extends ChangeNotifier {
     switch (call.method) {
       case 'onPlaybackComplete':
         if (_splitPipeline) {
+          // Ignore ghost duplicate events after the first debounce already
+          // cleared isTtsPlaying. Without this guard, the second event
+          // restarts the debounce with _ttsGenerationComplete=false (2s!)
+          // and resets the WhisperKit timer, adding ~3s of dead time.
+          //
+          // Each ghost also triggers native suppression, but the gap between
+          // the prior suppression and this ghost lets echo-contaminated audio
+          // leak into the WhisperKit buffer.  Flush without resetting the
+          // timer — the timer was already reset on the first event.
+          if (!_whisper.isTtsPlaying && !_speaking) {
+            if (_isLocalSttMode) _whisperKitStt?.flushAudioBuffer();
+            _lastGhostFlushTime = DateTime.now();
+            break;
+          }
+
           // AudioTap fires this per-buffer drain, not once at the end.
           // Debounce: keep the echo guard open until Nms after the LAST event.
           // Use a short window once generation is done (no more chunks coming).
@@ -7633,6 +7700,12 @@ class AgentService extends ChangeNotifier {
               notifyListeners();
             }
             _schedulePostSpeakFlush();
+            // Reset WhisperKit's transcription timer so the first post-TTS
+            // buffer processes at a predictable offset (1.5s from now)
+            // instead of waiting for the old timer cycle to randomly align.
+            if (_isLocalSttMode) {
+              _whisperKitStt?.notifyPlaybackEnded();
+            }
           });
         } else {
           _playbackSafetyTimer?.cancel();

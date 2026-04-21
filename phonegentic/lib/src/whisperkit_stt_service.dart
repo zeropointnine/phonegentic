@@ -130,6 +130,29 @@ class WhisperKitSttService {
     }
   }
 
+  /// Reset the transcription timer and flush the audio buffer so the first
+  /// post-TTS buffer is processed at a predictable offset with clean audio.
+  Future<void> notifyPlaybackEnded() async {
+    if (!_initialized || !_transcribing) return;
+    try {
+      await _channel.invokeMethod('notifyPlaybackEnded');
+    } on PlatformException catch (e) {
+      debugPrint('[WhisperKit] notifyPlaybackEnded failed: ${e.message}');
+    }
+  }
+
+  /// Flush the audio buffer without resetting the timer.  Used on ghost
+  /// onPlaybackComplete events to discard echo that leaked through gaps
+  /// in native suppression.
+  Future<void> flushAudioBuffer() async {
+    if (!_initialized || !_transcribing) return;
+    try {
+      await _channel.invokeMethod('flushAudioBuffer');
+    } on PlatformException catch (e) {
+      debugPrint('[WhisperKit] flushAudioBuffer failed: ${e.message}');
+    }
+  }
+
   Future<void> stopTranscription() async {
     if (!_transcribing) return;
     try {

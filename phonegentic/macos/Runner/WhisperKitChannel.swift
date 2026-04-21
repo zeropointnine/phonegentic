@@ -54,6 +54,36 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     /// the carry-over segment and produce duplicate leading words.
     private var lastTranscriptText = ""
 
+    /// Whether the last transcript was a hallucination/empty — if so, the
+    /// carry-over buffer is stale silence and must be cleared so it doesn't
+    /// eat the first word of real speech that follows.
+    private var lastTranscriptWasEmpty = true
+
+    /// Non-speech / hallucination patterns that indicate the audio was silence.
+    private static let silencePatterns: [String] = [
+        "blank_audio", "blank audio", "silence", "no audio",
+        "music", "noise", "beep", "ring", "click",
+    ]
+
+    /// Returns true if the transcript text looks like a WhisperKit hallucination
+    /// from silence/noise rather than real speech.
+    private func isLikelyHallucination(_ text: String) -> Bool {
+        let lower = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if lower.isEmpty { return true }
+        // Bracketed/parenthetical tags: [BLANK_AUDIO], (silence), etc.
+        if lower.hasPrefix("[") || lower.hasPrefix("(") || lower.hasPrefix("{") {
+            return true
+        }
+        // Check known silence phrases
+        for pattern in WhisperKitChannel.silencePatterns {
+            if lower.contains(pattern) { return true }
+        }
+        // Very short (1-2 chars) or punctuation-only
+        let stripped = lower.filter { $0.isLetter }
+        if stripped.count <= 2 { return true }
+        return false
+    }
+
     init(messenger: FlutterBinaryMessenger) {
         methodChannel = FlutterMethodChannel(
             name: "com.agentic_ai/whisperkit_stt",
@@ -105,6 +135,10 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             }
         case "stopTranscription":
             handleStopTranscription(result: result)
+        case "notifyPlaybackEnded":
+            handleNotifyPlaybackEnded(result: result)
+        case "flushAudioBuffer":
+            handleFlushAudioBuffer(result: result)
         case "dispose":
             handleDispose(result: result)
         default:
@@ -207,6 +241,50 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         result(nil)
     }
 
+    /// Reset the transcription timer so the next processing happens at a
+    /// predictable offset from now.  Called when TTS playback ends so the
+    /// first post-TTS buffer is processed as soon as enough audio has
+    /// accumulated rather than waiting for the old timer cycle to align.
+    private func handleNotifyPlaybackEnded(result: @escaping FlutterResult) {
+        guard isTranscribing else {
+            result(nil)
+            return
+        }
+
+        // Flush any audio that leaked through suppression gaps during TTS —
+        // it's contaminated with echo and must not be transcribed.
+        bufferLock.lock()
+        let flushedBytes = audioBuffer.count + carryOverBuffer.count
+        audioBuffer = Data()
+        carryOverBuffer = Data()
+        bufferLock.unlock()
+
+        transcriptionTimer?.invalidate()
+        let interval = Double(WhisperKitChannel.transcriptionIntervalMs) / 1000.0
+        transcriptionTimer = Timer.scheduledTimer(
+            withTimeInterval: interval, repeats: true
+        ) { [weak self] _ in
+            self?.processBufferedAudio()
+        }
+        NSLog("[WhisperKit] Timer reset after playback ended — flushed %d bytes of echo-contaminated audio (next tick in %.1fs)", flushedBytes, interval)
+        result(nil)
+    }
+
+    /// Flush the audio buffer without resetting the transcription timer.
+    /// Called on ghost onPlaybackComplete events to discard echo that leaked
+    /// through gaps in native suppression.
+    private func handleFlushAudioBuffer(result: @escaping FlutterResult) {
+        bufferLock.lock()
+        let flushedBytes = audioBuffer.count + carryOverBuffer.count
+        audioBuffer = Data()
+        carryOverBuffer = Data()
+        bufferLock.unlock()
+        if flushedBytes > 0 {
+            NSLog("[WhisperKit] Ghost flush: discarded %d bytes of echo audio", flushedBytes)
+        }
+        result(nil)
+    }
+
     private func processBufferedAudio() {
         #if canImport(WhisperKit)
         guard let kit = whisperKit, isTranscribing, !isProcessing else { return }
@@ -216,9 +294,17 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             bufferLock.unlock()
             return
         }
-        // Prepend carry-over from the previous transcription so speech at
-        // buffer boundaries isn't lost (first couple of words).
-        let audioData = carryOverBuffer + audioBuffer
+        // Only prepend carry-over if the previous window had real speech.
+        // If the last transcript was empty/hallucination, the carry-over is
+        // stale silence that would cause WhisperKit to re-hallucinate the
+        // same text and strip the first word of real speech via dedup.
+        let audioData: Data
+        if lastTranscriptWasEmpty {
+            carryOverBuffer = Data()
+            audioData = audioBuffer
+        } else {
+            audioData = carryOverBuffer + audioBuffer
+        }
         audioBuffer = Data()
         bufferLock.unlock()
 
@@ -252,13 +338,39 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                         self.isProcessing = false
                     }
 
-                    if !text.isEmpty {
-                        let dedupedText = self.deduplicateCarryOver(text)
+                    let hallucination = self.isLikelyHallucination(text)
+                    let prevWasEmpty = self.lastTranscriptWasEmpty
+
+                    if !text.isEmpty && !hallucination {
+                        // Only dedup against previous if the previous was real speech.
+                        // If previous was a hallucination, skip dedup — the carry-over
+                        // was stale silence and should not strip the first real word.
+                        let dedupedText = prevWasEmpty
+                            ? text
+                            : self.deduplicateCarryOver(text)
                         if !dedupedText.isEmpty {
                             DispatchQueue.main.async {
+                                self.lastTranscriptWasEmpty = false
                                 self.lastTranscriptText = dedupedText
                                 self.transcriptEventSink?([
                                     "text": dedupedText,
+                                    "isFinal": true,
+                                    "language": "en"
+                                ])
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self.lastTranscriptWasEmpty = true
+                            }
+                        }
+                    } else {
+                        // Empty or hallucination — emit for Dart-side filtering
+                        // but mark as empty so carry-over gets cleared next cycle.
+                        DispatchQueue.main.async {
+                            self.lastTranscriptWasEmpty = true
+                            if !text.isEmpty {
+                                self.transcriptEventSink?([
+                                    "text": text,
                                     "isFinal": true,
                                     "language": "en"
                                 ])

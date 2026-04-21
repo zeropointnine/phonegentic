@@ -58,8 +58,26 @@ final class SpeakerIdentifier {
     private let agentEmbeddingLock = NSLock()
     private static let agentAccumulationBytes = 24000 * 2 * 3 // 3 seconds at 24kHz PCM16
 
-    /// Cached result of the last mic-vs-agent-voice check.
+    /// Cached result of the last mic-vs-agent-voice check, with the time it was set.
+    /// Only valid within a few seconds of being set — stale values must not
+    /// suppress real user speech that arrives after TTS finishes.
     private(set) var lastMicIsAgentVoice = false
+    private var lastMicAgentVoiceTime: TimeInterval = 0
+    /// How long the agent voice flag stays valid (seconds).
+    private static let agentVoiceStalenessLimit: TimeInterval = 2.0
+
+    /// Returns true only if the agent voice flag is recent enough to be trusted.
+    var isMicRecentlyAgentVoice: Bool {
+        guard lastMicIsAgentVoice else { return false }
+        let age = Date().timeIntervalSince1970 - lastMicAgentVoiceTime
+        return age < SpeakerIdentifier.agentVoiceStalenessLimit
+    }
+
+    /// Clear the agent voice flag — call when TTS playback ends so stale
+    /// values don't suppress real user speech.
+    func clearAgentVoiceFlag() {
+        lastMicIsAgentVoice = false
+    }
 
     private init() {}
 
@@ -202,6 +220,7 @@ final class SpeakerIdentifier {
                 if self.isAgentVoice(embedding: embedding) {
                     if !isRemote {
                         self.lastMicIsAgentVoice = true
+                        self.lastMicAgentVoiceTime = Date().timeIntervalSince1970
                     }
                     NSLog("[SpeakerID] Suppressed agent echo (voiceprint match, isRemote=%d)", isRemote ? 1 : 0)
                     return
@@ -312,6 +331,7 @@ final class SpeakerIdentifier {
     /// { "source": "remote"|"host", "identity": "name"|"", "confidence": Double }
     func speakerInfo(dominantSource: String) -> [String: Any] {
         let hasAgentVoiceprint = agentEmbedding != nil
+        let recentAgentVoice = isMicRecentlyAgentVoice
         switch dominantSource {
         case "remote":
             return [
@@ -326,7 +346,7 @@ final class SpeakerIdentifier {
                 "source": "host",
                 "identity": identifiedHostSpeaker,
                 "confidence": hostConfidence,
-                "isAgentVoice": lastMicIsAgentVoice,
+                "isAgentVoice": recentAgentVoice,
                 "hasAgentVoiceprint": hasAgentVoiceprint,
             ]
         default:
@@ -334,7 +354,7 @@ final class SpeakerIdentifier {
                 "source": dominantSource,
                 "identity": "",
                 "confidence": 0.0,
-                "isAgentVoice": lastMicIsAgentVoice,
+                "isAgentVoice": recentAgentVoice,
                 "hasAgentVoiceprint": hasAgentVoiceprint,
             ]
         }
