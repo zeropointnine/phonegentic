@@ -19,6 +19,7 @@ import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
 import '../inbound_call_flow_service.dart';
 import '../job_function_service.dart';
+import '../messaging/messaging_service.dart';
 import '../models/agent_context.dart';
 import '../models/job_function.dart';
 import '../models/chat_message.dart';
@@ -823,7 +824,16 @@ class _CalendarEventBannerState extends State<_CalendarEventBanner> {
       child: Row(
         children: [
           Icon(Icons.calendar_today_rounded, size: 12, color: iconColor),
-          const SizedBox(width: 8),
+          const SizedBox(width: 5),
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.colorForSource(event.source),
+            ),
+          ),
+          const SizedBox(width: 6),
           Text(
             prefix,
             style: TextStyle(
@@ -2184,6 +2194,61 @@ class _MessageListState extends State<_MessageList> {
 }
 
 // ---------------------------------------------------------------------------
+// Quick SMS from a reminder bubble
+// ---------------------------------------------------------------------------
+
+Future<void> _sendReminderSms(
+    BuildContext ctx, ChatMessage message) async {
+  final name = message.metadata?['contact_name'] as String? ?? '';
+  if (name.isEmpty) {
+    if (ctx.mounted) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('No contact on this reminder')),
+      );
+    }
+    return;
+  }
+
+  final results = await CallHistoryDb.searchContacts(name);
+  final phone =
+      results.isNotEmpty ? results.first['phone_number'] as String? ?? '' : '';
+  if (phone.isEmpty) {
+    if (ctx.mounted) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text('No phone number found for $name'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    return;
+  }
+
+  final contactFirst = name.split(' ').first;
+  final body =
+      'Hi $contactFirst, just a heads up about our upcoming appointment.';
+
+  try {
+    final messaging = ctx.read<MessagingService>();
+    await messaging.sendMessage(to: phone, text: body);
+    if (ctx.mounted) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text('SMS sent to $name'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  } catch (_) {
+    if (ctx.mounted) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Failed to send SMS')),
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Message Bubble
 // ---------------------------------------------------------------------------
 
@@ -2248,6 +2313,8 @@ class _MessageBubble extends StatelessWidget {
               requireResponse: true,
             );
             agent.removeMessage(message);
+          } else if (value == 'sms_contact') {
+            _sendReminderSms(context, message);
           } else if (value == 'tell_me_more') {
             agent.sendUserMessage('Tell me more about: ${message.text}');
             agent.removeMessage(message);
@@ -3310,6 +3377,13 @@ class _ReminderBubble extends StatelessWidget {
                 spacing: 6,
                 runSpacing: 4,
                 children: message.actions.map((action) {
+                  if (action.value == 'sms_contact') {
+                    return _ReminderChip(
+                      label: action.label,
+                      icon: Icons.sms_rounded,
+                      onTap: () => onAction?.call(action.value),
+                    );
+                  }
                   return _ReminderChip(
                     label: action.label,
                     onTap: () => onAction?.call(action.value),
@@ -3326,8 +3400,9 @@ class _ReminderBubble extends StatelessWidget {
 
 class _ReminderChip extends StatelessWidget {
   final String label;
+  final IconData? icon;
   final VoidCallback? onTap;
-  const _ReminderChip({required this.label, this.onTap});
+  const _ReminderChip({required this.label, this.icon, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -3343,13 +3418,22 @@ class _ReminderChip extends StatelessWidget {
             width: 0.5,
           ),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            color: AppColors.accent,
-            fontWeight: FontWeight.w500,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 11, color: AppColors.accent),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: AppColors.accent,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
       ),
     );

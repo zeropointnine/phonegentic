@@ -867,6 +867,8 @@ class _MyDialPadWidget extends State<DialPadWidget>
               if (wide) ...[
                 _buildMessagesButton(context),
                 const SizedBox(width: 4),
+                _buildCalendarButton(context),
+                const SizedBox(width: 4),
                 _buildTearSheetButton(context),
                 const SizedBox(width: 4),
                 _buildContactsButton(context),
@@ -1316,6 +1318,31 @@ class _MyDialPadWidget extends State<DialPadWidget>
     );
   }
 
+  Widget _buildCalendarButton(BuildContext context) {
+    final calSync = context.watch<CalendarSyncService>();
+    return HoverButton(
+      onTap: () => calSync.toggleOpen(),
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: calSync.isOpen
+              ? AppColors.accent.withValues(alpha: 0.12)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: calSync.isOpen
+                ? AppColors.accent.withValues(alpha: 0.4)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+        child: Icon(Icons.calendar_month_rounded,
+            size: 16, color: AppColors.textSecondary),
+      ),
+    );
+  }
+
   Widget _buildContactsButton(BuildContext context) {
     return HoverButton(
       onTap: () {
@@ -1460,32 +1487,33 @@ class _MyDialPadWidget extends State<DialPadWidget>
               ],
             ),
           ),
+          PopupMenuItem(
+            value: 'messages',
+            child: Row(
+              children: [
+                Icon(Icons.chat_bubble_outline_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                Text(
+                  'Messages${context.read<MessagingService>().unreadCount > 0 ? ' (${context.read<MessagingService>().unreadCount})' : ''}',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'calendar',
+            child: Row(
+              children: [
+                Icon(Icons.calendar_month_rounded,
+                    size: 18, color: AppColors.textSecondary),
+                const SizedBox(width: 10),
+                const Text('Calendar', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+          const PopupMenuDivider(),
         ],
-        PopupMenuItem(
-          value: 'messages',
-          child: Row(
-            children: [
-              Icon(Icons.chat_bubble_outline_rounded,
-                  size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 10),
-              Text(
-                'Messages${context.read<MessagingService>().unreadCount > 0 ? ' (${context.read<MessagingService>().unreadCount})' : ''}',
-                style: const TextStyle(fontSize: 13),
-              ),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'calendar',
-          child: Row(
-            children: [
-              Icon(Icons.calendar_month_rounded,
-                  size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 10),
-              const Text('Calendar', style: TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
         PopupMenuItem(
           value: 'account',
           child: Row(

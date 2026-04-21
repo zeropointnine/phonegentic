@@ -146,6 +146,7 @@ class ChatMessage {
     this.text, {
     String? id,
     int? reminderId,
+    String? contactName,
     this.actions = const [],
   })  : id = id ?? _uid(),
         role = ChatRole.system,
@@ -155,6 +156,7 @@ class ChatMessage {
         isStreaming = false,
         metadata = {
           if (reminderId != null) 'reminder_id': reminderId,
+          if (contactName != null) 'contact_name': contactName,
         };
 
   // ---------------------------------------------------------------------------

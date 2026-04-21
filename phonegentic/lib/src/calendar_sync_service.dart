@@ -109,6 +109,11 @@ class CalendarSyncService extends ChangeNotifier {
   Future<void> _loadFromDb() async {
     _events = await CallHistoryDb.getUpcomingEvents(limit: 100);
     debugPrint('[CalendarSync] ${_events.length} upcoming event(s) in DB');
+    for (final e in _events) {
+      debugPrint(
+          '[CalendarSync]   DB: "${e.title}" start=${e.startTime.toLocal()} '
+          'id=${e.id} calendlyId=${e.calendlyEventId != null ? "yes" : "no"}');
+    }
     notifyListeners();
   }
 

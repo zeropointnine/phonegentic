@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -33,7 +34,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 17,
+        version: 19,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -242,6 +243,21 @@ class CallHistoryDb {
 
     if (oldVersion < 17) {
       await _createSessionMessagesTable(db);
+    }
+    if (oldVersion < 18) {
+      await db.execute(
+          "ALTER TABLE calendar_events ADD COLUMN source TEXT DEFAULT 'local'");
+      await db.execute(
+          'ALTER TABLE calendar_events ADD COLUMN google_calendar_event_id TEXT');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_ce_source ON calendar_events(source)');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_ce_gcal_id ON calendar_events(google_calendar_event_id)');
+    }
+
+    if (oldVersion < 19) {
+      await db.execute(
+          'ALTER TABLE calendar_events ADD COLUMN locally_modified INTEGER DEFAULT 0');
     }
   }
 
@@ -1010,6 +1026,8 @@ class CallHistoryDb {
       CREATE TABLE IF NOT EXISTS calendar_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         calendly_event_id TEXT UNIQUE,
+        google_calendar_event_id TEXT,
+        source TEXT DEFAULT 'local',
         title TEXT NOT NULL,
         description TEXT,
         start_time TEXT NOT NULL,
@@ -1021,11 +1039,16 @@ class CallHistoryDb {
         location TEXT,
         status TEXT DEFAULT 'active',
         synced_at TEXT,
-        created_at TEXT
+        created_at TEXT,
+        locally_modified INTEGER DEFAULT 0
       )
     ''');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_ce_start ON calendar_events(start_time)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ce_source ON calendar_events(source)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ce_gcal_id ON calendar_events(google_calendar_event_id)');
   }
 
   static Future<int> insertCalendarEvent(CalendarEvent event) async {
@@ -1037,6 +1060,8 @@ class CallHistoryDb {
 
   static Future<void> upsertCalendarEvent(CalendarEvent event) async {
     final db = await database;
+
+    // Dedup by Calendly event ID
     if (event.calendlyEventId != null) {
       final existing = await db.query(
         'calendar_events',
@@ -1045,13 +1070,78 @@ class CallHistoryDb {
       );
       if (existing.isNotEmpty) {
         final id = existing.first['id'] as int;
+        final locallyMod = existing.first['locally_modified'] as int? ?? 0;
+        if (locallyMod == 1) {
+          debugPrint('[CalendarSync] SKIP upsert id=$id — locally_modified');
+          return;
+        }
+        final existingStart = existing.first['start_time'] as String?;
+        final existingEnd = existing.first['end_time'] as String?;
+        final incomingStart = event.startTime.toIso8601String();
+        final incomingEnd = event.endTime.toIso8601String();
+        if (existingStart != null &&
+            existingEnd != null &&
+            (existingStart != incomingStart || existingEnd != incomingEnd)) {
+          debugPrint(
+              '[CalendarSync] SKIP upsert id=$id — local times differ '
+              '(local=$existingStart, remote=$incomingStart)');
+          return;
+        }
         final map = event.toMap();
         map.remove('id');
+        map.remove('locally_modified');
+        final existingJfId = existing.first['job_function_id'];
+        if (existingJfId != null && map['job_function_id'] == null) {
+          map['job_function_id'] = existingJfId;
+        }
+        debugPrint('[CalendarSync] UPSERT id=$id — updating from remote');
         await db.update('calendar_events', map,
             where: 'id = ?', whereArgs: [id]);
         return;
       }
     }
+
+    // Dedup by Google Calendar composite ID
+    if (event.googleCalendarEventId != null) {
+      final existing = await db.query(
+        'calendar_events',
+        where: 'google_calendar_event_id = ?',
+        whereArgs: [event.googleCalendarEventId],
+      );
+      if (existing.isNotEmpty) {
+        final id = existing.first['id'] as int;
+        final locallyMod = existing.first['locally_modified'] as int? ?? 0;
+        if (locallyMod == 1) {
+          debugPrint('[CalendarSync] SKIP upsert id=$id — locally_modified');
+          return;
+        }
+        final existingStart = existing.first['start_time'] as String?;
+        final existingEnd = existing.first['end_time'] as String?;
+        final incomingStart = event.startTime.toIso8601String();
+        final incomingEnd = event.endTime.toIso8601String();
+        if (existingStart != null &&
+            existingEnd != null &&
+            (existingStart != incomingStart || existingEnd != incomingEnd)) {
+          debugPrint(
+              '[CalendarSync] SKIP upsert id=$id — local times differ '
+              '(local=$existingStart, remote=$incomingStart)');
+          return;
+        }
+        final map = event.toMap();
+        map.remove('id');
+        map.remove('locally_modified');
+        final existingJfId = existing.first['job_function_id'];
+        if (existingJfId != null && map['job_function_id'] == null) {
+          map['job_function_id'] = existingJfId;
+        }
+        debugPrint('[CalendarSync] UPSERT id=$id — updating from remote');
+        await db.update('calendar_events', map,
+            where: 'id = ?', whereArgs: [id]);
+        return;
+      }
+    }
+
+    debugPrint('[CalendarSync] INSERT new event: "${event.title}"');
     final map = event.toMap();
     map.remove('id');
     await db.insert('calendar_events', map);
@@ -1096,10 +1186,17 @@ class CallHistoryDb {
     );
   }
 
-  static Future<void> updateCalendarEvent(CalendarEvent event) async {
+  static Future<void> updateCalendarEvent(CalendarEvent event,
+      {bool markLocallyModified = false}) async {
     final db = await database;
     final map = event.toMap();
     map.remove('id');
+    if (markLocallyModified) {
+      map['locally_modified'] = 1;
+      debugPrint(
+          '[CalendarSync] updateCalendarEvent id=${event.id} '
+          'markLocallyModified=true start=${event.startTime}');
+    }
     await db.update('calendar_events', map,
         where: 'id = ?', whereArgs: [event.id]);
   }

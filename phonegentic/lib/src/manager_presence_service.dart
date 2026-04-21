@@ -311,16 +311,39 @@ class ManagerPresenceService extends ChangeNotifier
       _scheduledReminderTimers.remove(id)?.cancel();
       await CallHistoryDb.updateReminderStatus(id, 'fired');
 
+      final source = row['source'] as String? ?? '';
+      final remindAt =
+          DateTime.tryParse(row['remind_at'] as String? ?? '')?.toLocal();
+      final isCalendar = source == 'calendar';
+
+      String? contactName;
+      if (isCalendar && desc != null && desc.startsWith('Meeting with ')) {
+        contactName = desc.substring('Meeting with '.length).trim();
+      }
+
       final text = desc != null && desc.isNotEmpty ? '$title — $desc' : title;
       debugPrint(
           '[ManagerPresence] Firing reminder $id: "$text" (agent=${_agent != null})');
 
-      _agent?.addReminderMessage(text, reminderId: id);
+      _agent?.addReminderMessage(text,
+          reminderId: id, contactName: contactName);
 
-      _agent?.sendSystemEvent(
-        '[REMINDER FIRED] $text — Please act on this reminder now.',
-        requireResponse: true,
-      );
+      String prompt;
+      if (isCalendar && remindAt != null) {
+        final eventTime = remindAt.add(const Duration(minutes: 15));
+        final h = eventTime.hour > 12
+            ? eventTime.hour - 12
+            : (eventTime.hour == 0 ? 12 : eventTime.hour);
+        final m = eventTime.minute.toString().padLeft(2, '0');
+        final ap = eventTime.hour >= 12 ? 'PM' : 'AM';
+        prompt = '[UPCOMING MEETING] $text at $h:$m $ap — '
+            'Give the manager a brief, friendly heads-up that their meeting '
+            'is coming up soon. Do NOT mention the word "reminder".';
+      } else {
+        prompt = '[REMINDER FIRED] $text — Please act on this reminder now.';
+      }
+
+      _agent?.sendSystemEvent(prompt, requireResponse: true);
     } catch (e, st) {
       debugPrint('[ManagerPresence] _fireReminder error: $e\n$st');
     }

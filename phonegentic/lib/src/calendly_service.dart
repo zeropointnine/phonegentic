@@ -144,12 +144,20 @@ class CalendlyService {
 
       return collection.map((item) {
         final e = item as Map<String, dynamic>;
+        final rawTitle = e['name'] as String? ?? 'Calendly Event';
+        final invitee = _extractInviteeName(e);
+        final title = invitee != null && !rawTitle.contains(invitee)
+            ? '$rawTitle — $invitee'
+            : rawTitle;
         return CalendarEvent(
           calendlyEventId: e['uri'] as String?,
-          title: e['name'] as String? ?? 'Calendly Event',
+          source: EventSource.calendly,
+          title: title,
           description: _extractDescription(e),
           startTime: DateTime.parse(e['start_time'] as String),
           endTime: DateTime.parse(e['end_time'] as String),
+          inviteeName: invitee,
+          inviteeEmail: _extractInviteeEmail(e),
           eventType: e['event_type'] as String?,
           location: _extractLocation(e),
           status: 'active',
@@ -288,6 +296,35 @@ class CalendlyService {
   }
 
   // ---------------------------------------------------------------------------
+  // Cancel event
+  // ---------------------------------------------------------------------------
+
+  /// Cancel a scheduled event by its URI.
+  /// The [eventUri] is the full Calendly event URI, e.g.
+  /// `https://api.calendly.com/scheduled_events/<uuid>`.
+  Future<bool> cancelEvent(String eventUri, {String? reason}) async {
+    try {
+      final uuid = Uri.parse(eventUri).pathSegments.last;
+      final resp = await http.post(
+        Uri.parse('$_baseUrl/scheduled_events/$uuid/cancellation'),
+        headers: _headers,
+        body: json.encode({
+          if (reason != null) 'reason': reason,
+        }),
+      );
+      if (resp.statusCode == 200 || resp.statusCode == 201) {
+        return true;
+      }
+      debugPrint(
+          '[CalendlyService] cancelEvent ${resp.statusCode}: ${resp.body}');
+      return false;
+    } catch (e) {
+      debugPrint('[CalendlyService] cancelEvent error: $e');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Scheduling links (legacy fallback)
   // ---------------------------------------------------------------------------
 
@@ -328,6 +365,30 @@ class CalendlyService {
     final loc = event['location'] as Map<String, dynamic>?;
     if (loc == null) return null;
     return loc['location'] as String? ?? loc['join_url'] as String?;
+  }
+
+  String? _extractInviteeName(Map<String, dynamic> event) {
+    final guests = event['event_guests'] as List<dynamic>? ?? [];
+    if (guests.isNotEmpty) {
+      final first = guests.first as Map<String, dynamic>;
+      final name = first['name'] as String?;
+      if (name != null && name.isNotEmpty) return name;
+    }
+    final memberships = event['event_memberships'] as List<dynamic>? ?? [];
+    if (memberships.isNotEmpty) {
+      final first = memberships.first as Map<String, dynamic>;
+      return first['user_name'] as String?;
+    }
+    return null;
+  }
+
+  String? _extractInviteeEmail(Map<String, dynamic> event) {
+    final guests = event['event_guests'] as List<dynamic>? ?? [];
+    if (guests.isNotEmpty) {
+      final first = guests.first as Map<String, dynamic>;
+      return first['email'] as String?;
+    }
+    return null;
   }
 
   String? _extractDescription(Map<String, dynamic> event) {
