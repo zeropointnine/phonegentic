@@ -5,6 +5,7 @@ class MainFlutterWindow: NSWindow {
   private var audioDeviceChannel: AudioDeviceChannel?
   private var audioTapChannel: AudioTapChannel?
   private var kokoroTtsChannel: KokoroTtsChannel?
+  private var pocketTtsChannel: PocketTtsChannel?
   private var whisperKitChannel: WhisperKitChannel?
   private var nativeActionsChannel: NativeActionsChannel?
 
@@ -28,6 +29,7 @@ class MainFlutterWindow: NSWindow {
     audioDeviceChannel = AudioDeviceChannel(messenger: messenger)
     audioTapChannel = AudioTapChannel(messenger: messenger)
     kokoroTtsChannel = KokoroTtsChannel(messenger: messenger)
+    pocketTtsChannel = PocketTtsChannel(messenger: messenger)
     whisperKitChannel = WhisperKitChannel(messenger: messenger)
     nativeActionsChannel = NativeActionsChannel(messenger: messenger)
 

@@ -7,13 +7,14 @@ PODS:
     - FlutterMacOS
   - flutter_contacts (0.0.1):
     - FlutterMacOS
-  - flutter_webrtc (1.2.0):
+  - flutter_webrtc (1.4.0):
     - FlutterMacOS
-    - WebRTC-SDK (= 137.7151.04)
+    - WebRTC-SDK (= 144.7559.01)
   - FlutterMacOS (1.0.0)
   - just_audio (0.0.1):
     - Flutter
     - FlutterMacOS
+  - onnxruntime-c (1.25.0)
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -22,7 +23,7 @@ PODS:
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
-  - WebRTC-SDK (137.7151.04)
+  - WebRTC-SDK (144.7559.01)
 
 DEPENDENCIES:
   - audio_session (from `Flutter/ephemeral/.symlinks/plugins/audio_session/macos`)
@@ -32,12 +33,14 @@ DEPENDENCIES:
   - flutter_webrtc (from `Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
+  - onnxruntime-c (~> 1.20)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
 
 SPEC REPOS:
   trunk:
+    - onnxruntime-c
     - WebRTC-SDK
 
 EXTERNAL SOURCES:
@@ -67,14 +70,15 @@ SPEC CHECKSUMS:
   desktop_drop: 10a3e6a7fa9dbe350541f2574092fecfa345a07b
   file_picker: 7584aae6fa07a041af2b36a2655122d42f578c1a
   flutter_contacts: 6f45cdf49f4fb2241793263546f823f7e812668e
-  flutter_webrtc: 718eae22a371cd94e5d56aa4f301443ebc5bb737
+  flutter_webrtc: f1fb1a00c6080461bb2bc6caa5b93d07ddb68466
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
-  path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
+  onnxruntime-c: d0b6084332f946dbc910afc0b9f65b57689fd1c4
+  path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
   record_macos: 7f227161b93c49e7e34fe681c5891c8622c8cc8b
-  shared_preferences_foundation: 9e1978ff2562383bd5676f64ec4e9aa8fa06a6f7
-  WebRTC-SDK: 40d4f5ba05cadff14e4db5614aec402a633f007e
+  shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
+  WebRTC-SDK: ab9b5319e458c2bfebdc92b3600740da35d5630d
 
-PODFILE CHECKSUM: 26ee6f5033708847cf1376fbc9a71d19413c5b16
+PODFILE CHECKSUM: d00b79cccf8f4a9c902666724c3637e18e3a45e8
 
 COCOAPODS: 1.16.2

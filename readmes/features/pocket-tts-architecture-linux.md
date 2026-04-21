@@ -9,7 +9,7 @@ used by the Kokoro engine.
 This document covers the Linux implementation, which is complete. A macOS implementation
 is forthcoming. The ONNX-based inference pipeline is platform-agnostic C++, so the engine
 layer transfers directly; only the Flutter plugin channel layer (currently GObject/GLib)
-requires a macOS-native equivalent. At RTF ~0.17 on M-series CPU (as benchmarked by
+requires a macOS-native equivalent. At RTF ~0.17 on M-series CPU (
 Kyutai), and with the streaming architecture already in p<!--  -->lace, macOS latency will be
 competitive without requiring MLX acceleration, though an MLX backend remains an option
 for future optimization on Apple Silicon.

@@ -49,7 +49,7 @@ add_executable(${BINARY_NAME}
   "kokoro_tts_channel.cc"
   "kokoro_onnx_engine.cc"
   "pocket_tts_channel.cc"
-  "pocket_tts_onnx_engine.cc"
+  "../../native/pocket_tts/pocket_tts_onnx_engine.cc"
   "whisper_cpp_stt_channel.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
@@ -113,4 +113,5 @@ target_include_directories(${BINARY_NAME} PRIVATE
     ${whisper_SOURCE_DIR}
     ${whisper_SOURCE_DIR}/include)
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/../../native/pocket_tts")
 target_include_directories(${BINARY_NAME} PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})

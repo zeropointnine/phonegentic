@@ -30,6 +30,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private var currentModelPath: String?
     private var isInitialized = false
     private var isTranscribing = false
+    private var loadingTask: Task<Void, Never>?
     private let processingQueue = DispatchQueue(label: "com.agentic_ai.whisperkit_stt", qos: .userInitiated)
 
     // Audio buffer for accumulating PCM chunks before transcription
@@ -43,6 +44,35 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private static let inputSampleRate: Double = 24000
     private static let whisperSampleRate: Double = 16000
     private static let minSamplesForTranscription = 16000 // 1s at 16kHz
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // AMBIENT NOISE FILTERING — tune these to reduce hallucinated transcriptions
+    //
+    // rmsNoiseGateThreshold: audio chunks whose RMS energy is below this value
+    //   are silently dropped before WhisperKit ever sees them.  Typical speech
+    //   sits in the 0.02–0.10 range; AC hum and ambient room noise is usually
+    //   below 0.005.  Raise this if you're still getting hallucinations; lower
+    //   it if soft speech is being clipped.  TODO: expose in Settings > Agents.
+    private static let rmsNoiseGateThreshold: Float = 0.0  // 0.0 = disabled; raise (e.g. 0.01) to gate ambient noise
+
+    // WhisperKit DecodingOptions — applied even when audio passes the RMS gate.
+    // These let the model's own confidence scores reject bad transcriptions.
+    //
+    // noSpeechThreshold: model's no-speech probability above which the result is
+    //   discarded.  Lower = stricter (default WhisperKit: 0.6).
+    //   TODO: expose in Settings > Agents.
+    private static let noSpeechThreshold: Float? = nil  // nil = use WhisperKit default (0.6)
+    //
+    // logProbThreshold: average token log-probability below which the result is
+    //   discarded.  Higher (less negative) = stricter (default WhisperKit: -1.0).
+    //   TODO: expose in Settings > Agents.
+    private static let logProbThreshold: Float? = nil  // nil = use WhisperKit default (-1.0)
+    //
+    // compressionRatioThreshold: repetition ratio above which the result is
+    //   discarded (catches looping hallucinations).  Lower = stricter
+    //   (default WhisperKit: 2.4).  TODO: expose in Settings > Agents.
+    private static let compressionRatioThreshold: Float? = nil  // nil = use WhisperKit default (2.4)
+    // ─────────────────────────────────────────────────────────────────────────
 
     /// Tail of the previous transcription buffer, prepended to the next buffer
     /// so speech straddling a boundary isn't lost. 250ms at 24kHz PCM16 = 12000 bytes.
@@ -168,9 +198,34 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             let bundle = Bundle.main
             let modelPath = bundle.bundlePath + "/Contents/Resources/models/whisperkit/\(dirName)"
 
-            NSLog("[WhisperKit] Loading model from: \(modelPath)")
+            NSLog("[WhisperKit] Loading model '%@' from: %@", modelSize, modelPath)
 
-            Task {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: modelPath) {
+                if let files = try? fm.contentsOfDirectory(atPath: modelPath) {
+                    NSLog("[WhisperKit] Model directory contains %d file(s): %@",
+                          files.count, files.sorted().joined(separator: ", "))
+                }
+            } else {
+                NSLog("[WhisperKit] ERROR: model directory not found — run scripts/download_models.sh whisper")
+            }
+
+            self.loadingTask?.cancel()
+            self.loadingTask = Task {
+                let startTime = Date()
+                NSLog("[WhisperKit] Starting WhisperKit init (compute: cpuAndNeuralEngine)…")
+                NSLog("[WhisperKit] First-run note: CoreML compiles models on first use — this can take several minutes.")
+
+                let heartbeat = Task {
+                    var tick = 0
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 10_000_000_000)
+                        guard !Task.isCancelled else { break }
+                        tick += 10
+                        NSLog("[WhisperKit] Still loading… (%ds elapsed — CoreML may be compiling for first use)", tick)
+                    }
+                }
+
                 do {
                     let kit = try await WhisperKit(
                         modelFolder: modelPath,
@@ -179,24 +234,33 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                             textDecoderCompute: .cpuAndNeuralEngine
                         )
                     )
+                    heartbeat.cancel()
+                    let elapsed = Date().timeIntervalSince(startTime)
                     self.whisperKit = kit
                     self.currentModelPath = modelPath
                     self.isInitialized = true
 
                     DispatchQueue.main.async {
-                        NSLog("[WhisperKit] Initialized with model: \(modelSize)")
+                        NSLog("[WhisperKit] Ready — model '%@' loaded in %.1fs (subsequent loads will be faster).",
+                              modelSize, elapsed)
                         result(true)
                     }
+                } catch is CancellationError {
+                    heartbeat.cancel()
+                    NSLog("[WhisperKit] Load cancelled (model switch) after %.1fs.", Date().timeIntervalSince(startTime))
                 } catch {
+                    heartbeat.cancel()
+                    let elapsed = Date().timeIntervalSince(startTime)
                     DispatchQueue.main.async {
-                        NSLog("[WhisperKit] Init failed: \(error)")
+                        NSLog("[WhisperKit] Init failed after %.1fs — %@ | localizedDescription: %@",
+                              elapsed, "\(error)", error.localizedDescription)
                         result(false)
                     }
                 }
             }
         }
         #else
-        NSLog("[WhisperKit] WhisperKit not available in this build")
+        NSLog("[WhisperKit] WhisperKit not available in this build — recompile with WhisperKit SPM package linked")
         result(false)
         #endif
     }
@@ -317,6 +381,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             return
         }
 
+        let rms = sqrt(floatSamples.reduce(0) { $0 + $1 * $1 } / Float(floatSamples.count))
+        guard rms >= WhisperKitChannel.rmsNoiseGateThreshold else { return }
+
         // Save the tail as carry-over for the next cycle.
         let co = WhisperKitChannel.carryOverBytes
         if audioData.count > co {
@@ -330,7 +397,12 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             guard let self = self else { return }
             Task {
                 do {
-                    let results = try await kit.transcribe(audioArray: floatSamples)
+                    let options = DecodingOptions(
+                        compressionRatioThreshold: WhisperKitChannel.compressionRatioThreshold,
+                        logProbThreshold: WhisperKitChannel.logProbThreshold,
+                        noSpeechThreshold: WhisperKitChannel.noSpeechThreshold
+                    )
+                    let results = try await kit.transcribe(audioArray: floatSamples, decodeOptions: options)
                     let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
 
                     DispatchQueue.main.async {

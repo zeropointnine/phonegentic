@@ -88,8 +88,15 @@ class PocketTtsService implements LocalTtsService {
 
       if (_initialized) {
         final binaryDir = File(Platform.resolvedExecutable).parent.path;
-        final refWav =
-            '$binaryDir/data/flutter_assets/models/pocket-tts-onnx/reference_sample.wav';
+        final String refWav;
+        if (Platform.isMacOS) {
+          // binary is at Contents/MacOS/; models are at Contents/Resources/
+          refWav =
+              '$binaryDir/../Resources/models/pocket-tts-onnx/reference_sample.wav';
+        } else {
+          refWav =
+              '$binaryDir/data/flutter_assets/models/pocket-tts-onnx/reference_sample.wav';
+        }
         final ok = await cloneVoiceFromFile(refWav, 'default');
         debugPrint('[PocketTTS] Default voice encoded: $ok');
       }
@@ -363,7 +370,7 @@ class PocketTtsService implements LocalTtsService {
   /// Decode any audio format to PCM16 24 kHz mono via ffmpeg.
   static Future<Uint8List> _decodeFfmpegToPcm16(String path) async {
     final ProcessResult result = await Process.run(
-      'ffmpeg',
+      _resolveBinary('ffmpeg'),
       <String>['-i', path, '-ar', '24000', '-ac', '1', '-f', 's16le', 'pipe:1'],
       stdoutEncoding: null,  // raw bytes
     );
@@ -372,6 +379,18 @@ class PocketTtsService implements LocalTtsService {
     }
     final List<int> raw = result.stdout as List<int>;
     return raw is Uint8List ? raw : Uint8List.fromList(raw);
+  }
+
+  /// Resolves a binary name to a full path on macOS (where GUI apps don't
+  /// inherit Homebrew's PATH), falling back to bare name for PATH lookup.
+  static String _resolveBinary(String binary) {
+    if (Platform.isMacOS) {
+      for (final prefix in ['/opt/homebrew/bin', '/usr/local/bin']) {
+        final f = File('$prefix/$binary');
+        if (f.existsSync()) return f.path;
+      }
+    }
+    return binary;
   }
 
   /// Linear-interpolation resampler for mono PCM16.
@@ -397,14 +416,18 @@ class PocketTtsService implements LocalTtsService {
   /// Returns the duration of [filePath] in seconds using ffprobe.
   /// Returns 0 on failure.
   static Future<double> getAudioDurationSeconds(String filePath) async {
-    final ProcessResult result = await Process.run('ffprobe', [
-      '-v', 'error',
-      '-show_entries', 'format=duration',
-      '-of', 'default=noprint_wrappers=1:nokey=1',
-      filePath,
-    ]);
-    if (result.exitCode != 0) return 0;
-    return double.tryParse((result.stdout as String).trim()) ?? 0;
+    try {
+      final ProcessResult result = await Process.run(_resolveBinary('ffprobe'), [
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        filePath,
+      ]);
+      if (result.exitCode != 0) return 0;
+      return double.tryParse((result.stdout as String).trim()) ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   @override
