@@ -461,7 +461,6 @@ class AgentService extends ChangeNotifier {
 
   DateTime _speakingEndTime = DateTime(2000);
   DateTime _speakingStartTime = DateTime(2000);
-  DateTime _lastGhostFlushTime = DateTime(2000);
   int _echoGuardMs = 2000;
 
   final List<TranscriptionEvent> _pendingTranscripts = [];
@@ -3234,20 +3233,11 @@ class AgentService extends ChangeNotifier {
 
     // Reset the consecutive-agent-response counter only when we're confident
     // this is genuine user speech, not TTS echo picked up by the mic.
-    //
-    // Two paths to unlock:
     //  1. 4+ words — always unlocks (a real question/command)
-    //  2. ANY words arriving 3+ seconds after the echo window closes —
-    //     use the later of TTS end and last ghost flush, since ghost
-    //     onPlaybackComplete events create echo windows lasting 8-12s
-    //
-    // Within the echo window, only 4+ word transcripts unlock.
+    //  2. ANY words arriving 3+ seconds after TTS ended
     final wordCount = text.split(RegExp(r'\s+')).length;
-    final echoWindowEnd = _lastGhostFlushTime.isAfter(_speakingEndTime)
-        ? _lastGhostFlushTime
-        : _speakingEndTime;
-    final msSinceEchoWindow = now.difference(echoWindowEnd).inMilliseconds;
-    if (wordCount >= 4 || msSinceEchoWindow > 3000) {
+    final msSinceSpeech = now.difference(_speakingEndTime).inMilliseconds;
+    if (wordCount >= 4 || msSinceSpeech > 3000) {
       _consecutiveAgentResponses = 0;
     }
 
@@ -7668,24 +7658,10 @@ class AgentService extends ChangeNotifier {
     switch (call.method) {
       case 'onPlaybackComplete':
         if (_splitPipeline) {
-          // Ignore ghost duplicate events after the first debounce already
-          // cleared isTtsPlaying. Without this guard, the second event
-          // restarts the debounce with _ttsGenerationComplete=false (2s!)
-          // and resets the WhisperKit timer, adding ~3s of dead time.
-          //
-          // Each ghost also triggers native suppression, but the gap between
-          // the prior suppression and this ghost lets echo-contaminated audio
-          // leak into the WhisperKit buffer.  Flush without resetting the
-          // timer — the timer was already reset on the first event.
-          if (!_whisper.isTtsPlaying && !_speaking) {
-            if (_isLocalSttMode) _whisperKitStt?.flushAudioBuffer();
-            _lastGhostFlushTime = DateTime.now();
-            break;
-          }
-
-          // AudioTap fires this per-buffer drain, not once at the end.
-          // Debounce: keep the echo guard open until Nms after the LAST event.
-          // Use a short window once generation is done (no more chunks coming).
+          // Native pendingBufferCount ensures this fires exactly once per
+          // TTS response (when the LAST buffer is consumed). Debounce is
+          // still needed for the gap between generation-complete and the
+          // final buffer drain.
           _playbackEndDebounce?.cancel();
           final debounce = _ttsGenerationComplete
               ? const Duration(milliseconds: 300)
@@ -7700,9 +7676,6 @@ class AgentService extends ChangeNotifier {
               notifyListeners();
             }
             _schedulePostSpeakFlush();
-            // Reset WhisperKit's transcription timer so the first post-TTS
-            // buffer processes at a predictable offset (1.5s from now)
-            // instead of waiting for the old timer cycle to randomly align.
             if (_isLocalSttMode) {
               _whisperKitStt?.notifyPlaybackEnded();
             }

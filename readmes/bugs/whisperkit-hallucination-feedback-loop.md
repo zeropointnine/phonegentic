@@ -100,27 +100,30 @@ A six-layer fix across Dart, Swift, and native audio:
 
 ### 11. Aggressive Loop Breaker (agent_service.dart)
 - `_maxConsecutiveAgentResponses` lowered from 2 to 1 — the agent can respond ONCE after user speech, then the breaker engages immediately
-- Removed the time-based escape hatch entirely (was allowing counter resets for short transcripts arriving > 2s after TTS end, defeating the breaker)
-- Counter now ONLY resets when a transcript has 4+ words — short echo fragments, garbled single words, and brief acknowledgments ("yeah", "ok") intentionally don't unlock
-- Conversational flow: agent responds once → waits for 4+ word user speech → responds once → repeats
-- Loop breaker suppression no longer calls `stopResponseAudio`/`clearTTSQueue` when TTS isn't playing — this was firing native `onPlaybackComplete` events that ghost-flushed the WhisperKit buffer, discarding the user's real speech audio and permanently locking them out
-- Short transcripts that won't unlock the breaker now skip the LLM call entirely instead of generating a response that gets thrown away
-- Time-gated escape hatch: ANY words arriving 3+ seconds after the echo window closes unlock the breaker — the echo window extends to the later of TTS end and the last ghost `onPlaybackComplete` flush (ghost events can fire 8-12s after TTS, creating prolonged echo exposure)
-- Text echo detection (`_isEchoOfAgentResponse`) now runs unconditionally — the timing gate was removed because ghost events extend the echo window far beyond any reasonable fixed timeout; the 35% word-overlap threshold with punctuation stripping is selective enough to avoid false positives
-- New `_lastGhostFlushTime` field tracks when the last ghost flush occurred, used as the echo window boundary alongside `_speakingEndTime`
+- Counter resets when a transcript has 4+ words OR any words arrive 3+ seconds after TTS ended
+- Loop breaker suppression no longer calls `stopResponseAudio`/`clearTTSQueue` when TTS isn't playing — prevents native `onPlaybackComplete` from flushing user audio
+- Short transcripts that won't unlock the breaker skip the LLM call entirely
+- Text echo detection (`_isEchoOfAgentResponse`) runs unconditionally — the 35% word-overlap threshold with punctuation stripping is selective enough to avoid false positives
 
 ### 12. WhisperKit Buffer Flush on TTS End (WhisperKitChannel.swift + agent_service.dart)
-- Root cause: native suppression has gaps between ghost `onPlaybackComplete` events; echo-contaminated audio leaks into the WhisperKit buffer during these gaps
-- `notifyPlaybackEnded` now flushes the entire audio buffer AND carry-over buffer before resetting the timer — ensures WhisperKit starts transcribing with only clean post-TTS audio
-- New `flushAudioBuffer` method (flush-only, no timer reset) called on ghost `onPlaybackComplete` events caught by the Dart guard — removes echo that leaked through each suppression gap
+- `notifyPlaybackEnded` flushes the entire audio buffer AND carry-over buffer before resetting the timer — ensures WhisperKit starts transcribing with only clean post-TTS audio
+- `flushAudioBuffer` method (flush-only, no timer reset) kept as a safety net
 - Dart `WhisperKitSttService` exposes `flushAudioBuffer()` as a method channel bridge
+
+### 13. Eliminate Ghost onPlaybackComplete Events (AudioTapChannel.swift + agent_service.dart)
+- **Root cause**: `AVAudioPlayerNode.scheduleBuffer` fires a per-buffer completion callback. With 3 audio chunks per TTS response, 3 completion callbacks fire sequentially. Each intermediate callback started a 0.15s timer that sent `onPlaybackComplete` to Flutter before the remaining buffers finished — producing "ghost" events spaced ~1.6s apart
+- Between ghost events, native mic suppression expired and re-engaged, creating gaps where 42-47KB of echo-contaminated audio leaked into the WhisperKit buffer. WhisperKit hallucinated speech from this leaked audio, which reset the loop-breaker counter and restarted the self-talk cycle
+- **Fix**: Added `pendingBufferCount` in `AudioTapChannel.swift`. Incremented when `handlePlayAudio` queues a buffer, decremented in the `scheduleBuffer` completion callback. `schedulePlaybackEnd()` only fires when count reaches zero — exactly ONE `onPlaybackComplete` per TTS response
+- Reset in `stopPlayback()` and `clearTTSQueue` for clean state
+- Removed the Dart-side ghost guard (`_lastGhostFlushTime`, ghost flush logic) from `agent_service.dart` — no longer needed since ghosts don't occur
+- Simplified counter reset in `_processTranscript` to use `_speakingEndTime` directly instead of the more complex `echoWindowEnd` calculation
 
 ## Files
 
 ### Modified
 - `phonegentic/lib/src/agent_service.dart` — hallucination filtering, loop breaker, adaptive echo guard, time-gated voiceprint echo check, punctuation-normalized echo detection
 - `phonegentic/lib/src/whisper_realtime_service.dart` — `_ttsEchoCooldownMs` tuned (300→800→300ms) as other defenses matured
-- `phonegentic/macos/Runner/AudioTapChannel.swift` — post-playback suppression tuned (0.20→0.50→0.30→0.75s), feed mic to SpeakerIdentifier in direct mode, clear agent voice flag on playback end
+- `phonegentic/macos/Runner/AudioTapChannel.swift` — post-playback suppression tuned (0.20→0.50→0.30→0.75s), feed mic to SpeakerIdentifier in direct mode, clear agent voice flag on playback end, `pendingBufferCount` to eliminate ghost `onPlaybackComplete` events
 - `phonegentic/macos/Runner/WhisperKitChannel.swift` — smart carry-over (clear on silence), hallucination-aware dedup, native hallucination detection, timer reset on playback end
 - `phonegentic/lib/src/whisperkit_stt_service.dart` — added `notifyPlaybackEnded()` method channel bridge
 - `phonegentic/macos/Runner/SpeakerIdentifier.swift` — time-gated `isMicRecentlyAgentVoice`, `clearAgentVoiceFlag()`, enriched `speakerInfo()` response

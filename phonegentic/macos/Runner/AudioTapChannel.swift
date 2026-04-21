@@ -38,6 +38,10 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private var playbackEndTimer: Timer?
     private var callModePlaybackTimer: Timer?
     private var outputSuppressedUntil: TimeInterval = 0
+    /// Number of AVAudioPlayerNode buffers scheduled but not yet consumed.
+    /// `schedulePlaybackEnd()` only fires when this reaches zero, preventing
+    /// ghost `onPlaybackComplete` events from intermediate buffer completions.
+    private var pendingBufferCount = 0
     private var diagCounter: UInt64 = 0
     private var playDiagCounter: UInt64 = 0
 
@@ -140,6 +144,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             result(nil)
         case "clearTTSQueue":
             WebRTCAudioProcessor.shared.clearTTSBuffers()
+            pendingBufferCount = 0
             callModePlaybackTimer?.invalidate()
             callModePlaybackTimer = nil
             lastCallModeTTSTime = 0
@@ -508,9 +513,8 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
                 }
             }
         } else {
-            // In direct mode TTS plays through speakers. Block mic audio
-            // while playing to prevent the agent hearing its own echo.
             isPlayingResponse = true
+            pendingBufferCount += 1
             playPCM16ViaEngine(data)
         }
     }
@@ -556,7 +560,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
 
         player.scheduleBuffer(pcmBuffer) { [weak self] in
             DispatchQueue.main.async {
-                self?.schedulePlaybackEnd()
+                guard let self = self else { return }
+                self.pendingBufferCount -= 1
+                if self.pendingBufferCount <= 0 {
+                    self.schedulePlaybackEnd()
+                }
             }
         }
     }
@@ -587,6 +595,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
 
     private func stopPlayback() {
         isPlayingResponse = false
+        pendingBufferCount = 0
         playbackEndTimer?.invalidate()
         playbackEndTimer = nil
         playerNode?.stop()
