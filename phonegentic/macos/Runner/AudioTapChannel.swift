@@ -564,17 +564,17 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func schedulePlaybackEnd() {
         playbackEndTimer?.invalidate()
         playbackEndTimer = Timer.scheduledTimer(
-            withTimeInterval: 0.10, repeats: false
+            withTimeInterval: 0.15, repeats: false
         ) { [weak self] _ in
             guard let self = self else { return }
             self.bufferLock.lock()
             self.inputBuffer.removeAll(keepingCapacity: true)
             self.bufferLock.unlock()
             
-            // Brief suppression for speaker-to-mic reverb tail.
-            // Native echo stripping in call mode is independent (callModeTTSSuppression).
-            // Server-side VAD (threshold 0.5) won't trigger on faint reverb.
-            let suppressionSeconds: TimeInterval = 0.20
+            // Suppression for speaker-to-mic reverb tail. Extended to 0.50s for
+            // local STT (WhisperKit) — without server-side AEC the mic picks up
+            // more TTS bleed, and shorter windows caused echo-driven loops.
+            let suppressionSeconds: TimeInterval = 0.50
             self.outputSuppressedUntil = Date().timeIntervalSince1970 + suppressionSeconds
             self.isPlayingResponse = false
             self.methodChannel.invokeMethod("onPlaybackComplete", arguments: nil)
@@ -873,6 +873,11 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         if Date().timeIntervalSince1970 < outputSuppressedUntil { return }
 
         if let data = dataToSend, !data.isEmpty {
+            // Feed mic audio to SpeakerIdentifier in direct mode too, so the
+            // voiceprint system can detect agent echo in local STT.
+            if !inCallMode {
+                SpeakerIdentifier.shared.feedMicAudio(data)
+            }
             sink(FlutterStandardTypedData(bytes: data))
         }
     }

@@ -45,9 +45,14 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private static let minSamplesForTranscription = 16000 // 1s at 16kHz
 
     /// Tail of the previous transcription buffer, prepended to the next buffer
-    /// so speech straddling a boundary isn't lost. 500ms at 24kHz PCM16 = 24000 bytes.
+    /// so speech straddling a boundary isn't lost. 250ms at 24kHz PCM16 = 12000 bytes.
+    /// Reduced from 500ms to minimize duplicate-word artifacts from carry-over.
     private var carryOverBuffer = Data()
-    private static let carryOverBytes = Int(inputSampleRate) * 2 / 2 // 500ms of PCM16
+    private static let carryOverBytes = Int(inputSampleRate) * 2 / 4 // 250ms of PCM16
+
+    /// Previous transcript text for deduplication — WhisperKit may re-transcribe
+    /// the carry-over segment and produce duplicate leading words.
+    private var lastTranscriptText = ""
 
     init(messenger: FlutterBinaryMessenger) {
         methodChannel = FlutterMethodChannel(
@@ -171,6 +176,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         isTranscribing = true
         isProcessing = false
         consecutiveAneFailures = 0
+        lastTranscriptText = ""
         bufferLock.lock()
         audioBuffer = Data()
         carryOverBuffer = Data()
@@ -247,12 +253,16 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                     }
 
                     if !text.isEmpty {
-                        DispatchQueue.main.async {
-                            self.transcriptEventSink?([
-                                "text": text,
-                                "isFinal": true,
-                                "language": "en"
-                            ])
+                        let dedupedText = self.deduplicateCarryOver(text)
+                        if !dedupedText.isEmpty {
+                            DispatchQueue.main.async {
+                                self.lastTranscriptText = dedupedText
+                                self.transcriptEventSink?([
+                                    "text": dedupedText,
+                                    "isFinal": true,
+                                    "language": "en"
+                                ])
+                            }
                         }
                     }
                 } catch {
@@ -352,6 +362,48 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             }
         }
         return floats
+    }
+
+    /// Strip leading text that was already emitted in the previous transcript,
+    /// caused by carry-over audio being re-transcribed.
+    private func deduplicateCarryOver(_ text: String) -> String {
+        guard !lastTranscriptText.isEmpty else { return text }
+
+        let prevWords = lastTranscriptText.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+        let currWords = text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+
+        guard !prevWords.isEmpty, !currWords.isEmpty else { return text }
+
+        // Find the longest suffix of prevWords that matches a prefix of currWords.
+        let maxOverlap = min(prevWords.count, currWords.count)
+        var overlapLen = 0
+        for len in (1...maxOverlap).reversed() {
+            let prevSuffix = Array(prevWords.suffix(len))
+            let currPrefix = Array(currWords.prefix(len))
+            if prevSuffix == currPrefix {
+                overlapLen = len
+                break
+            }
+        }
+
+        if overlapLen == 0 { return text }
+
+        // If the entire current text is a repeat of the previous tail, drop it.
+        if overlapLen == currWords.count {
+            NSLog("[WhisperKit] Carry-over dedup: entire transcript is repeat, dropping")
+            return ""
+        }
+
+        // Strip the overlapping prefix from the original (preserving casing).
+        let origWords = text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+        let remaining = Array(origWords.dropFirst(overlapLen)).joined(separator: " ")
+        NSLog("[WhisperKit] Carry-over dedup: stripped %d overlapping words", overlapLen)
+        return remaining
     }
 
     private func handleStopTranscription(result: @escaping FlutterResult) {
