@@ -21,7 +21,6 @@ import '../messaging/messaging_config.dart';
 import '../messaging/messaging_service.dart';
 import '../messaging/telnyx_messaging_provider.dart';
 import '../messaging/twilio_messaging_provider.dart';
-import '../settings_port_service.dart';
 import '../theme_provider.dart';
 import '../apple_reminders_config.dart';
 import '../native_actions_service.dart';
@@ -630,24 +629,10 @@ class _UserSettingsTabState extends State<UserSettingsTab> {
                   const SizedBox(height: 16),
                   _buildDemoModeCard(),
                   const SizedBox(height: 24),
-                  FullBackupExportImportCard(
+                  SettingsExportImportPanel(
                     onImported: () {
                       _load();
                       context.read<JobFunctionService>().restoreLastUsed();
-                      context.read<InboundCallFlowService>().loadAll();
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  SettingsExportImportCard(
-                    section: SettingsSection.jobFunctions,
-                    onImported: () {
-                      context.read<JobFunctionService>().restoreLastUsed();
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  SettingsExportImportCard(
-                    section: SettingsSection.inboundWorkflows,
-                    onImported: () {
                       context.read<InboundCallFlowService>().loadAll();
                     },
                   ),

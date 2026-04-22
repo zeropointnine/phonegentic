@@ -10,10 +10,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'agent_config_service.dart';
 import 'conference/conference_config.dart';
 import 'conference/conference_service.dart';
-import 'settings_port_service.dart';
 import 'theme_provider.dart';
 import 'widgets/agent_settings_tab.dart';
-import 'widgets/settings_export_import_card.dart';
 import 'widgets/user_settings_tab.dart';
 
 class RegisterWidget extends StatefulWidget {
@@ -312,9 +310,9 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.person_rounded, size: 14),
+                    Icon(Icons.widgets_rounded, size: 14),
                     SizedBox(width: 6),
-                    Text('User'),
+                    Text('App'),
                   ],
                 ),
               ),
@@ -368,11 +366,6 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   ],
                   const SizedBox(height: 24),
                   _buildRegisterButton(),
-                  const SizedBox(height: 24),
-                  SettingsExportImportCard(
-                    section: SettingsSection.sipSettings,
-                    onImported: _loadSettings,
-                  ),
                   const SizedBox(height: 40),
                 ],
               ),

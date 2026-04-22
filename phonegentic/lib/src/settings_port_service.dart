@@ -23,6 +23,7 @@ enum SettingsSection {
   agentSettings,
   jobFunctions,
   inboundWorkflows,
+  appSettings,
 }
 
 extension SettingsSectionLabel on SettingsSection {
@@ -36,19 +37,38 @@ extension SettingsSectionLabel on SettingsSection {
         return 'job_functions';
       case SettingsSection.inboundWorkflows:
         return 'inbound_workflows';
+      case SettingsSection.appSettings:
+        return 'app_settings';
     }
   }
 
   String get displayName {
     switch (this) {
       case SettingsSection.sipSettings:
-        return 'SIP Settings';
+        return 'Phone Settings';
       case SettingsSection.agentSettings:
         return 'Agent Settings';
       case SettingsSection.jobFunctions:
-        return 'Job Functions';
+        return 'Agent Job Functions';
       case SettingsSection.inboundWorkflows:
-        return 'Inbound Workflows';
+        return 'Inbound Call Workflows';
+      case SettingsSection.appSettings:
+        return 'App Settings';
+    }
+  }
+
+  IconData get icon {
+    switch (this) {
+      case SettingsSection.sipSettings:
+        return Icons.phone_rounded;
+      case SettingsSection.agentSettings:
+        return Icons.auto_awesome;
+      case SettingsSection.jobFunctions:
+        return Icons.work_rounded;
+      case SettingsSection.inboundWorkflows:
+        return Icons.call_received_rounded;
+      case SettingsSection.appSettings:
+        return Icons.widgets_rounded;
     }
   }
 }
@@ -379,6 +399,7 @@ class SettingsPortService {
       'agent_settings',
       'job_functions',
       'inbound_workflows',
+      'app_settings',
     ];
 
     try {
@@ -747,6 +768,8 @@ class SettingsPortService {
         return _gatherJobFunctions();
       case SettingsSection.inboundWorkflows:
         return _gatherInboundWorkflows();
+      case SettingsSection.appSettings:
+        return _gatherApp();
     }
   }
 
@@ -877,6 +900,25 @@ class SettingsPortService {
     };
   }
 
+  static Future<Map<String, dynamic>> _gatherApp() async {
+    final prefs = await SharedPreferences.getInstance();
+    final calendly = await UserConfigService.loadCalendlyConfig();
+    final demo = await UserConfigService.loadDemoModeConfig();
+    final awayReturn = await UserConfigService.loadAwayReturnConfig();
+    return {
+      'theme': prefs.getString('app_theme') ?? 'amberVt100',
+      'calendly': {
+        'api_key': calendly.apiKey,
+        'sync_to_macos': calendly.syncToMacOS,
+      },
+      'demo_mode': {
+        'enabled': demo.enabled,
+        'fake_number': demo.fakeNumber,
+      },
+      'away_return_mode': awayReturn.mode.name,
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Data application (import)
   // ---------------------------------------------------------------------------
@@ -895,6 +937,9 @@ class SettingsPortService {
         break;
       case SettingsSection.inboundWorkflows:
         await _applyInboundWorkflows(data);
+        break;
+      case SettingsSection.appSettings:
+        await _applyApp(data);
         break;
     }
   }
@@ -1074,5 +1119,139 @@ class SettingsPortService {
       );
       await CallHistoryDb.insertInboundCallFlow(flow);
     }
+  }
+
+  static Future<void> _applyApp(Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    final theme = data['theme'] as String?;
+    if (theme != null) {
+      await prefs.setString('app_theme', theme);
+    }
+
+    final cal = data['calendly'] as Map<String, dynamic>?;
+    if (cal != null) {
+      await UserConfigService.saveCalendlyConfig(CalendlyConfig(
+        apiKey: cal['api_key'] as String? ?? '',
+        syncToMacOS: cal['sync_to_macos'] as bool? ?? false,
+      ));
+    }
+
+    final demo = data['demo_mode'] as Map<String, dynamic>?;
+    if (demo != null) {
+      await UserConfigService.saveDemoModeConfig(DemoModeConfig(
+        enabled: demo['enabled'] as bool? ?? false,
+        fakeNumber: demo['fake_number'] as String? ?? '',
+      ));
+    }
+
+    final awayMode = data['away_return_mode'] as String?;
+    if (awayMode != null) {
+      final mode = AwayReturnMode.values.firstWhere(
+        (m) => m.name == awayMode,
+        orElse: () => AwayReturnMode.quietBadge,
+      );
+      await UserConfigService.saveAwayReturnConfig(AwayReturnConfig(mode: mode));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Selective export (chosen sections only)
+  // ---------------------------------------------------------------------------
+
+  static Future<File?> exportSelected(
+    Set<SettingsSection> sections,
+    ExportFormat format,
+    BuildContext context,
+  ) async {
+    if (sections.isEmpty) return null;
+
+    if (sections.length == 1) {
+      return exportSection(sections.first, format, context);
+    }
+
+    final timestamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .split('.')
+        .first;
+    final baseName = 'phonegentic_settings_$timestamp';
+
+    final downloadsDir = await getDownloadsDirectory();
+    if (downloadsDir == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not access Downloads folder'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return null;
+    }
+
+    if (!context.mounted) return null;
+    final password = await _askExportPassword(context);
+
+    final archive = Archive();
+    for (final section in SettingsSection.values) {
+      if (!sections.contains(section)) continue;
+      final data = await _gatherData(section);
+      final envelope = {
+        'app': 'phonegentic',
+        'version': 1,
+        'section': section.label,
+        'exported_at': DateTime.now().toUtc().toIso8601String(),
+        'data': data,
+      };
+      final rawJsonBytes =
+          utf8.encode(const JsonEncoder.withIndent('  ').convert(envelope));
+
+      List<int> fileBytes;
+      if (password != null) {
+        final encrypted = await SettingsCrypto.encrypt(
+          Uint8List.fromList(rawJsonBytes),
+          password,
+        );
+        fileBytes = utf8
+            .encode(const JsonEncoder.withIndent('  ').convert(encrypted));
+      } else {
+        fileBytes = rawJsonBytes;
+      }
+
+      archive.addFile(ArchiveFile(
+        '${section.label}.json',
+        fileBytes.length,
+        Uint8List.fromList(fileBytes),
+      ));
+    }
+
+    File outputFile;
+    switch (format) {
+      case ExportFormat.json:
+      case ExportFormat.zip:
+        final encoded = ZipEncoder().encode(archive);
+        outputFile = File('${downloadsDir.path}/$baseName.zip');
+        await outputFile.writeAsBytes(encoded);
+        break;
+      case ExportFormat.tar:
+        final tarBytes = TarEncoder().encode(archive);
+        final gzBytes = GZipEncoder().encode(tarBytes);
+        outputFile = File('${downloadsDir.path}/$baseName.tar.gz');
+        await outputFile.writeAsBytes(gzBytes);
+        break;
+    }
+
+    await Process.run('open', [downloadsDir.path]);
+
+    if (context.mounted) {
+      final names = sections.map((s) => s.displayName).join(', ');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Exported $names to Downloads'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+    return outputFile;
   }
 }

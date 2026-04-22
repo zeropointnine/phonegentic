@@ -3,32 +3,55 @@ import 'package:flutter/material.dart';
 import '../settings_port_service.dart';
 import '../theme_provider.dart';
 
-class SettingsExportImportCard extends StatefulWidget {
-  final SettingsSection section;
-
+/// Consolidated import/export panel with section checkboxes and a Select All
+/// toggle. Replaces the old per-section cards and full-backup card.
+class SettingsExportImportPanel extends StatefulWidget {
   /// Called after a successful import so the parent can reload state.
   final VoidCallback? onImported;
 
-  const SettingsExportImportCard({
-    super.key,
-    required this.section,
-    this.onImported,
-  });
+  const SettingsExportImportPanel({super.key, this.onImported});
 
   @override
-  State<SettingsExportImportCard> createState() =>
-      _SettingsExportImportCardState();
+  State<SettingsExportImportPanel> createState() =>
+      _SettingsExportImportPanelState();
 }
 
-class _SettingsExportImportCardState extends State<SettingsExportImportCard> {
-  ExportFormat _format = ExportFormat.json;
+class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
+  final Set<SettingsSection> _selected = Set.of(SettingsSection.values);
+  ExportFormat _format = ExportFormat.zip;
   bool _busy = false;
 
+  bool get _allSelected => _selected.length == SettingsSection.values.length;
+
+  void _toggleAll(bool value) {
+    setState(() {
+      if (value) {
+        _selected.addAll(SettingsSection.values);
+      } else {
+        _selected.clear();
+      }
+    });
+  }
+
+  void _toggleSection(SettingsSection section) {
+    setState(() {
+      if (_selected.contains(section)) {
+        _selected.remove(section);
+      } else {
+        _selected.add(section);
+      }
+    });
+  }
+
   Future<void> _export() async {
+    if (_selected.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await SettingsPortService.exportSection(
-          widget.section, _format, context);
+      if (_allSelected) {
+        await SettingsPortService.exportAll(_format, context);
+      } else {
+        await SettingsPortService.exportSelected(_selected, _format, context);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -37,8 +60,7 @@ class _SettingsExportImportCardState extends State<SettingsExportImportCard> {
   Future<void> _import() async {
     setState(() => _busy = true);
     try {
-      final ok =
-          await SettingsPortService.importSection(widget.section, context);
+      final ok = await SettingsPortService.importAll(context);
       if (ok) widget.onImported?.call();
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -61,7 +83,7 @@ class _SettingsExportImportCardState extends State<SettingsExportImportCard> {
         ),
         const SizedBox(height: 8),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(12),
@@ -70,23 +92,40 @@ class _SettingsExportImportCardState extends State<SettingsExportImportCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                widget.section.displayName,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                ),
+              _buildSelectAllRow(),
+              Divider(
+                color: AppColors.border.withValues(alpha: 0.4),
+                height: 16,
+                thickness: 0.5,
               ),
-              const SizedBox(height: 12),
+              ...SettingsSection.values.map(_buildSectionRow),
+              const SizedBox(height: 16),
               _buildFormatToggle(),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               Row(
                 children: [
-                  Expanded(child: _buildButton('Export', Icons.upload_rounded, _export)),
+                  Expanded(
+                    child: _buildButton(
+                        'Export', Icons.upload_rounded, _export,
+                        enabled: _selected.isNotEmpty),
+                  ),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildButton('Import', Icons.download_rounded, _import)),
+                  Expanded(
+                    child:
+                        _buildButton('Import', Icons.download_rounded, _import),
+                  ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  'Does not include contacts or call history.',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textTertiary,
+                    height: 1.4,
+                  ),
+                ),
               ),
             ],
           ),
@@ -95,208 +134,89 @@ class _SettingsExportImportCardState extends State<SettingsExportImportCard> {
     );
   }
 
-  Widget _buildFormatToggle() {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(8),
-        border:
-            Border.all(color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-      ),
-      child: Row(
-        children: ExportFormat.values.map((f) {
-          final selected = f == _format;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _format = f),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                decoration: BoxDecoration(
-                  color: selected ? AppColors.accent : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: selected
-                      ? [
-                          BoxShadow(
-                            color: AppColors.accent.withValues(alpha: 0.3),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          )
-                        ]
-                      : null,
-                ),
-                child: Center(
-                  child: Text(
-                    _formatLabel(f),
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                      letterSpacing: -0.2,
-                      color: selected
-                          ? AppColors.onAccent
-                          : AppColors.textSecondary,
-                    ),
-                  ),
+  Widget _buildSelectAllRow() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _toggleAll(!_allSelected),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            _buildCheckbox(_allSelected),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Select All',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
               ),
             ),
-          );
-        }).toList(),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildButton(String label, IconData icon, VoidCallback onTap) {
+  Widget _buildSectionRow(SettingsSection section) {
+    final checked = _selected.contains(section);
     return GestureDetector(
-      onTap: _busy ? null : onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border, width: 0.5),
-        ),
-        child: _busy
-            ? Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: AppColors.textSecondary,
-                  ),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _toggleSection(section),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          children: [
+            const SizedBox(width: 20),
+            _buildCheckbox(checked),
+            const SizedBox(width: 10),
+            Icon(section.icon, size: 14, color: AppColors.textSecondary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                section.displayName,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: checked
+                      ? AppColors.textPrimary
+                      : AppColors.textTertiary,
                 ),
-              )
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, size: 14, color: AppColors.textSecondary),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                ],
               ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  static String _formatLabel(ExportFormat f) {
-    switch (f) {
-      case ExportFormat.json:
-        return 'JSON';
-      case ExportFormat.zip:
-        return 'ZIP';
-      case ExportFormat.tar:
-        return 'TAR';
-    }
-  }
-}
-
-/// Exports/imports **all** settings sections as a single archive.
-class FullBackupExportImportCard extends StatefulWidget {
-  /// Called after a successful full import so the parent can reload services.
-  final VoidCallback? onImported;
-
-  const FullBackupExportImportCard({super.key, this.onImported});
-
-  @override
-  State<FullBackupExportImportCard> createState() =>
-      _FullBackupExportImportCardState();
-}
-
-class _FullBackupExportImportCardState
-    extends State<FullBackupExportImportCard> {
-  ExportFormat _format = ExportFormat.zip;
-  bool _busy = false;
-
-  Future<void> _export() async {
-    setState(() => _busy = true);
-    try {
-      await SettingsPortService.exportAll(_format, context);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _import() async {
-    setState(() => _busy = true);
-    try {
-      final ok = await SettingsPortService.importAll(context);
-      if (ok) widget.onImported?.call();
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'FULL BACKUP',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textTertiary,
-            letterSpacing: 0.5,
-          ),
+  Widget _buildCheckbox(bool checked) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      width: 16,
+      height: 16,
+      decoration: BoxDecoration(
+        color: checked ? AppColors.accent : Colors.transparent,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: checked ? AppColors.accent : AppColors.border,
+          width: 1.5,
         ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border, width: 0.5),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'All Settings',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+        boxShadow: checked
+            ? [
+                BoxShadow(
+                  color: AppColors.accent.withValues(alpha: 0.3),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'SIP, agent config, job functions & inbound workflows. '
-                'Does not include contacts or call history.',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textTertiary,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 12),
-              _buildFormatToggle(),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                      child: _buildButton(
-                          'Export', Icons.upload_rounded, _export)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: _buildButton(
-                          'Import', Icons.download_rounded, _import)),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
+              ]
+            : null,
+      ),
+      child: checked
+          ? Icon(Icons.check_rounded, size: 12, color: AppColors.onAccent)
+          : null,
     );
   }
 
@@ -354,10 +274,13 @@ class _FullBackupExportImportCardState
     );
   }
 
-  Widget _buildButton(String label, IconData icon, VoidCallback onTap) {
+  Widget _buildButton(String label, IconData icon, VoidCallback onTap,
+      {bool enabled = true}) {
+    final isEnabled = enabled && !_busy;
     return GestureDetector(
-      onTap: _busy ? null : onTap,
-      child: Container(
+      onTap: isEnabled ? onTap : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
           color: AppColors.card,
@@ -378,14 +301,20 @@ class _FullBackupExportImportCardState
             : Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(icon, size: 14, color: AppColors.textSecondary),
+                  Icon(icon,
+                      size: 14,
+                      color: isEnabled
+                          ? AppColors.textSecondary
+                          : AppColors.textTertiary.withValues(alpha: 0.4)),
                   const SizedBox(width: 6),
                   Text(
                     label,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
+                      color: isEnabled
+                          ? AppColors.textPrimary
+                          : AppColors.textTertiary.withValues(alpha: 0.4),
                       letterSpacing: -0.2,
                     ),
                   ),
