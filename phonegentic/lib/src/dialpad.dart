@@ -206,6 +206,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
   bool _handleGlobalKeyEvent(KeyEvent event) {
     if (!mounted) return false;
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    context.read<ManagerPresenceService>().reportActivity();
     if (_activeCall != null) return false;
 
     final FocusNode? primary = FocusManager.instance.primaryFocus;
@@ -556,7 +557,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
     final showPanel = width >= 600;
     final panelWidth = showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0.0;
 
-    return Scaffold(
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => context.read<ManagerPresenceService>().reportActivity(),
+      onPointerMove: (_) => context.read<ManagerPresenceService>().reportActivity(),
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       body: Stack(
         children: [
@@ -796,6 +801,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
             ),
         ],
       ),
+    ),
     );
   }
 

@@ -15,10 +15,12 @@ class ManagerPresenceService extends ChangeNotifier
 
   AgentService? _agent;
   Timer? _awayTimer;
+  Timer? _idleTimer;
   Timer? _reminderCheckTimer;
   final Map<int, Timer> _scheduledReminderTimers = {};
 
   bool _windowFocused = true;
+  DateTime? _lastActivityAt;
   DateTime? _lastFocusedAt;
   DateTime? _lastUnfocusedAt;
   bool _isAway = false;
@@ -65,6 +67,43 @@ class ManagerPresenceService extends ChangeNotifier
     _agent = a;
   }
 
+  /// Call from the UI layer on any user interaction (pointer, keyboard).
+  /// Resets the idle-to-away timer. Throttled to avoid per-pixel overhead.
+  void reportActivity() {
+    final now = DateTime.now();
+    // Throttle: ignore calls within 2 s of the last accepted one,
+    // unless we need to return from away.
+    if (!_isAway &&
+        _lastActivityAt != null &&
+        now.difference(_lastActivityAt!).inSeconds < 2) {
+      return;
+    }
+    _lastActivityAt = now;
+    _resetIdleTimer();
+
+    if (_isAway && !_manuallyAway) {
+      _isAway = false;
+      _agent?.restoreFromAway();
+      _handleReturnFromAway();
+      notifyListeners();
+    }
+  }
+
+  void _resetIdleTimer() {
+    _idleTimer?.cancel();
+    if (_manuallyAway) return;
+    _idleTimer = Timer(_awayThreshold, _onIdleTimeout);
+  }
+
+  void _onIdleTimeout() {
+    if (_isAway || _manuallyAway) return;
+    _isAway = true;
+    _lastUnfocusedAt ??= _lastActivityAt ?? DateTime.now();
+    _agent?.muteForAway();
+    debugPrint('[ManagerPresence] Away after ${_awayThreshold.inMinutes}min idle');
+    notifyListeners();
+  }
+
   set awayReturnMode(AwayReturnMode mode) {
     _awayReturnMode = mode;
     UserConfigService.saveAwayReturnConfig(AwayReturnConfig(mode: mode));
@@ -74,6 +113,7 @@ class ManagerPresenceService extends ChangeNotifier
   void setManuallyAway() {
     _manuallyAway = true;
     _awayTimer?.cancel();
+    _idleTimer?.cancel();
     if (_lastUnfocusedAt == null) _lastUnfocusedAt = DateTime.now();
     _agent?.muteForAway();
     debugPrint('[ManagerPresence] Manually set away');
@@ -89,6 +129,7 @@ class ManagerPresenceService extends ChangeNotifier
       _agent?.restoreFromAway();
       _handleReturnFromAway();
     }
+    _resetIdleTimer();
     notifyListeners();
   }
 
@@ -97,6 +138,8 @@ class ManagerPresenceService extends ChangeNotifier
   Future<void> start() async {
     WidgetsBinding.instance.addObserver(this);
     _lastFocusedAt = DateTime.now();
+    _lastActivityAt = DateTime.now();
+    _resetIdleTimer();
 
     // Always create the periodic timer first so reminder checks run even if
     // subsequent DB/config operations fail.
@@ -147,9 +190,10 @@ class ManagerPresenceService extends ChangeNotifier
     _lastUnfocusedAt = DateTime.now();
     _awayTimer?.cancel();
     _awayTimer = Timer(_awayThreshold, () {
+      if (_isAway || _manuallyAway) return;
       _isAway = true;
       _agent?.muteForAway();
-      debugPrint('[ManagerPresence] Manager is now away');
+      debugPrint('[ManagerPresence] Away (app hidden/unfocused)');
       notifyListeners();
     });
     notifyListeners();
@@ -157,7 +201,9 @@ class ManagerPresenceService extends ChangeNotifier
 
   void _onFocusGained() {
     _lastFocusedAt = DateTime.now();
+    _lastActivityAt = DateTime.now();
     _awayTimer?.cancel();
+    _resetIdleTimer();
 
     if (_isAway && !_manuallyAway) {
       _agent?.restoreFromAway();
@@ -442,6 +488,7 @@ class ManagerPresenceService extends ChangeNotifier
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _awayTimer?.cancel();
+    _idleTimer?.cancel();
     _reminderCheckTimer?.cancel();
     for (final t in _scheduledReminderTimers.values) {
       t.cancel();
