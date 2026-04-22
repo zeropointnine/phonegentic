@@ -891,6 +891,79 @@ class CallHistoryDb {
     await db.delete('contacts', where: 'id = ?', whereArgs: [sourceId]);
   }
 
+  /// Propagate a contact's current display name to all related records:
+  /// call_records (link + display name), transcripts (speaker label), and
+  /// tear sheet items.
+  static Future<void> propagateContactName({
+    required int contactId,
+    required String displayName,
+    required String phoneNumber,
+  }) async {
+    final db = await database;
+    final normalized = normalizePhone(phoneNumber);
+
+    // Link unlinked call_records whose remote_identity matches this phone.
+    if (normalized.isNotEmpty) {
+      final unlinked = await db.query(
+        'call_records',
+        columns: ['id', 'remote_identity'],
+        where: 'contact_id IS NULL AND remote_identity IS NOT NULL',
+      );
+      final idsToLink = <int>[];
+      for (final row in unlinked) {
+        final ri = normalizePhone(row['remote_identity'] as String? ?? '');
+        if (ri.isNotEmpty && ri == normalized) {
+          idsToLink.add(row['id'] as int);
+        }
+      }
+      if (idsToLink.isNotEmpty) {
+        final placeholders = List.filled(idsToLink.length, '?').join(',');
+        await db.rawUpdate(
+          'UPDATE call_records SET contact_id = ? WHERE id IN ($placeholders)',
+          [contactId, ...idsToLink],
+        );
+      }
+    }
+
+    // Update remote_display_name on all call_records linked to this contact.
+    await db.update(
+      'call_records',
+      {'remote_display_name': displayName},
+      where: 'contact_id = ?',
+      whereArgs: [contactId],
+    );
+
+    // Update speaker_name on remote transcript lines for linked calls.
+    await db.rawUpdate('''
+      UPDATE call_transcripts
+      SET speaker_name = ?
+      WHERE role = 'remote'
+        AND call_record_id IN (
+          SELECT id FROM call_records WHERE contact_id = ?
+        )
+    ''', [displayName, contactId]);
+
+    // Update tear_sheet_items whose phone matches.
+    if (normalized.isNotEmpty) {
+      final items = await db.query(
+        'tear_sheet_items',
+        columns: ['id', 'phone_number'],
+      );
+      for (final item in items) {
+        final itemPhone =
+            normalizePhone(item['phone_number'] as String? ?? '');
+        if (itemPhone.isNotEmpty && itemPhone == normalized) {
+          await db.update(
+            'tear_sheet_items',
+            {'contact_name': displayName},
+            where: 'id = ?',
+            whereArgs: [item['id']],
+          );
+        }
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Tear Sheets
   // ---------------------------------------------------------------------------

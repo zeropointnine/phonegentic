@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' show pi;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import '../agent_config_service.dart';
@@ -17,11 +19,11 @@ import '../kokoro_tts_service.dart';
 import '../build_config.dart';
 import '../whisperkit_stt_service.dart';
 import '../pocket_tts_service.dart';
-import '../settings_port_service.dart';
 import '../theme_provider.dart';
 import 'comfort_noise_picker.dart';
-import 'settings_export_import_card.dart';
 import 'voice_clone_modal.dart';
+
+enum _PipelineSection { none, stt, llm, tts }
 
 class AgentSettingsTab extends StatefulWidget {
   const AgentSettingsTab({super.key});
@@ -33,11 +35,11 @@ class AgentSettingsTab extends StatefulWidget {
 class _AgentSettingsTabState extends State<AgentSettingsTab> {
   VoiceAgentConfig _voice = const VoiceAgentConfig();
   TextAgentConfig _text = const TextAgentConfig();
-  CallRecordingConfig _recording = const CallRecordingConfig();
   TtsConfig _tts = const TtsConfig();
   SttConfig _stt = const SttConfig();
   AgentMutePolicy _mutePolicy = AgentMutePolicy.autoToggle;
   ComfortNoiseConfig _comfortNoise = const ComfortNoiseConfig();
+  _PipelineSection _expandedSection = _PipelineSection.none;
   bool _loaded = false;
   bool _dirty = false;
   AgentService? _agent;
@@ -110,7 +112,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   Future<void> _load() async {
     final v = await AgentConfigService.loadVoiceConfig();
     final t = await AgentConfigService.loadTextConfig();
-    final r = await AgentConfigService.loadCallRecordingConfig();
     final tts = await AgentConfigService.loadTtsConfig();
     final stt = await AgentConfigService.loadSttConfig();
     final mp = await AgentConfigService.loadMutePolicy();
@@ -119,7 +120,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     setState(() {
       _voice = v;
       _text = t;
-      _recording = r;
       _tts = tts;
       _stt = stt;
       _mutePolicy = mp;
@@ -422,77 +422,307 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       );
     }
 
-    return ListView(
-      children: [
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Column(
-                children: [
-                  _buildVoiceAgentCard(),
-                  const SizedBox(height: 16),
-                  _buildCallRecordingCard(),
-                  const SizedBox(height: 16),
-                  _buildMutePolicyCard(),
-                  const SizedBox(height: 16),
-                  _buildComfortNoiseCard(),
-                  const SizedBox(height: 16),
-                  _buildTextAgentCard(),
-                  if (_text.enabled &&
-                      _text.provider != TextAgentProvider.openai) ...[
-                    const SizedBox(height: 16),
-                    _buildTtsCard(),
-                  ],
-                  if (BuildConfig.onDeviceModelsSupported) ...[
-                    const SizedBox(height: 16),
-                    _buildSttCard(),
-                  ],
-                  const SizedBox(height: 24),
-                  SettingsExportImportCard(
-                    section: SettingsSection.agentSettings,
-                    onImported: _load,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 700;
+        return ListView(
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 840),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12, bottom: 14),
+                        child: Text(
+                          'AGENT WORKFLOW',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textTertiary,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      _buildPipelineSection(wide),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: AppColors.border.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      Text(
+                        'GLOBAL AGENT SETTINGS',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textTertiary,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _buildBottomSections(wide),
+                      const SizedBox(height: 40),
+                    ],
                   ),
-                  const SizedBox(height: 40),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 
-  void _updateRecording(CallRecordingConfig r) {
-    setState(() => _recording = r);
-    AgentConfigService.saveCallRecordingConfig(r);
-    _dirty = true;
+  void _toggleSection(_PipelineSection section) {
+    setState(() {
+      _expandedSection =
+          _expandedSection == section ? _PipelineSection.none : section;
+    });
   }
 
-  // ───── Call Recording ─────
+  // ───── Pipeline Section ─────
 
-  Widget _buildCallRecordingCard() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'CALL RECORDING',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textTertiary,
-            letterSpacing: 0.5,
+  static const _flipDuration = Duration(milliseconds: 400);
+
+  Widget _buildPipelineSection(bool wide) {
+    final isExpanded = _expandedSection != _PipelineSection.none;
+    final llmTtsGrayed = _voice.enabled && !_text.enabled;
+
+    final sections = <_PipelineSection>[
+      _PipelineSection.stt,
+      _PipelineSection.llm,
+      _PipelineSection.tts,
+    ];
+
+    if (isExpanded) {
+      return _buildExpandedView(wide);
+    }
+
+    final tiles = <Widget>[];
+    for (var i = 0; i < sections.length; i++) {
+      final s = sections[i];
+      final enabled = s == _PipelineSection.stt || !llmTtsGrayed;
+      tiles.add(
+        wide
+            ? Expanded(child: _buildSmallTile(s, enabled: enabled))
+            : _buildSmallTile(s, enabled: enabled),
+      );
+      if (i < sections.length - 1) {
+        tiles.add(Padding(
+          padding: EdgeInsets.symmetric(
+              horizontal: wide ? 6 : 0, vertical: wide ? 0 : 6),
+          child: Icon(
+            wide
+                ? Icons.arrow_forward_rounded
+                : Icons.arrow_downward_rounded,
+            size: 18,
+            color: AppColors.textTertiary.withValues(alpha: 0.6),
+          ),
+        ));
+      }
+    }
+
+    if (wide) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: tiles,
+      );
+    }
+    return Column(children: tiles);
+  }
+
+  Widget _buildSmallTile(_PipelineSection section, {required bool enabled}) {
+    final (icon, label, sub, model, badge, configured) = _tileData(section);
+
+    return GestureDetector(
+      onTap: enabled ? () => _toggleSection(section) : null,
+      child: MouseRegion(
+        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        child: Opacity(
+          opacity: enabled ? 1.0 : 0.35,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border, width: 0.5),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color:
+                            configured ? AppColors.green : AppColors.orange,
+                      ),
+                    ),
+                    Icon(Icons.edit_rounded,
+                        size: 12, color: AppColors.textTertiary),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(11),
+                    color: AppColors.card,
+                  ),
+                  child: Center(child: icon),
+                ),
+                const SizedBox(height: 8),
+                Text(label,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                      letterSpacing: 0.3,
+                    )),
+                const SizedBox(height: 2),
+                Text(sub,
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.textTertiary),
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 6),
+                Text(model,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
+                if (badge.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      color: AppColors.textTertiary.withValues(alpha: 0.1),
+                    ),
+                    child: Text(badge,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textTertiary,
+                          letterSpacing: 0.3,
+                        )),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border, width: 0.5),
+      ),
+    );
+  }
+
+  // ───── Expanded (flipped) view ─────
+
+  Widget _buildExpandedView(bool wide) {
+    final section = _expandedSection;
+    final (icon, label, _, _, _, _) = _tileData(section);
+
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: _flipDuration,
+      curve: Curves.easeInOut,
+      builder: (context, t, child) {
+        final angle = t * pi;
+        final showBack = angle >= pi / 2;
+
+        return Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.001)
+            ..rotateY(angle),
+          child: showBack
+              ? Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.identity()..rotateY(pi),
+                  child: child!,
+                )
+              : _buildCollapsedPlaceholder(section, wide),
+        );
+      },
+      child: _buildSettingsCard(section, icon, label),
+    );
+  }
+
+  Widget _buildCollapsedPlaceholder(_PipelineSection section, bool wide) {
+    final llmTtsGrayed = _voice.enabled && !_text.enabled;
+    final sections = [
+      _PipelineSection.stt,
+      _PipelineSection.llm,
+      _PipelineSection.tts,
+    ];
+
+    final tiles = <Widget>[];
+    for (var i = 0; i < sections.length; i++) {
+      final s = sections[i];
+      final enabled = s == _PipelineSection.stt || !llmTtsGrayed;
+      tiles.add(
+        wide
+            ? Expanded(
+                child: Opacity(
+                    opacity: s == section ? 1.0 : 0.3,
+                    child: _buildSmallTile(s, enabled: enabled)))
+            : Opacity(
+                opacity: s == section ? 1.0 : 0.3,
+                child: _buildSmallTile(s, enabled: enabled)),
+      );
+      if (i < sections.length - 1) {
+        tiles.add(Padding(
+          padding: EdgeInsets.symmetric(
+              horizontal: wide ? 6 : 0, vertical: wide ? 0 : 6),
+          child: Icon(
+            wide
+                ? Icons.arrow_forward_rounded
+                : Icons.arrow_downward_rounded,
+            size: 18,
+            color: AppColors.textTertiary.withValues(alpha: 0.3),
           ),
-          child: Padding(
+        ));
+      }
+    }
+
+    if (wide) {
+      return Row(
+          crossAxisAlignment: CrossAxisAlignment.center, children: tiles);
+    }
+    return Column(children: tiles);
+  }
+
+  Widget _buildSettingsCard(
+      _PipelineSection section, Widget icon, String label) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.accent.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
@@ -501,53 +731,670 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   height: 32,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
-                    color: _recording.autoRecord
-                        ? AppColors.red.withValues(alpha: 0.12)
-                        : AppColors.card,
+                    color: AppColors.accent.withValues(alpha: 0.12),
                   ),
-                  child: Icon(Icons.fiber_manual_record,
-                      size: 17,
-                      color: _recording.autoRecord
-                          ? AppColors.red
-                          : AppColors.textTertiary),
+                  child: Center(
+                    child: _smallIcon(section, active: true),
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Auto-record calls',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                          letterSpacing: -0.2,
-                        ),
-                      ),
+                      Text(label,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                            letterSpacing: -0.2,
+                          )),
                       const SizedBox(height: 2),
-                      Text(
-                        'Automatically start recording when a call connects',
-                        style: TextStyle(
-                            fontSize: 11, color: AppColors.textTertiary),
-                      ),
+                      Text(_sectionSubtitle(section),
+                          style: TextStyle(
+                              fontSize: 11, color: AppColors.textTertiary)),
                     ],
                   ),
                 ),
-                SizedBox(
-                  height: 28,
-                  child: Switch.adaptive(
-                    value: _recording.autoRecord,
-                    onChanged: (v) =>
-                        _updateRecording(_recording.copyWith(autoRecord: v)),
-                    activeTrackColor: AppColors.red,
+                HoverButton(
+                  onTap: () => _toggleSection(section),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      color: AppColors.card,
+                    ),
+                    child: Icon(Icons.close_rounded,
+                        size: 14, color: AppColors.textTertiary),
                   ),
                 ),
               ],
             ),
           ),
+          Divider(
+              height: 0.5,
+              color: AppColors.border.withValues(alpha: 0.5)),
+          ..._sectionContent(section),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  // ───── Tile data helpers ─────
+
+  (Widget icon, String label, String subtitle, String model, String badge,
+      bool configured) _tileData(_PipelineSection section) {
+    return switch (section) {
+      _PipelineSection.stt => (
+          Icon(Icons.hearing_rounded, size: 22, color: AppColors.textPrimary),
+          'STT',
+          'Speech to Text Recognition',
+          _sttModelInfo,
+          _sttBadge,
+          _voice.isConfigured,
+        ),
+      _PipelineSection.llm => (
+          SvgPicture.asset('assets/brain.svg',
+              width: 22,
+              height: 22,
+              colorFilter: ColorFilter.mode(
+                  AppColors.textPrimary, BlendMode.srcIn)),
+          'LLM',
+          'Thinking Model',
+          _llmModelInfo,
+          'API',
+          _text.isConfigured,
+        ),
+      _PipelineSection.tts => (
+          Icon(Icons.spatial_audio_off_rounded,
+              size: 22, color: AppColors.textPrimary),
+          'TTS',
+          'Text to Speech',
+          _ttsModelInfo,
+          _ttsBadge,
+          _tts.isConfigured || (_voice.enabled && !_text.enabled),
+        ),
+      _PipelineSection.none => (
+          const SizedBox.shrink(),
+          '',
+          '',
+          '',
+          '',
+          false
+        ),
+    };
+  }
+
+  Widget _smallIcon(_PipelineSection section, {bool active = false}) {
+    final color = active ? AppColors.accent : AppColors.textPrimary;
+    return switch (section) {
+      _PipelineSection.stt => Icon(Icons.hearing_rounded, size: 17, color: color),
+      _PipelineSection.llm => SvgPicture.asset('assets/brain.svg',
+          width: 17,
+          height: 17,
+          colorFilter: ColorFilter.mode(color, BlendMode.srcIn)),
+      _PipelineSection.tts =>
+        Icon(Icons.spatial_audio_off_rounded, size: 17, color: color),
+      _PipelineSection.none => const SizedBox.shrink(),
+    };
+  }
+
+  String _sectionSubtitle(_PipelineSection section) {
+    return switch (section) {
+      _PipelineSection.stt => 'Voice Agent & STT Configuration',
+      _PipelineSection.llm => 'Text Agent Configuration',
+      _PipelineSection.tts => 'TTS Configuration',
+      _PipelineSection.none => '',
+    };
+  }
+
+  List<Widget> _sectionContent(_PipelineSection section) {
+    return switch (section) {
+      _PipelineSection.stt => _buildSttContent(),
+      _PipelineSection.llm => _buildLlmContent(),
+      _PipelineSection.tts => _buildTtsContent(),
+      _PipelineSection.none => [],
+    };
+  }
+
+  // ───── STT Expanded Content ─────
+
+  List<Widget> _buildSttContent() {
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _voice.enabled
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.hearing_rounded,
+                  size: 17,
+                  color: _voice.enabled
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Voice Agent',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.2,
+                      )),
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Text('OpenAI Realtime',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary)),
+                    const SizedBox(width: 8),
+                    _configuredBadge(_voice.isConfigured),
+                  ]),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 28,
+              child: Switch.adaptive(
+                value: _voice.enabled,
+                onChanged: (v) =>
+                    _updateVoice(_voice.copyWith(enabled: v)),
+                activeTrackColor: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+      if (_voice.enabled) ...[
+        _divider(),
+        _buildKeyField('API Key', _voiceKeyCtrl, (val) {
+          _updateVoice(_voice.copyWith(apiKey: val));
+        }),
+      ],
+      _divider(),
+      _buildDropdown<String>(
+        'Model',
+        _voice.model,
+        const {
+          'gpt-4o-mini-realtime-preview': 'GPT-4o Mini Realtime',
+          'gpt-4o-realtime-preview': 'GPT-4o Realtime',
+        },
+        (v) => _updateVoice(_voice.copyWith(model: v)),
+      ),
+      _divider(),
+      _buildDropdown<String>(
+        'Voice',
+        _voice.voice,
+        const {
+          'coral': 'Coral',
+          'alloy': 'Alloy',
+          'ash': 'Ash',
+          'ballad': 'Ballad',
+          'echo': 'Echo',
+          'sage': 'Sage',
+          'shimmer': 'Shimmer',
+          'verse': 'Verse',
+          'marin': 'Marin',
+          'cedar': 'Cedar',
+        },
+        (v) => _updateVoice(_voice.copyWith(voice: v)),
+      ),
+      _divider(),
+      _buildDropdown<TranscriptionTarget>(
+        'Listen To',
+        _voice.target,
+        const {
+          TranscriptionTarget.both: 'Both Sides',
+          TranscriptionTarget.localOnly: 'Local Only',
+          TranscriptionTarget.remoteOnly: 'Remote Only',
+        },
+        (v) => _updateVoice(_voice.copyWith(target: v)),
+      ),
+      _divider(),
+      _buildInstructionsField(),
+      if (BuildConfig.onDeviceModelsSupported) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Text('STT PROVIDER',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              )),
+        ),
+        _buildSttProviderChips(),
+        if (_stt.provider == SttProvider.whisperKit) ...[
+          _divider(),
+          _buildDropdown<String>(
+            'Model Size',
+            _stt.whisperKitModelSize,
+            const {
+              'tiny': 'Tiny (~75 MB, fastest)',
+              'base': 'Base (~140 MB, balanced)',
+              'small': 'Small (~460 MB, best accuracy)',
+              'large-v3-turbo': 'Large v3 Turbo (~1.6 GB, most accurate)',
+            },
+            (v) => _updateStt(_stt.copyWith(whisperKitModelSize: v)),
+          ),
+        ],
+      ],
+    ];
+  }
+
+  Widget _buildSttProviderChips() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Provider',
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary)),
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                ChoiceChip(
+                  label: const Text('OpenAI Realtime',
+                      style: TextStyle(fontSize: 12)),
+                  selected: _stt.provider == SttProvider.openaiRealtime,
+                  onSelected: (_) => _updateStt(
+                      _stt.copyWith(provider: SttProvider.openaiRealtime)),
+                  selectedColor: AppColors.accent.withValues(alpha: 0.2),
+                  backgroundColor: AppColors.card,
+                  side: BorderSide(
+                    color: _stt.provider == SttProvider.openaiRealtime
+                        ? AppColors.accent
+                        : AppColors.border.withValues(alpha: 0.5),
+                    width: 0.5,
+                  ),
+                ),
+                if (BuildConfig.onDeviceModelsSupported &&
+                    _whisperModelAvailable)
+                  ChoiceChip(
+                    label: const Text('WhisperKit (On-Device)',
+                        style: TextStyle(fontSize: 12)),
+                    selected: _stt.provider == SttProvider.whisperKit,
+                    onSelected: (_) => _updateStt(
+                        _stt.copyWith(provider: SttProvider.whisperKit)),
+                    selectedColor: AppColors.accent.withValues(alpha: 0.2),
+                    backgroundColor: AppColors.card,
+                    side: BorderSide(
+                      color: _stt.provider == SttProvider.whisperKit
+                          ? AppColors.accent
+                          : AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ───── LLM Expanded Content ─────
+
+  List<Widget> _buildLlmContent() {
+    final isClaude = _text.provider == TextAgentProvider.claude;
+    final isOpenai = _text.provider == TextAgentProvider.openai;
+    final isCustom = _text.provider == TextAgentProvider.custom;
+
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: _text.enabled
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
+              ),
+              child: Center(
+                child: SvgPicture.asset('assets/brain.svg',
+                    width: 17,
+                    height: 17,
+                    colorFilter: ColorFilter.mode(
+                      _text.enabled
+                          ? AppColors.accent
+                          : AppColors.textTertiary,
+                      BlendMode.srcIn,
+                    )),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Text Agent',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.2,
+                      )),
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Text(
+                        switch (_text.provider) {
+                          TextAgentProvider.openai => 'OpenAI',
+                          TextAgentProvider.claude => 'Claude',
+                          TextAgentProvider.custom => 'Custom',
+                        },
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary)),
+                    const SizedBox(width: 8),
+                    _configuredBadge(_text.isConfigured),
+                  ]),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 28,
+              child: Switch.adaptive(
+                value: _text.enabled,
+                onChanged: (v) =>
+                    _updateText(_text.copyWith(enabled: v)),
+                activeTrackColor: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+      _divider(),
+      _buildDropdown<TextAgentProvider>(
+        'Provider',
+        _text.provider,
+        const {
+          TextAgentProvider.claude: 'Claude',
+          TextAgentProvider.openai: 'OpenAI',
+          TextAgentProvider.custom: 'Custom',
+        },
+        (v) => _updateText(_text.copyWith(provider: v)),
+      ),
+      _divider(),
+      if (isOpenai) ...[
+        _buildKeyField('API Key', _textOpenaiKeyCtrl, (val) {
+          _updateText(_text.copyWith(openaiApiKey: val));
+        }),
+        _divider(),
+        _buildDropdown<String>(
+          'Model',
+          _text.openaiModel,
+          const {
+            'gpt-4o': 'GPT-4o',
+            'gpt-4o-mini': 'GPT-4o Mini',
+          },
+          (v) => _updateText(_text.copyWith(openaiModel: v)),
+        ),
+      ] else if (isClaude) ...[
+        _buildKeyField('API Key', _textClaudeKeyCtrl, (val) {
+          _updateText(_text.copyWith(claudeApiKey: val));
+        }),
+        _divider(),
+        _buildDropdown<String>(
+          'Model',
+          _text.claudeModel,
+          const {
+            'claude-sonnet-4-20250514': 'Claude Sonnet 4',
+            'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+          },
+          (v) => _updateText(_text.copyWith(claudeModel: v)),
+        ),
+      ] else if (isCustom) ...[
+        _buildKeyField('API Key', _textCustomKeyCtrl, (val) {
+          _updateText(_text.copyWith(customApiKey: val));
+        }),
+        _divider(),
+        _buildTextField(
+          'Endpoint',
+          _textCustomEndpointCtrl,
+          hint: 'https://openrouter.ai/api/v1/chat/completions',
+          onChanged: (val) =>
+              _updateText(_text.copyWith(customEndpointUrl: val)),
+        ),
+        _divider(),
+        _buildTextField(
+          'Model',
+          _textCustomModelCtrl,
+          hint: 'e.g. meta-llama/llama-3.3-70b-instruct',
+          onChanged: (val) =>
+              _updateText(_text.copyWith(customModel: val)),
         ),
       ],
+      _divider(),
+      _buildPromptField(),
+    ];
+  }
+
+  // ───── TTS Expanded Content ─────
+
+  List<Widget> _buildTtsContent() {
+    final isEnabled = _tts.provider != TtsProvider.none;
+    final isElevenlabs = _tts.provider == TtsProvider.elevenlabs;
+    final isKokoro = _tts.provider == TtsProvider.kokoro;
+    final isPocketTts = _tts.provider == TtsProvider.pocketTts;
+
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: isEnabled
+                    ? AppColors.accent.withValues(alpha: 0.12)
+                    : AppColors.card,
+              ),
+              child: Icon(Icons.spatial_audio_off_rounded,
+                  size: 17,
+                  color: isEnabled
+                      ? AppColors.accent
+                      : AppColors.textTertiary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Voice Output',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                        letterSpacing: -0.2,
+                      )),
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Text(_ttsProviderLabel,
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary)),
+                    const SizedBox(width: 8),
+                    _configuredBadge(_tts.isConfigured),
+                  ]),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 28,
+              child: Switch.adaptive(
+                value: isEnabled,
+                onChanged: (v) => _updateTts(_tts.copyWith(
+                  provider: v ? TtsProvider.elevenlabs : TtsProvider.none,
+                )),
+                activeTrackColor: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+      if (isEnabled) ...[
+        _divider(),
+        _buildTtsProviderChips(),
+      ],
+      if (isElevenlabs) ...[
+        _divider(),
+        _buildKeyField('API Key', _ttsApiKeyCtrl, (val) {
+          _updateTts(_tts.copyWith(elevenLabsApiKey: val));
+          _fetchVoiceList();
+        }),
+        _divider(),
+        _buildVoiceSelector(),
+        _divider(),
+        _buildDropdown<String>(
+          'Model',
+          _tts.elevenLabsModelId,
+          const {
+            'eleven_flash_v2_5': 'Flash v2.5 (Fast)',
+            'eleven_multilingual_v2': 'Multilingual v2',
+            'eleven_turbo_v2_5': 'Turbo v2.5',
+          },
+          (v) => _updateTts(_tts.copyWith(elevenLabsModelId: v)),
+        ),
+      ],
+      if (isKokoro) ...[
+        _divider(),
+        _buildDropdown<String>(
+          'Voice',
+          _tts.kokoroVoiceStyle,
+          {
+            for (final v in KokoroTtsService.voiceStyles)
+              v: _formatKokoroVoiceName(v)
+          },
+          (v) => _updateTts(_tts.copyWith(kokoroVoiceStyle: v)),
+        ),
+      ],
+      if (isPocketTts) ...[
+        _divider(),
+        _buildPocketTtsVoiceSelector(),
+      ],
+    ];
+  }
+
+  // ───── Bottom Sections ─────
+
+  Widget _buildBottomSections(bool wide) {
+    if (wide) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: _buildMutePolicyCard()),
+          const SizedBox(width: 16),
+          Expanded(child: _buildComfortNoiseCard()),
+        ],
+      );
+    }
+    return Column(
+      children: [
+        _buildMutePolicyCard(),
+        const SizedBox(height: 16),
+        _buildComfortNoiseCard(),
+      ],
+    );
+  }
+
+  // ───── Pipeline Info Getters ─────
+
+  String get _sttModelInfo {
+    if (_voice.enabled) {
+      return switch (_voice.model) {
+        'gpt-4o-mini-realtime-preview' => 'GPT-4o Mini Realtime',
+        'gpt-4o-realtime-preview' => 'GPT-4o Realtime',
+        _ => _voice.model,
+      };
+    }
+    return _stt.provider == SttProvider.whisperKit
+        ? 'WhisperKit'
+        : 'OpenAI Realtime';
+  }
+
+  String get _sttBadge =>
+      _stt.provider == SttProvider.whisperKit ? 'On Device' : 'API';
+
+  String get _llmModelInfo {
+    if (!_text.enabled) return 'Not configured';
+    return switch (_text.provider) {
+      TextAgentProvider.openai => switch (_text.openaiModel) {
+          'gpt-4o' => 'GPT-4o',
+          'gpt-4o-mini' => 'GPT-4o Mini',
+          _ => _text.openaiModel,
+        },
+      TextAgentProvider.claude => switch (_text.claudeModel) {
+          'claude-sonnet-4-20250514' => 'Claude Sonnet 4',
+          'claude-haiku-4-5-20251001' => 'Claude Haiku 4.5',
+          _ => _text.claudeModel,
+        },
+      TextAgentProvider.custom =>
+        _text.customModel.isNotEmpty ? _text.customModel : 'Custom',
+    };
+  }
+
+  String get _ttsModelInfo => switch (_tts.provider) {
+        TtsProvider.elevenlabs => 'ElevenLabs',
+        TtsProvider.kokoro => 'Kokoro',
+        TtsProvider.pocketTts => 'Pocket TTS',
+        TtsProvider.none => 'None',
+      };
+
+  String get _ttsBadge => switch (_tts.provider) {
+        TtsProvider.elevenlabs => 'API',
+        TtsProvider.kokoro || TtsProvider.pocketTts => 'On Device',
+        TtsProvider.none => '',
+      };
+
+  String get _ttsProviderLabel => switch (_tts.provider) {
+        TtsProvider.elevenlabs => 'ElevenLabs',
+        TtsProvider.kokoro => 'Kokoro (On-Device)',
+        TtsProvider.pocketTts => 'Pocket TTS (On-Device)',
+        TtsProvider.none => 'None',
+      };
+
+  Widget _configuredBadge(bool configured) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: configured
+            ? AppColors.green.withValues(alpha: 0.12)
+            : AppColors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        configured ? 'Configured' : 'Not Set',
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w600,
+          color: configured ? AppColors.green : AppColors.orange,
+        ),
+      ),
     );
   }
 
@@ -559,28 +1406,29 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   }
 
   Widget _buildMutePolicyCard() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'AGENT VOICE BEHAVIOR',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textTertiary,
-            letterSpacing: 0.5,
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+            child: Text(
+              'AGENT VOICE BEHAVIOR',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              ),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border, width: 0.5),
-          ),
-          child: Column(
-            children: [
-              _mutePolicyOption(
+          const SizedBox(height: 8),
+          _mutePolicyOption(
                 AgentMutePolicy.autoToggle,
                 Icons.swap_horiz_rounded,
                 'Auto unmute on call',
@@ -606,18 +1454,17 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 'Stay unmuted',
                 'Agent always speaks, even when not on a call',
               ),
-            ],
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Text(
+              'Can be overridden per job function.',
+              style:
+                  TextStyle(fontSize: 10, color: AppColors.textTertiary),
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.only(left: 2),
-          child: Text(
-            'Can be overridden per job function.',
-            style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -711,31 +1558,28 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   }
 
   Widget _buildComfortNoiseCard() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'COMFORT NOISE',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textTertiary,
-            letterSpacing: 0.5,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border, width: 0.5),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border, width: 0.5),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'COMFORT NOISE',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
                   children: [
                     Container(
                       width: 32,
@@ -746,7 +1590,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                             ? AppColors.accent.withValues(alpha: 0.12)
                             : AppColors.card,
                       ),
-                      child: Icon(Icons.spatial_audio_off_rounded,
+                      child: Icon(Icons.graphic_eq_rounded,
                           size: 17,
                           color: _comfortNoise.enabled
                               ? AppColors.accent
@@ -828,78 +1672,15 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     ),
                   ),
                 ],
-              ],
+            const SizedBox(height: 6),
+            Text(
+              'Can be overridden per job function.',
+              style:
+                  TextStyle(fontSize: 10, color: AppColors.textTertiary),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.only(left: 2),
-          child: Text(
-            'Can be overridden per job function.',
-            style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ───── Voice Agent ─────
-
-  Widget _buildVoiceAgentCard() {
-    return _AgentCard(
-      icon: Icons.graphic_eq_rounded,
-      title: 'Voice Agent',
-      subtitle: 'OpenAI Realtime',
-      enabled: _voice.enabled,
-      configured: _voice.isConfigured,
-      onToggle: (v) => _updateVoice(_voice.copyWith(enabled: v)),
-      children: [
-        _buildKeyField('API Key', _voiceKeyCtrl, (val) {
-          _updateVoice(_voice.copyWith(apiKey: val));
-        }),
-        _divider(),
-        _buildDropdown<String>(
-          'Model',
-          _voice.model,
-          const {
-            'gpt-4o-mini-realtime-preview': 'GPT-4o Mini Realtime',
-            'gpt-4o-realtime-preview': 'GPT-4o Realtime',
-          },
-          (v) => _updateVoice(_voice.copyWith(model: v)),
-        ),
-        _divider(),
-        _buildDropdown<String>(
-          'Voice',
-          _voice.voice,
-          const {
-            'coral': 'Coral',
-            'alloy': 'Alloy',
-            'ash': 'Ash',
-            'ballad': 'Ballad',
-            'echo': 'Echo',
-            'sage': 'Sage',
-            'shimmer': 'Shimmer',
-            'verse': 'Verse',
-            'marin': 'Marin',
-            'cedar': 'Cedar',
-          },
-          (v) => _updateVoice(_voice.copyWith(voice: v)),
-        ),
-        _divider(),
-        _buildDropdown<TranscriptionTarget>(
-          'Listen To',
-          _voice.target,
-          const {
-            TranscriptionTarget.both: 'Both Sides',
-            TranscriptionTarget.localOnly: 'Local Only',
-            TranscriptionTarget.remoteOnly: 'Remote Only',
-          },
-          (v) => _updateVoice(_voice.copyWith(target: v)),
-        ),
-        _divider(),
-        _buildInstructionsField(),
-      ],
+      ),
     );
   }
 
@@ -948,91 +1729,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     );
   }
 
-  // ───── Text Agent ─────
-
-  Widget _buildTextAgentCard() {
-    final isClaude = _text.provider == TextAgentProvider.claude;
-    final isOpenai = _text.provider == TextAgentProvider.openai;
-    final isCustom = _text.provider == TextAgentProvider.custom;
-
-    final subtitle = switch (_text.provider) {
-      TextAgentProvider.openai => 'OpenAI',
-      TextAgentProvider.claude => 'Claude',
-      TextAgentProvider.custom => 'Custom',
-    };
-
-    return _AgentCard(
-      icon: Icons.chat_bubble_outline_rounded,
-      title: 'Text Agent',
-      subtitle: subtitle,
-      enabled: _text.enabled,
-      configured: _text.isConfigured,
-      onToggle: (v) => _updateText(_text.copyWith(enabled: v)),
-      children: [
-        _buildDropdown<TextAgentProvider>(
-          'Provider',
-          _text.provider,
-          const {
-            TextAgentProvider.claude: 'Claude',
-            TextAgentProvider.openai: 'OpenAI',
-            TextAgentProvider.custom: 'Custom',
-          },
-          (v) => _updateText(_text.copyWith(provider: v)),
-        ),
-        _divider(),
-        if (isOpenai) ...[
-          _buildKeyField('API Key', _textOpenaiKeyCtrl, (val) {
-            _updateText(_text.copyWith(openaiApiKey: val));
-          }),
-          _divider(),
-          _buildDropdown<String>(
-            'Model',
-            _text.openaiModel,
-            const {
-              'gpt-4o': 'GPT-4o',
-              'gpt-4o-mini': 'GPT-4o Mini',
-            },
-            (v) => _updateText(_text.copyWith(openaiModel: v)),
-          ),
-        ] else if (isClaude) ...[
-          _buildKeyField('API Key', _textClaudeKeyCtrl, (val) {
-            _updateText(_text.copyWith(claudeApiKey: val));
-          }),
-          _divider(),
-          _buildDropdown<String>(
-            'Model',
-            _text.claudeModel,
-            const {
-              'claude-sonnet-4-20250514': 'Claude Sonnet 4',
-              'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
-            },
-            (v) => _updateText(_text.copyWith(claudeModel: v)),
-          ),
-        ] else if (isCustom) ...[
-          _buildKeyField('API Key', _textCustomKeyCtrl, (val) {
-            _updateText(_text.copyWith(customApiKey: val));
-          }),
-          _divider(),
-          _buildTextField(
-            'Endpoint',
-            _textCustomEndpointCtrl,
-            hint: 'https://openrouter.ai/api/v1/chat/completions',
-            onChanged: (val) => _updateText(_text.copyWith(customEndpointUrl: val)),
-          ),
-          _divider(),
-          _buildTextField(
-            'Model',
-            _textCustomModelCtrl,
-            hint: 'e.g. meta-llama/llama-3.3-70b-instruct',
-            onChanged: (val) => _updateText(_text.copyWith(customModel: val)),
-          ),
-        ],
-        _divider(),
-        _buildPromptField(),
-      ],
-    );
-  }
-
   Widget _buildPromptField() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -1075,79 +1771,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           const SizedBox(height: 8),
         ],
       ),
-    );
-  }
-
-  // ───── Voice Output (TTS) ─────
-
-  Widget _buildTtsCard() {
-    final isEnabled = _tts.provider != TtsProvider.none;
-    final isElevenlabs = _tts.provider == TtsProvider.elevenlabs;
-    final isKokoro = _tts.provider == TtsProvider.kokoro;
-    final isPocketTts = _tts.provider == TtsProvider.pocketTts;
-
-    String subtitle;
-    switch (_tts.provider) {
-      case TtsProvider.elevenlabs:
-        subtitle = 'ElevenLabs';
-        break;
-      case TtsProvider.kokoro:
-        subtitle = 'Kokoro (On-Device)';
-        break;
-      case TtsProvider.pocketTts:
-        subtitle = 'Pocket TTS (On-Device)';
-        break;
-      case TtsProvider.none:
-        subtitle = 'None';
-        break;
-    }
-
-    return _AgentCard(
-      icon: Icons.record_voice_over_rounded,
-      title: 'Voice Output',
-      subtitle: subtitle,
-      enabled: isEnabled,
-      configured: _tts.isConfigured,
-      onToggle: (v) => _updateTts(_tts.copyWith(
-        provider: v ? TtsProvider.elevenlabs : TtsProvider.none,
-      )),
-      children: [
-        if (isEnabled) ...[
-          _buildTtsProviderChips(),
-          _divider(),
-        ],
-        if (isElevenlabs) ...[
-          _buildKeyField('API Key', _ttsApiKeyCtrl, (val) {
-            _updateTts(_tts.copyWith(elevenLabsApiKey: val));
-            _fetchVoiceList();
-          }),
-          _divider(),
-          _buildVoiceSelector(),
-          _divider(),
-          _buildDropdown<String>(
-            'Model',
-            _tts.elevenLabsModelId,
-            const {
-              'eleven_flash_v2_5': 'Flash v2.5 (Fast)',
-              'eleven_multilingual_v2': 'Multilingual v2',
-              'eleven_turbo_v2_5': 'Turbo v2.5',
-            },
-            (v) => _updateTts(_tts.copyWith(elevenLabsModelId: v)),
-          ),
-        ],
-        if (isKokoro) ...[
-          _buildDropdown<String>(
-            'Voice',
-            _tts.kokoroVoiceStyle,
-            { for (final v in KokoroTtsService.voiceStyles) v: _formatKokoroVoiceName(v) },
-            (v) => _updateTts(_tts.copyWith(kokoroVoiceStyle: v)),
-          ),
-        ],
-        if (isPocketTts) ...[
-          _divider(),
-          _buildPocketTtsVoiceSelector(),
-        ],
-      ],
     );
   }
 
@@ -1505,86 +2128,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     _dirty = true;
   }
 
-  Widget _buildSttCard() {
-    final isWhisperKit = _stt.provider == SttProvider.whisperKit;
-
-    return _AgentCard(
-      icon: Icons.hearing_rounded,
-      title: 'Speech Recognition',
-      subtitle: isWhisperKit ? 'WhisperKit (On-Device)' : 'OpenAI Realtime',
-      enabled: true,
-      configured: isWhisperKit ? _whisperModelAvailable : true,
-      onToggle: (_) {},
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 100,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text('Provider',
-                      style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-                ),
-              ),
-              Expanded(
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    ChoiceChip(
-                      label: const Text('OpenAI Realtime', style: TextStyle(fontSize: 12)),
-                      selected: _stt.provider == SttProvider.openaiRealtime,
-                      onSelected: (_) => _updateStt(_stt.copyWith(provider: SttProvider.openaiRealtime)),
-                      selectedColor: AppColors.accent.withValues(alpha: 0.2),
-                      backgroundColor: AppColors.card,
-                      side: BorderSide(
-                        color: _stt.provider == SttProvider.openaiRealtime
-                            ? AppColors.accent
-                            : AppColors.border.withValues(alpha: 0.5),
-                        width: 0.5,
-                      ),
-                    ),
-                    if (BuildConfig.onDeviceModelsSupported && _whisperModelAvailable)
-                      ChoiceChip(
-                        label: const Text('WhisperKit (On-Device)', style: TextStyle(fontSize: 12)),
-                        selected: _stt.provider == SttProvider.whisperKit,
-                        onSelected: (_) => _updateStt(_stt.copyWith(provider: SttProvider.whisperKit)),
-                        selectedColor: AppColors.accent.withValues(alpha: 0.2),
-                        backgroundColor: AppColors.card,
-                        side: BorderSide(
-                          color: _stt.provider == SttProvider.whisperKit
-                              ? AppColors.accent
-                              : AppColors.border.withValues(alpha: 0.5),
-                          width: 0.5,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (isWhisperKit) ...[
-          _divider(),
-          _buildDropdown<String>(
-            'Model Size',
-            _stt.whisperKitModelSize,
-            const {
-              'tiny': 'Tiny (~75 MB, fastest)',
-              'base': 'Base (~140 MB, balanced)',
-              'small': 'Small (~460 MB, best accuracy)',
-              'large-v3-turbo': 'Large v3 Turbo (~1.6 GB, most accurate)',
-            },
-            (v) => _updateStt(_stt.copyWith(whisperKitModelSize: v)),
-          ),
-        ],
-      ],
-    );
-  }
-
   Widget _buildVoiceSelector() {
     // Fall back to text field if no voice list loaded yet
     if (_voiceList == null && !_voiceListLoading) {
@@ -1906,142 +2449,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
 
   Widget _divider() => Divider(
       height: 0.5, indent: 16, color: AppColors.border.withValues(alpha: 0.5));
-}
-
-// ───── Reusable Agent Card ─────
-
-class _AgentCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool enabled;
-  final bool configured;
-  final ValueChanged<bool> onToggle;
-  final List<Widget> children;
-
-  const _AgentCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.enabled,
-    required this.configured,
-    required this.onToggle,
-    required this.children,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title.toUpperCase(),
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textTertiary,
-            letterSpacing: 0.5,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border, width: 0.5),
-          ),
-          child: Column(
-            children: [
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: enabled
-                            ? AppColors.accent.withValues(alpha: 0.12)
-                            : AppColors.card,
-                      ),
-                      child: Icon(icon,
-                          size: 17,
-                          color: enabled
-                              ? AppColors.accent
-                              : AppColors.textTertiary),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              Text(
-                                subtitle,
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: AppColors.textTertiary),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: configured
-                                      ? AppColors.green.withValues(alpha: 0.12)
-                                      : AppColors.orange.withValues(alpha: 0.12),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  configured ? 'Configured' : 'Not Set',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w600,
-                                    color: configured
-                                        ? AppColors.green
-                                        : AppColors.orange,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(
-                      height: 28,
-                      child: Switch.adaptive(
-                        value: enabled,
-                        onChanged: onToggle,
-                        activeTrackColor: AppColors.accent,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Divider(
-                  height: 0.5,
-                  color: AppColors.border.withValues(alpha: 0.5)),
-              ...children,
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 }
 
 // ───── Pocket TTS Voice Upload Dialog ─────

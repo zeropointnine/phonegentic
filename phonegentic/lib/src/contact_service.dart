@@ -219,6 +219,15 @@ class ContactService extends ChangeNotifier {
       email: email,
     );
     await loadAll();
+
+    if (phoneNumber.isNotEmpty) {
+      await CallHistoryDb.propagateContactName(
+        contactId: id,
+        displayName: displayName,
+        phoneNumber: phoneNumber,
+      );
+    }
+
     return id;
   }
 
@@ -236,6 +245,24 @@ class ContactService extends ChangeNotifier {
         orElse: () => _selectedContact!,
       );
       notifyListeners();
+    }
+
+    // When the display name (or phone) changes, propagate to call history,
+    // transcripts, and tear sheet items so they stay current.
+    if (field == 'display_name' || field == 'phone_number') {
+      final contact = _contacts.firstWhere(
+        (c) => c['id'] == id,
+        orElse: () => <String, dynamic>{},
+      );
+      final name = contact['display_name'] as String? ?? '';
+      final phone = contact['phone_number'] as String? ?? '';
+      if (name.isNotEmpty && phone.isNotEmpty) {
+        await CallHistoryDb.propagateContactName(
+          contactId: id,
+          displayName: name,
+          phoneNumber: phone,
+        );
+      }
     }
   }
 
@@ -409,7 +436,7 @@ class ContactService extends ChangeNotifier {
         final existingLinked = _contacts.any(
             (lc) => lc['macos_contact_id'] == macId);
         if (existingLinked) {
-          await CallHistoryDb.upsertByMacosContactId(
+          final cid = await CallHistoryDb.upsertByMacosContactId(
             macosContactId: macId,
             displayName: displayName,
             phoneNumber: phone,
@@ -417,6 +444,13 @@ class ContactService extends ChangeNotifier {
             company: company,
             thumbnailPath: thumbnailPath,
           );
+          if (phone.isNotEmpty) {
+            await CallHistoryDb.propagateContactName(
+              contactId: cid,
+              displayName: displayName,
+              phoneNumber: phone,
+            );
+          }
           updatedCount++;
           continue;
         }
@@ -445,7 +479,7 @@ class ContactService extends ChangeNotifier {
           localUnlinked.remove(normalizedPhone);
         } else {
           // Tier 2: new — no local match, auto-import
-          await CallHistoryDb.upsertByMacosContactId(
+          final cid = await CallHistoryDb.upsertByMacosContactId(
             macosContactId: macId,
             displayName: displayName,
             phoneNumber: phone,
@@ -453,6 +487,13 @@ class ContactService extends ChangeNotifier {
             company: company,
             thumbnailPath: thumbnailPath,
           );
+          if (phone.isNotEmpty) {
+            await CallHistoryDb.propagateContactName(
+              contactId: cid,
+              displayName: displayName,
+              phoneNumber: phone,
+            );
+          }
           newCount++;
         }
       }
@@ -526,6 +567,14 @@ class ContactService extends ChangeNotifier {
         'thumbnail_path': conflict.macosThumbnailPath,
       'macos_contact_id': conflict.macosContactId,
     });
+    final phone = conflict.macosPhone;
+    if (phone.isNotEmpty) {
+      await CallHistoryDb.propagateContactName(
+        contactId: localId,
+        displayName: conflict.macosDisplayName,
+        phoneNumber: phone,
+      );
+    }
     _removeConflict(conflict);
   }
 
@@ -545,6 +594,17 @@ class ContactService extends ChangeNotifier {
       updates['thumbnail_path'] = conflict.macosThumbnailPath;
     }
     await CallHistoryDb.updateContact(localId, updates);
+    final mergedName =
+        updates['display_name'] as String? ?? conflict.macosDisplayName;
+    final mergedPhone =
+        updates['phone_number'] as String? ?? conflict.macosPhone;
+    if (mergedPhone.isNotEmpty) {
+      await CallHistoryDb.propagateContactName(
+        contactId: localId,
+        displayName: mergedName,
+        phoneNumber: mergedPhone,
+      );
+    }
     _removeConflict(conflict);
   }
 

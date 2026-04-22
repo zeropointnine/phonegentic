@@ -5937,6 +5937,17 @@ class AgentService extends ChangeNotifier {
     }
     if (phone.isEmpty) return 'No phone number provided and no active call.';
 
+    // Guard: never let the agent overwrite the manager's own contact name.
+    final managerPhone = _agentManagerConfig.phoneNumber;
+    if (managerPhone.isNotEmpty &&
+        CallHistoryDb.normalizePhone(phone) ==
+            CallHistoryDb.normalizePhone(managerPhone)) {
+      final managerName = _agentManagerConfig.name;
+      return 'That phone number belongs to the manager'
+          '${managerName.isNotEmpty ? ' ($managerName)' : ''}. '
+          'Contact not modified.';
+    }
+
     final name = args['display_name'] as String?;
     final email = args['email'] as String?;
     final company = args['company'] as String?;
@@ -5955,6 +5966,17 @@ class AgentService extends ChangeNotifier {
         await CallHistoryDb.updateContact(id, updates);
         await contactService?.loadAll();
 
+        final updatedName = (name != null && name.isNotEmpty)
+            ? name
+            : existing['display_name'] as String? ?? '';
+        if (updatedName.isNotEmpty && phone.isNotEmpty) {
+          await CallHistoryDb.propagateContactName(
+            contactId: id,
+            displayName: updatedName,
+            phoneNumber: phone,
+          );
+        }
+
         // Also update the remote speaker label if we just learned their name.
         if (name != null && name.isNotEmpty && _callPhase.isActive) {
           final rid = _remoteIdentity;
@@ -5968,7 +5990,7 @@ class AgentService extends ChangeNotifier {
       }
 
       final displayName = (name != null && name.isNotEmpty) ? name : phone;
-      await CallHistoryDb.insertContact(
+      final newId = await CallHistoryDb.insertContact(
         displayName: displayName,
         phoneNumber: phone,
         email: email,
@@ -5976,6 +5998,14 @@ class AgentService extends ChangeNotifier {
         notes: notes,
       );
       await contactService?.loadAll();
+
+      if (phone.isNotEmpty) {
+        await CallHistoryDb.propagateContactName(
+          contactId: newId,
+          displayName: displayName,
+          phoneNumber: phone,
+        );
+      }
 
       if (name != null && name.isNotEmpty && _callPhase.isActive) {
         final rid = _remoteIdentity;

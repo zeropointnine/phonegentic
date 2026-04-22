@@ -21,6 +21,7 @@ import 'contact_service.dart';
 import 'db/call_history_db.dart';
 import 'db/pocket_tts_voice_db.dart';
 import 'demo_mode_service.dart';
+import 'manager_presence_service.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
 import 'tear_sheet_service.dart';
@@ -87,6 +88,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   final ValueNotifier<String> _timeLabel = ValueNotifier<String>('00:00');
   bool _audioMuted = false;
   bool _softMute = false;
+  bool _softMuteBeforeAway = false;
+  bool _awaySoftMuteSaved = false;
   bool _videoMuted = false;
   bool _hold = false;
   bool _mirror = true;
@@ -208,7 +211,10 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     helper!.addSipUaHelperListener(this);
     _startTimer();
     _loadTtsConfig();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncCallState());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncCallState();
+      _initPresenceListener();
+    });
     _callConfirmTimer = Timer(const Duration(seconds: 2), () {
       if (mounted && !_callConfirmed) {
         debugPrint('[CallScreen] Delayed re-sync — _callConfirmed still false');
@@ -257,6 +263,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   @override
   void deactivate() {
+    _disposePresenceListener();
     _pulseController.dispose();
     _confLevelTimer?.cancel();
     _singleLevelTimer?.cancel();
@@ -893,6 +900,61 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     } catch (e) {
       debugPrint('[CallScreen] setMicMute failed: $e');
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Away-aware soft mute: mute mic when away, restore on return
+  // ---------------------------------------------------------------------------
+
+  ManagerPresenceService? _presence;
+  bool _wasAway = false;
+
+  void _initPresenceListener() {
+    _presence =
+        Provider.of<ManagerPresenceService>(context, listen: false);
+    _wasAway = _presence!.isAway;
+    _presence!.addListener(_onPresenceChanged);
+  }
+
+  void _disposePresenceListener() {
+    _presence?.removeListener(_onPresenceChanged);
+  }
+
+  void _onPresenceChanged() {
+    final away = _presence?.isAway ?? false;
+    if (away && !_wasAway) {
+      _softMuteForAway();
+    } else if (!away && _wasAway) {
+      _softUnmuteFromAway();
+    }
+    _wasAway = away;
+  }
+
+  void _softMuteForAway() {
+    _softMuteBeforeAway = _softMute;
+    _awaySoftMuteSaved = true;
+    if (!_softMute) {
+      _softMute = true;
+      setState(() {});
+      _tapChannel
+          .invokeMethod('setMicMute', {'muted': true})
+          .catchError((e) => debugPrint('[CallScreen] setMicMute failed: $e'));
+    }
+    debugPrint('[CallScreen] Soft-muted for away '
+        '(was ${_softMuteBeforeAway ? "muted" : "unmuted"})');
+  }
+
+  void _softUnmuteFromAway() {
+    if (!_awaySoftMuteSaved) return;
+    _awaySoftMuteSaved = false;
+    if (!_softMuteBeforeAway && _softMute) {
+      _softMute = false;
+      setState(() {});
+      _tapChannel
+          .invokeMethod('setMicMute', {'muted': false})
+          .catchError((e) => debugPrint('[CallScreen] setMicMute failed: $e'));
+    }
+    debugPrint('[CallScreen] Restored from away (softMute=$_softMute)');
   }
 
   void _muteVideo() {

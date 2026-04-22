@@ -403,11 +403,24 @@ class CallHistoryService extends ChangeNotifier {
   }) async {
     if (_activeCallRecordId != null) return;
     try {
+      // Resolve contact by phone so the record is linked from the start.
+      int? contactId;
+      String? displayName = remoteDisplayName;
+      if (remoteIdentity != null && remoteIdentity.isNotEmpty) {
+        final contact =
+            await CallHistoryDb.getContactByPhone(remoteIdentity);
+        if (contact != null) {
+          contactId = contact['id'] as int;
+          final cName = contact['display_name'] as String? ?? '';
+          if (cName.isNotEmpty) displayName = cName;
+        }
+      }
       _activeCallRecordId = await CallHistoryDb.insertCallRecord(
         direction: direction,
         remoteIdentity: remoteIdentity,
-        remoteDisplayName: remoteDisplayName,
+        remoteDisplayName: displayName,
         localIdentity: localIdentity,
+        contactId: contactId,
       );
       debugPrint('[CallHistory] Started record #$_activeCallRecordId');
     } catch (e) {
@@ -590,8 +603,10 @@ class CallHistoryService extends ChangeNotifier {
     if (_searchResults.isEmpty) return 'No calls found matching your criteria.';
 
     final lines = _searchResults.take(10).map((r) {
-      final name =
-          r['remote_display_name'] ?? r['remote_identity'] ?? 'Unknown';
+      final contactName = r['contact_name'] as String? ?? '';
+      final name = contactName.isNotEmpty
+          ? contactName
+          : (r['remote_display_name'] ?? r['remote_identity'] ?? 'Unknown');
       final dir = r['direction'] ?? '';
       final dur = (r['duration_seconds'] ?? 0) as int;
       final mins = dur ~/ 60;

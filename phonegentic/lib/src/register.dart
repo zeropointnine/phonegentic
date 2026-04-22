@@ -37,6 +37,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
   final Map<String, String> _wsExtraHeaders = {};
 
   ConferenceConfig _conf = const ConferenceConfig();
+  CallRecordingConfig _recording = const CallRecordingConfig();
   bool _requireHdCodecs = false;
 
   late SharedPreferences _preferences;
@@ -108,9 +109,11 @@ class _MyRegisterWidget extends State<RegisterWidget>
 
   Future<void> _loadConferenceConfig() async {
     final conf = await AgentConfigService.loadConferenceConfig();
+    final rec = await AgentConfigService.loadCallRecordingConfig();
     if (!mounted) return;
     setState(() {
       _conf = conf;
+      _recording = rec;
     });
   }
 
@@ -118,6 +121,11 @@ class _MyRegisterWidget extends State<RegisterWidget>
     setState(() => _conf = c);
     AgentConfigService.saveConferenceConfig(c);
     context.read<ConferenceService>().applyConfig(c);
+  }
+
+  void _updateRecording(CallRecordingConfig r) {
+    setState(() => _recording = r);
+    AgentConfigService.saveCallRecordingConfig(r);
   }
 
   void _saveSettings() {
@@ -352,6 +360,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   _buildConferenceCard(),
                   const SizedBox(height: 16),
                   _buildHdCodecCard(),
+                  const SizedBox(height: 16),
+                  _buildCallRecordingCard(),
                   if (!kIsWeb) ...[
                     const SizedBox(height: 16),
                     _buildTransportSelector(),
@@ -768,6 +778,85 @@ class _MyRegisterWidget extends State<RegisterWidget>
                     setState(() => _requireHdCodecs = v);
                     _preferences.setBool('require_hd_codecs', v);
                   },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCallRecordingCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'CALL RECORDING',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: _recording.autoRecord
+                        ? AppColors.red.withValues(alpha: 0.12)
+                        : AppColors.card,
+                  ),
+                  child: Icon(Icons.fiber_manual_record,
+                      size: 17,
+                      color: _recording.autoRecord
+                          ? AppColors.red
+                          : AppColors.textTertiary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Auto-record calls',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Automatically start recording when a call connects',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(
+                  height: 28,
+                  child: Switch.adaptive(
+                    value: _recording.autoRecord,
+                    onChanged: (v) =>
+                        _updateRecording(_recording.copyWith(autoRecord: v)),
+                    activeTrackColor: AppColors.red,
+                  ),
                 ),
               ],
             ),
