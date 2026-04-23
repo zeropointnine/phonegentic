@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' hide MessageType;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sip_ua/sip_ua.dart';
 
 import 'agent_config_service.dart';
@@ -1004,6 +1005,11 @@ class AgentService extends ChangeNotifier {
       // because _tts hadn't been created yet.
       _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
 
+      // Surface anything the manager missed while the app was offline —
+      // unanswered inbound SMS and overdue reminders. Deferred so the
+      // messaging service and tool registration finish wiring first.
+      Future.delayed(const Duration(seconds: 4), _reconcileOnStartup);
+
       debugPrint(
           '[AgentService] Started: model=${config.model} voice=${config.voice}');
     } catch (e) {
@@ -1353,6 +1359,11 @@ class AgentService extends ChangeNotifier {
       // only call updateVoiceId here (not _initTts again).
       _applyIntegrationTools();
       _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
+
+      // Surface anything the manager missed while the app was offline —
+      // unanswered inbound SMS and overdue reminders. Deferred so the
+      // messaging service and tool registration finish wiring first.
+      Future.delayed(const Duration(seconds: 4), _reconcileOnStartup);
 
       debugPrint('[AgentService] Local STT active: '
           'model=${_sttConfig!.whisperKitModelSize} '
@@ -4386,6 +4397,9 @@ class AgentService extends ChangeNotifier {
         case 'google_search':
           result = await _handleGoogleSearch(args);
           break;
+        case 'open_url':
+          result = await _handleOpenUrl(args);
+          break;
         case 'transfer_call':
           result = _handleTransferCall(args);
           break;
@@ -4561,6 +4575,9 @@ class AgentService extends ChangeNotifier {
         case 'google_search':
           result = await _handleGoogleSearch(req.arguments);
           break;
+        case 'open_url':
+          result = await _handleOpenUrl(req.arguments);
+          break;
         case 'transfer_call':
           result = _handleTransferCall(req.arguments);
           break;
@@ -4727,6 +4744,164 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] GitHub issue error: $e');
       return 'Error creating issue: $e';
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Startup reconciliation: unanswered SMS + overdue reminders
+  // ---------------------------------------------------------------------------
+
+  static const _reconcileLastAtKey = 'agent_reconcile_last_at_ms';
+
+  /// First-launch window: how far back to look when there's no previous
+  /// reconciliation timestamp. 24h keeps the LLM prompt small on cold starts
+  /// while still catching yesterday's unanswered texts.
+  static const _reconcileFirstRunWindow = Duration(hours: 24);
+
+  /// Maximum SMS threads / reminders rendered verbatim in the system event.
+  /// Anything beyond collapses into a "… and N more" line so the LLM request
+  /// stays small and readable.
+  static const _reconcileMaxItems = 8;
+
+  bool _reconcileDone = false;
+
+  /// Scan for work the manager missed while the app was offline and surface
+  /// a compact catch-up summary to the agent.
+  ///
+  ///   * Unanswered inbound SMS since the last reconciliation (threads whose
+  ///     latest message is inbound with no outbound reply after).
+  ///   * Reminders past their `remind_at` still in `status = 'pending'`.
+  ///
+  /// Runs once per session. Updates the persisted `last_at` timestamp on
+  /// success so the next launch only considers fresh items. Silently no-ops
+  /// when the agent is not live or there's nothing to report.
+  Future<void> _reconcileOnStartup() async {
+    if (_reconcileDone) return;
+    _reconcileDone = true;
+
+    if (!_active) {
+      debugPrint('[AgentService] Reconcile skipped — agent not active');
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastAtMs = prefs.getInt(_reconcileLastAtKey);
+      final since = lastAtMs != null
+          ? DateTime.fromMillisecondsSinceEpoch(lastAtMs)
+          : DateTime.now().subtract(_reconcileFirstRunWindow);
+
+      final unansweredRows =
+          await CallHistoryDb.getUnansweredInboundSms(since: since);
+      final overdueRows = await CallHistoryDb.getPendingReminders();
+
+      // Persist `now` as the new high-water mark regardless of whether we
+      // surface anything — a "nothing to report" outcome is still a
+      // successful reconciliation and should advance the window.
+      await prefs.setInt(
+          _reconcileLastAtKey, DateTime.now().millisecondsSinceEpoch);
+
+      if (unansweredRows.isEmpty && overdueRows.isEmpty) {
+        debugPrint('[AgentService] Reconcile: nothing missed since $since');
+        return;
+      }
+
+      final summary = _buildReconcileSummary(
+        since: since,
+        unanswered: unansweredRows,
+        overdueReminders: overdueRows,
+      );
+      if (summary == null) return;
+
+      debugPrint('[AgentService] Reconcile surfacing: '
+          '${unansweredRows.length} unanswered SMS, '
+          '${overdueRows.length} overdue reminder(s)');
+
+      sendSystemEvent(summary, requireResponse: true);
+    } catch (e) {
+      debugPrint('[AgentService] Reconcile failed: $e');
+    }
+  }
+
+  /// Render the catch-up summary. Caps each list at [_reconcileMaxItems] and
+  /// collapses the remainder to "(and N more)".
+  String? _buildReconcileSummary({
+    required DateTime since,
+    required List<Map<String, dynamic>> unanswered,
+    required List<Map<String, dynamic>> overdueReminders,
+  }) {
+    if (unanswered.isEmpty && overdueReminders.isEmpty) return null;
+
+    String relAgo(DateTime t) {
+      final d = DateTime.now().difference(t);
+      if (d.inDays > 0) return '${d.inDays}d ago';
+      if (d.inHours > 0) return '${d.inHours}h ago';
+      if (d.inMinutes > 0) return '${d.inMinutes}m ago';
+      return 'just now';
+    }
+
+    final buf = StringBuffer();
+    buf.write('[SYSTEM CATCH-UP] While the agent was offline since ');
+    buf.write(relAgo(since));
+    buf.write(', the following items accumulated. Brief the manager now: '
+        'acknowledge what arrived, offer to act on anything that clearly '
+        'needs a reply, and DO NOT auto-send replies without confirmation.');
+
+    if (unanswered.isNotEmpty) {
+      buf.writeln();
+      buf.writeln();
+      buf.write('UNANSWERED INBOUND SMS (${unanswered.length}):');
+      final shown = unanswered.take(_reconcileMaxItems);
+      for (final row in shown) {
+        final from = row['remote_phone'] as String? ?? 'unknown';
+        final contact = contactService?.lookupByPhone(from);
+        final name = (contact?['display_name'] as String?)?.trim();
+        final label =
+            (name != null && name.isNotEmpty) ? '$name ($from)' : from;
+        final bodyRaw = (row['body'] as String?)?.trim() ?? '';
+        final body = bodyRaw.length > 160
+            ? '${bodyRaw.substring(0, 160)}…'
+            : bodyRaw;
+        final createdAt = row['created_at'] as String?;
+        final ts = createdAt != null
+            ? relAgo(DateTime.parse(createdAt).toLocal())
+            : '?';
+        buf.writeln();
+        buf.write('  • $label [$ts]: "$body"');
+      }
+      if (unanswered.length > _reconcileMaxItems) {
+        buf.writeln();
+        buf.write('  (and ${unanswered.length - _reconcileMaxItems} '
+            'more unanswered thread(s) not shown)');
+      }
+    }
+
+    if (overdueReminders.isNotEmpty) {
+      buf.writeln();
+      buf.writeln();
+      buf.write('OVERDUE REMINDERS (${overdueReminders.length}):');
+      final shown = overdueReminders.take(_reconcileMaxItems);
+      for (final row in shown) {
+        final title = (row['title'] as String?)?.trim() ?? 'Reminder';
+        final desc = (row['description'] as String?)?.trim();
+        final remindAt = row['remind_at'] as String?;
+        final ts = remindAt != null
+            ? relAgo(DateTime.parse(remindAt).toLocal())
+            : '?';
+        buf.writeln();
+        if (desc != null && desc.isNotEmpty) {
+          buf.write('  • [$ts] $title — $desc');
+        } else {
+          buf.write('  • [$ts] $title');
+        }
+      }
+      if (overdueReminders.length > _reconcileMaxItems) {
+        buf.writeln();
+        buf.write('  (and ${overdueReminders.length - _reconcileMaxItems} '
+            'more overdue reminder(s) not shown)');
+      }
+    }
+
+    return buf.toString();
   }
 
   // ---------------------------------------------------------------------------
@@ -7127,6 +7302,57 @@ class AgentService extends ChangeNotifier {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Open URL tool handler
+  // ---------------------------------------------------------------------------
+
+  /// Open [args['url']] in the manager's default browser via `open <url>`.
+  ///
+  /// Guardrails:
+  ///   * Only `http` and `https` schemes are accepted — `file://`,
+  ///     `javascript:`, `chrome://`, etc. are refused so a remote party
+  ///     cannot coerce the agent into opening a local file or running JS.
+  ///   * The LLM is further instructed (via the tool description) to only
+  ///     invoke this when the MANAGER asks; URLs that surface in SMS or
+  ///     call transcripts must not be auto-opened.
+  Future<String> _handleOpenUrl(Map<String, dynamic> args) async {
+    final raw = (args['url'] as String?)?.trim();
+    if (raw == null || raw.isEmpty) {
+      return 'No URL provided.';
+    }
+
+    Uri uri;
+    try {
+      uri = Uri.parse(raw);
+    } on FormatException {
+      return 'Invalid URL: could not parse "$raw".';
+    }
+
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') {
+      return 'URL rejected: only http and https schemes are allowed '
+          '(got "${scheme.isEmpty ? 'none' : scheme}").';
+    }
+    if (uri.host.isEmpty) {
+      return 'URL rejected: host is empty.';
+    }
+
+    try {
+      final result = await Process.run('open', [uri.toString()]);
+      if (result.exitCode != 0) {
+        final stderr = result.stderr.toString().trim();
+        return 'Failed to open URL (exit ${result.exitCode})'
+            '${stderr.isEmpty ? '' : ': $stderr'}.';
+      }
+      debugPrint('[AgentService] open_url launched: $uri');
+      _addMsg(ChatMessage.system('Opened $uri in the browser.'));
+      notifyListeners();
+      return 'Opened $uri in the default browser.';
+    } catch (e) {
+      return 'Failed to open URL: ${e.toString().split('\n').first}';
+    }
+  }
+
   void announceRecording() {
     if (!_active) return;
     _whisper.sendSystemDirective(
@@ -8835,6 +9061,9 @@ class AgentService extends ChangeNotifier {
     _idleCallConfirmed = false;
     _levels.clear();
     _smsHistoryLoadedPhones.clear();
+    // Allow reconciliation to run again after a manual reconnect — the agent
+    // effectively came back online.
+    _reconcileDone = false;
     _resetVoiceUiSyncState();
     _streamingMessageId = null;
     _statusText = 'Reconnecting...';

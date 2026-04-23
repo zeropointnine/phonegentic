@@ -48,11 +48,110 @@ class _AgentPanelState extends State<AgentPanel> {
   final ScrollController _scrollController = ScrollController();
   bool _isDragging = false;
 
+  // ── Slash-command menu state ─────────────────────────────────────────────
+  //
+  // When the input text starts with `/` and has no space yet we treat the
+  // user as "command-hunting" and pop an in-panel overlay listing matching
+  // commands. `_slashFilter` is the raw leading token (e.g. "/no"); `null`
+  // means the menu is closed. `_slashIndex` is the highlighted row.
+  String? _slashFilter;
+  int _slashIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onInputChangedForSlash);
+  }
+
   @override
   void dispose() {
+    _controller.removeListener(_onInputChangedForSlash);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Slash-menu plumbing
+  // ---------------------------------------------------------------------------
+
+  void _onInputChangedForSlash() {
+    final text = _controller.text;
+    final trimmedLeft = text.trimLeft();
+
+    // Only "command-hunting" when the input begins with `/` and the user
+    // hasn't started typing a body yet (no whitespace after the slash).
+    if (!trimmedLeft.startsWith('/') ||
+        RegExp(r'\s').hasMatch(trimmedLeft)) {
+      if (_slashFilter != null) {
+        setState(() {
+          _slashFilter = null;
+          _slashIndex = 0;
+        });
+      }
+      return;
+    }
+
+    final nextMatches = _matchingCommands(trimmedLeft);
+    setState(() {
+      _slashFilter = trimmedLeft;
+      if (nextMatches.isEmpty) {
+        _slashIndex = 0;
+      } else if (_slashIndex >= nextMatches.length) {
+        _slashIndex = nextMatches.length - 1;
+      }
+    });
+  }
+
+  List<_SlashCommand> _matchingCommands(String filter) {
+    if (filter.isEmpty || filter == '/') return _kSlashCommands;
+    return _kSlashCommands.where((c) => c.matches(filter)).toList();
+  }
+
+  void _slashArrow(int delta) {
+    final matches = _matchingCommands(_slashFilter ?? '');
+    if (matches.isEmpty) return;
+    setState(() {
+      _slashIndex =
+          (_slashIndex + delta).clamp(0, matches.length - 1).toInt();
+    });
+  }
+
+  void _slashEscape() {
+    if (_slashFilter == null) return;
+    setState(() {
+      _slashFilter = null;
+      _slashIndex = 0;
+    });
+  }
+
+  void _slashSelect(AgentService agent) {
+    final matches = _matchingCommands(_slashFilter ?? '');
+    if (matches.isEmpty) return;
+    final cmd = matches[_slashIndex.clamp(0, matches.length - 1)];
+
+    if (cmd.takesBody) {
+      // Insert "/trigger " and keep focus so the manager types the body.
+      final inserted = '${cmd.trigger} ';
+      _controller.value = TextEditingValue(
+        text: inserted,
+        selection: TextSelection.collapsed(offset: inserted.length),
+      );
+      setState(() {
+        _slashFilter = null;
+        _slashIndex = 0;
+      });
+      AgentPanel.inputFocusNode?.requestFocus();
+    } else {
+      // Fire-and-forget command — set the input to the trigger and send
+      // through the normal path so existing `_expandCommand` logic runs.
+      _controller.text = cmd.trigger;
+      setState(() {
+        _slashFilter = null;
+        _slashIndex = 0;
+      });
+      _send(agent);
+    }
   }
 
   void _onDropDone(DropDoneDetails details, AgentService agent) {
@@ -259,6 +358,16 @@ class _AgentPanelState extends State<AgentPanel> {
                         _send(agent);
                       },
                     )),
+                    if (_slashFilter != null)
+                      _SlashMenu(
+                        commands: _matchingCommands(_slashFilter!),
+                        highlightedIndex: _slashIndex,
+                        onHover: (i) => setState(() => _slashIndex = i),
+                        onSelect: (i) {
+                          setState(() => _slashIndex = i);
+                          _slashSelect(agent);
+                        },
+                      ),
                     _InputBar(
                       controller: _controller,
                       onSend: () => _send(agent),
@@ -270,6 +379,11 @@ class _AgentPanelState extends State<AgentPanel> {
                       active: agent.active,
                       whisperMode: agent.whisperMode,
                       hasActiveCall: agent.hasActiveCall,
+                      slashMenuActive: _slashFilter != null &&
+                          _matchingCommands(_slashFilter!).isNotEmpty,
+                      onSlashArrow: _slashArrow,
+                      onSlashSelect: () => _slashSelect(agent),
+                      onSlashEscape: _slashEscape,
                     ),
                   ],
                 ),
@@ -2930,74 +3044,107 @@ class _UserBubble extends StatelessWidget {
   }
 }
 
+/// Full-width annotation bubble for `/w` / `/whisper` entries — sibling
+/// of `_NoteBubble`. The same two-panel aesthetic (left accent bar +
+/// header chip) so whispers read as a distinct channel at a glance,
+/// themed via `AppColors.burntAmber` (amber on VT-100, purple on Miami).
 class _WhisperBubble extends StatelessWidget {
   final ChatMessage message;
   const _WhisperBubble({required this.message});
 
   @override
   Widget build(BuildContext context) {
+    final whisperColor = AppColors.burntAmber;
+    final bodyColor = whisperColor.withValues(alpha: 0.07);
+    final borderColor = whisperColor.withValues(alpha: 0.30);
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(width: 40),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_formatTime(message.timestamp),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: AppColors.textTertiary.withValues(alpha: 0.5),
-                        )),
-                    const SizedBox(width: 6),
-                    Icon(Icons.hearing_disabled,
-                        size: 10,
-                        color: AppColors.burntAmber.withValues(alpha: 0.6)),
-                    const SizedBox(width: 3),
-                    Text('W',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.burntAmber.withValues(alpha: 0.6),
-                        )),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppColors.bg.withValues(alpha: 0.6),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(14),
-                      topRight: Radius.circular(4),
-                      bottomLeft: Radius.circular(14),
-                      bottomRight: Radius.circular(14),
-                    ),
-                    border: Border.all(
-                        color: AppColors.burntAmber.withValues(alpha: 0.15),
-                        width: 0.5),
-                  ),
-                  child: Text(
-                    message.text,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textTertiary,
-                      fontStyle: FontStyle.italic,
-                      height: 1.45,
-                    ),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          color: bodyColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: borderColor, width: 0.5),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 3,
+                decoration: BoxDecoration(
+                  color: whisperColor,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(10),
+                    bottomLeft: Radius.circular(10),
                   ),
                 ),
-              ],
-            ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.hearing_disabled_outlined,
+                              size: 13, color: whisperColor),
+                          const SizedBox(width: 6),
+                          Text(
+                            'WHISPER',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.1,
+                              color: whisperColor,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: whisperColor.withValues(alpha: 0.4),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatTime(message.timestamp),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.textTertiary
+                                  .withValues(alpha: 0.75),
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(Icons.voice_over_off_rounded,
+                              size: 11,
+                              color: whisperColor.withValues(alpha: 0.55)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        message.text,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color:
+                              AppColors.textPrimary.withValues(alpha: 0.88),
+                          fontStyle: FontStyle.italic,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -3811,6 +3958,14 @@ class _InputBar extends StatefulWidget {
   final bool whisperMode;
   final bool hasActiveCall;
 
+  // Slash-menu delegation. When [slashMenuActive] is true, arrow-up/down,
+  // enter, and escape are intercepted and routed to the parent's menu
+  // handlers instead of the normal send-on-enter path.
+  final bool slashMenuActive;
+  final void Function(int delta)? onSlashArrow;
+  final VoidCallback? onSlashSelect;
+  final VoidCallback? onSlashEscape;
+
   const _InputBar({
     required this.controller,
     required this.onSend,
@@ -3820,6 +3975,10 @@ class _InputBar extends StatefulWidget {
     required this.active,
     this.whisperMode = false,
     this.hasActiveCall = false,
+    this.slashMenuActive = false,
+    this.onSlashArrow,
+    this.onSlashSelect,
+    this.onSlashEscape,
   });
 
   @override
@@ -3852,6 +4011,29 @@ class _InputBarState extends State<_InputBar> {
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    // When the slash menu is open, intercept navigation keys so the user
+    // can pick a command without the keystrokes reaching the TextField or
+    // firing the normal send-on-enter path.
+    if (widget.slashMenuActive && event is KeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        widget.onSlashArrow?.call(1);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        widget.onSlashArrow?.call(-1);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.enter &&
+          !HardwareKeyboard.instance.isShiftPressed) {
+        widget.onSlashSelect?.call();
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.escape) {
+        widget.onSlashEscape?.call();
+        return KeyEventResult.handled;
+      }
+    }
+
     if (event is KeyDownEvent &&
         event.logicalKey == LogicalKeyboardKey.enter &&
         !HardwareKeyboard.instance.isShiftPressed) {
@@ -4338,6 +4520,328 @@ class _InlineRecordingBubbleState extends State<_InlineRecordingBubble> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slash-command catalog & overlay
+// ---------------------------------------------------------------------------
+
+/// A single slash-command registered in the agent panel menu.
+///
+/// The menu is the only surface that enumerates commands — actual
+/// dispatch still flows through `_AgentPanelState._send` so the command
+/// strings here must match the branches there exactly.
+class _SlashCommand {
+  final String trigger;
+  final String label;
+  final String description;
+  final IconData icon;
+
+  /// Theme-aware accent for the row's leading glyph. A callback (rather
+  /// than a `Color`) so the row adapts when the user switches theme.
+  final Color Function() colorFn;
+
+  /// `true` → selecting the command inserts `"$trigger "` and keeps focus
+  /// in the input for the manager to type the body.
+  /// `false` → selecting the command fills the input with `trigger` and
+  /// immediately fires send, running through the existing `_expandCommand`
+  /// path in `_AgentPanelState._send`.
+  final bool takesBody;
+
+  /// Extra triggers that also match (case-insensitive, prefix).
+  final List<String> aliases;
+
+  const _SlashCommand({
+    required this.trigger,
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.colorFn,
+    this.takesBody = false,
+    this.aliases = const [],
+  });
+
+  bool matches(String filter) {
+    if (filter.isEmpty) return true;
+    final f = filter.toLowerCase();
+    if (trigger.toLowerCase().startsWith(f)) return true;
+    for (final a in aliases) {
+      if (a.toLowerCase().startsWith(f)) return true;
+    }
+    return false;
+  }
+}
+
+final List<_SlashCommand> _kSlashCommands = [
+  _SlashCommand(
+    trigger: '/note',
+    label: 'Note',
+    description: 'Private annotation. Never sent to the LLM, never spoken.',
+    icon: Icons.sticky_note_2_outlined,
+    colorFn: () => AppColors.orange,
+    takesBody: true,
+  ),
+  _SlashCommand(
+    trigger: '/whisper',
+    label: 'Whisper',
+    description:
+        'Discreetly guide the agent — nudges behavior without speaking.',
+    icon: Icons.hearing_disabled_outlined,
+    colorFn: () => AppColors.burntAmber,
+    takesBody: true,
+    aliases: ['/w'],
+  ),
+  _SlashCommand(
+    trigger: '/ready',
+    label: 'Ready',
+    description: 'Tell the agent the remote party is on the line now.',
+    icon: Icons.check_circle_outline,
+    colorFn: () => AppColors.green,
+  ),
+  _SlashCommand(
+    trigger: '/speakers',
+    label: 'Identify speakers',
+    description: 'Ask the agent who is on the call right now.',
+    icon: Icons.groups_2_outlined,
+    colorFn: () => AppColors.accent,
+  ),
+  _SlashCommand(
+    trigger: '/trivia',
+    label: 'Trivia',
+    description: 'Kick off a trivia game with the caller.',
+    icon: Icons.quiz_outlined,
+    colorFn: () => AppColors.accent,
+  ),
+  _SlashCommand(
+    trigger: '/score',
+    label: 'Score',
+    description: 'Ask for the current trivia score.',
+    icon: Icons.scoreboard_outlined,
+    colorFn: () => AppColors.accent,
+  ),
+  _SlashCommand(
+    trigger: '/stttest',
+    label: 'STT accuracy test',
+    description: 'Run the nursery-rhyme speech-to-text diagnostic.',
+    icon: Icons.record_voice_over_outlined,
+    colorFn: () => AppColors.accentLight,
+  ),
+];
+
+/// Themed dropdown that sits directly above the input bar and shows the
+/// list of slash commands matching the current filter. Matches the visual
+/// language of the rest of the panel (AppColors tokens, 0.5px borders,
+/// HoverButton-style hover tint) so it feels native rather than bolted on.
+class _SlashMenu extends StatelessWidget {
+  final List<_SlashCommand> commands;
+  final int highlightedIndex;
+  final void Function(int index) onHover;
+  final void Function(int index) onSelect;
+
+  const _SlashMenu({
+    required this.commands,
+    required this.highlightedIndex,
+    required this.onHover,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (commands.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      constraints: const BoxConstraints(maxHeight: 260),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 0.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(10),
+                topRight: Radius.circular(10),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.6),
+                  width: 0.5,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.bolt_outlined,
+                    size: 12,
+                    color: AppColors.textTertiary.withValues(alpha: 0.8)),
+                const SizedBox(width: 6),
+                Text(
+                  'Skills',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.1,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${commands.length}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textTertiary.withValues(alpha: 0.7),
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Flexible(
+            child: ListView.builder(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: commands.length,
+              itemBuilder: (context, i) {
+                return _SlashMenuRow(
+                  command: commands[i],
+                  highlighted: i == highlightedIndex,
+                  onHover: () => onHover(i),
+                  onTap: () => onSelect(i),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SlashMenuRow extends StatelessWidget {
+  final _SlashCommand command;
+  final bool highlighted;
+  final VoidCallback onHover;
+  final VoidCallback onTap;
+
+  const _SlashMenuRow({
+    required this.command,
+    required this.highlighted,
+    required this.onHover,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final rowColor = command.colorFn();
+    final bg = highlighted
+        ? AppColors.accent.withValues(alpha: 0.10)
+        : Colors.transparent;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => onHover(),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: rowColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(
+                    color: rowColor.withValues(alpha: 0.28),
+                    width: 0.5,
+                  ),
+                ),
+                child: Icon(command.icon, size: 13, color: rowColor),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RichText(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      text: TextSpan(
+                        children: [
+                          TextSpan(
+                            text: command.trigger,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          TextSpan(
+                            text: '  ${command.label}',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.textTertiary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      command.description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: AppColors.textTertiary.withValues(alpha: 0.9),
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (highlighted) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.subdirectory_arrow_left_rounded,
+                    size: 13,
+                    color:
+                        AppColors.textTertiary.withValues(alpha: 0.65)),
+              ],
+            ],
+          ),
         ),
       ),
     );

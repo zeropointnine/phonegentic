@@ -1637,6 +1637,48 @@ class CallHistoryDb {
     return (result.first['cnt'] as int?) ?? 0;
   }
 
+  /// Inbound SMS rows that have no outbound reply in the same thread.
+  ///
+  /// Used by startup reconciliation to surface messages the agent/manager
+  /// never responded to. Windowed by [since] (inclusive) so each startup
+  /// considers only messages that arrived after the previous reconciliation.
+  ///
+  /// The thread-deletion table is respected: a message from a deleted thread
+  /// is skipped unless it arrived after the deletion timestamp.
+  ///
+  /// Returns one row per inbound message (not per thread). Order: newest
+  /// first. Caller typically wants to collapse by `remote_phone`.
+  static Future<List<Map<String, dynamic>>> getUnansweredInboundSms({
+    DateTime? since,
+    int limit = 50,
+  }) async {
+    final db = await database;
+    final sinceIso = (since ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .toUtc()
+        .toIso8601String();
+    return db.rawQuery(
+      '''
+      SELECT m.*
+      FROM sms_messages m
+      LEFT JOIN sms_thread_deletes d ON d.remote_phone = m.remote_phone
+      WHERE m.direction = 'inbound'
+        AND m.is_deleted = 0
+        AND m.created_at >= ?
+        AND m.created_at > COALESCE(d.deleted_at, '')
+        AND NOT EXISTS (
+          SELECT 1 FROM sms_messages o
+          WHERE o.remote_phone = m.remote_phone
+            AND o.direction = 'outbound'
+            AND o.is_deleted = 0
+            AND o.created_at > m.created_at
+        )
+      ORDER BY m.created_at DESC
+      LIMIT ?
+      ''',
+      [sinceIso, limit],
+    );
+  }
+
   static Future<List<Map<String, dynamic>>> searchSmsMessages(
       String query,
       {int limit = 50}) async {
