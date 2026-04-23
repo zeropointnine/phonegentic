@@ -1058,48 +1058,64 @@ class _MessageBubble extends StatelessWidget {
     final align =
         _isOutbound ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
+    final hasText = message.text.isNotEmpty;
+    final hasMedia = message.mediaUrls.isNotEmpty;
+
+    // The context overlay measures + snapshots whatever widget [bubbleKey]
+    // is attached to. When a message has text the key lives on the text
+    // bubble (so the overlay anchors around the text). When a message is
+    // image-only the key must move to the media block — otherwise the key
+    // has no current context and the overlay silently refuses to open,
+    // which is exactly what made image-only bubbles feel "dead" to
+    // right-click / long-press.
+    final bool keyOnMedia = hasMedia && !hasText;
+
+    Widget mediaBlock = Padding(
+      padding: EdgeInsets.only(
+        left: _isOutbound ? 60 : 0,
+        right: _isOutbound ? 0 : 60,
+        bottom: 4,
+      ),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        alignment: _isOutbound ? WrapAlignment.end : WrapAlignment.start,
+        children: message.mediaUrls
+            .map((url) => ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    url,
+                    width: 180,
+                    height: 180,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 180,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        color: AppColors.card,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Center(
+                        child: Icon(Icons.broken_image_rounded,
+                            size: 24, color: AppColors.textTertiary),
+                      ),
+                    ),
+                  ),
+                ))
+            .toList(),
+      ),
+    );
+    if (keyOnMedia) {
+      mediaBlock = RepaintBoundary(key: bubbleKey, child: mediaBlock);
+    }
+
     Widget bubbleContent = Column(
       crossAxisAlignment: align,
       children: [
-        if (message.mediaUrls.isNotEmpty)
-          Padding(
-            padding: EdgeInsets.only(
-              left: _isOutbound ? 60 : 0,
-              right: _isOutbound ? 0 : 60,
-              bottom: 4,
-            ),
-            child: Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              alignment: _isOutbound ? WrapAlignment.end : WrapAlignment.start,
-              children: message.mediaUrls
-                  .map((url) => ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          url,
-                          width: 180,
-                          height: 180,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 180,
-                            height: 60,
-                            decoration: BoxDecoration(
-                              color: AppColors.card,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Center(
-                              child: Icon(Icons.broken_image_rounded,
-                                  size: 24, color: AppColors.textTertiary),
-                            ),
-                          ),
-                        ),
-                      ))
-                  .toList(),
-            ),
-          ),
+        if (hasMedia) mediaBlock,
         if (replyParent != null)
           _buildReplyQuote(context, replyParent!),
-        if (message.text.isNotEmpty)
+        if (hasText)
           _buildBubbleWithReactionBadges(
             context: context,
             bubbleColor: bubbleColor,
