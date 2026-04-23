@@ -55,6 +55,7 @@ class AudioTapChannel: NSObject {
              "getHostSpeakerEmbedding",
              "resetSpeakerIdentifier",
              "getRemoteSpeakerEmbedding",
+             "getRawRemoteEmbedding",
              "startCallRecording",
              "stopCallRecording",
              "startVoiceSample",

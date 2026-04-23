@@ -195,6 +195,8 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             result(nil)
         case "getRemoteSpeakerEmbedding":
             result(SpeakerIdentifier.shared.getRemoteSpeakerEmbedding())
+        case "getRawRemoteEmbedding":
+            result(SpeakerIdentifier.shared.getRawRemoteEmbedding())
         case "startCallRecording":
             let args = call.arguments as? [String: Any] ?? [:]
             let path = args["path"] as? String ?? ""

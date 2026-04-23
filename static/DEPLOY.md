@@ -201,4 +201,12 @@ scp static/bootstrap_server.sh root@phonegentic.ai:~ && \
   ssh root@phonegentic.ai "bash ~/bootstrap_server.sh"
 ```
 
+```bash
+ssh root@phonegentic.ai "journalctl -u static_server -f"
+```
+
+```bash
+ssh root@phonegentic.ai "journalctl -u static_server -n 100 --no-pager
+```
+
 This installs Rust, creates `/var/html`, and builds the initial binary.

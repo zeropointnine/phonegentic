@@ -24,6 +24,7 @@ static const char* kMethodRegisterHostSpeaker = "registerHostSpeaker";
 static const char* kMethodGetHostSpeakerEmbedding = "getHostSpeakerEmbedding";
 static const char* kMethodResetSpeakerIdentifier = "resetSpeakerIdentifier";
 static const char* kMethodGetRemoteSpeakerEmbedding = "getRemoteSpeakerEmbedding";
+static const char* kMethodGetRawRemoteEmbedding = "getRawRemoteEmbedding";
 static const char* kMethodGetDominantSpeaker = "getDominantSpeaker";
 
 // Audio configuration
@@ -604,6 +605,10 @@ static void method_call_handler(FlMethodChannel* channel, FlMethodCall* method_c
     response = reset_speaker_identifier();
   } else if (strcmp(method, kMethodGetRemoteSpeakerEmbedding) == 0) {
     response = get_remote_speaker_embedding();
+  } else if (strcmp(method, kMethodGetRawRemoteEmbedding) == 0) {
+    g_debug("[AudioTap] getRawRemoteEmbedding - not implemented on Linux");
+    g_autoptr(FlValue) null_result = fl_value_new_null();
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(null_result));
   } else if (strcmp(method, kMethodGetDominantSpeaker) == 0) {
     response = get_dominant_speaker();
   } else {

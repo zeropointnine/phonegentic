@@ -207,6 +207,20 @@ class WhisperRealtimeService {
     }
   }
 
+  /// Retrieve the last raw embedding extracted from remote audio, independent
+  /// of speaker identification. Always reflects the actual caller's voice.
+  Future<List<double>?> getRawRemoteEmbedding() async {
+    try {
+      final result =
+          await _methodChannel.invokeMethod<List>('getRawRemoteEmbedding');
+      if (result == null) return null;
+      return result.cast<double>();
+    } catch (e) {
+      debugPrint('[Whisper] getRawRemoteEmbedding failed: $e');
+      return null;
+    }
+  }
+
   List<Map<String, dynamic>> _extraTools = [];
 
   /// Register additional tools (e.g. from 3rd-party integrations) before

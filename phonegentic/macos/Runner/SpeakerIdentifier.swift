@@ -51,6 +51,10 @@ final class SpeakerIdentifier {
     private var lastRemoteCandidate = ""
     private var lastHostCandidate = ""
 
+    /// Last raw embedding extracted from remote audio, stored before
+    /// assignSpeaker runs so it always reflects the actual caller's voice.
+    private var lastRawRemoteEmbedding: [Float]?
+
     /// Agent TTS voiceprint for self-suppression.
     private var agentEmbedding: [Float]?
     private var agentExtractionInProgress = false
@@ -238,6 +242,10 @@ final class SpeakerIdentifier {
                 }
                 if !isRemote {
                     self.lastMicIsAgentVoice = false
+                }
+
+                if isRemote {
+                    self.lastRawRemoteEmbedding = embedding
                 }
 
                 let result = diarizer.speakerManager.assignSpeaker(
@@ -456,6 +464,12 @@ final class SpeakerIdentifier {
         return nil
     }
 
+    /// Returns the last raw embedding extracted from remote audio, independent
+    /// of speaker identification. Always reflects the actual caller's voice.
+    func getRawRemoteEmbedding() -> [Double]? {
+        return lastRawRemoteEmbedding?.map { Double($0) }
+    }
+
     /// Returns the latest embedding for the identified host speaker, if any.
     /// Used to capture the host's voiceprint for storage.
     func getHostSpeakerEmbedding() -> [Double]? {
@@ -508,6 +522,7 @@ final class SpeakerIdentifier {
         hostConsecutiveHits = 0
         lastRemoteCandidate = ""
         lastHostCandidate = ""
+        lastRawRemoteEmbedding = nil
     }
 
     // MARK: - Audio Conversion

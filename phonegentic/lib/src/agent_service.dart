@@ -2667,6 +2667,11 @@ class AgentService extends ChangeNotifier {
 
   /// Save the remote party's voiceprint embedding to SQLite for future
   /// identification, if we have both a known contact and an embedding.
+  ///
+  /// Uses the raw remote embedding (actual caller audio) rather than the
+  /// identified speaker's stored embedding. Also guards against cross-contact
+  /// contamination: if SpeakerID identified a different contact's name, the
+  /// save is skipped.
   Future<void> _saveRemoteVoiceprint() async {
     try {
       final rid = _remoteIdentity;
@@ -2674,9 +2679,23 @@ class AgentService extends ChangeNotifier {
 
       final contact = contactService?.lookupByPhone(rid);
       final contactId = contact?['id'] as int?;
+      final contactName = contact?['display_name'] as String? ?? '';
       if (contactId == null) return;
 
-      final embedding = await _whisper.getRemoteSpeakerEmbedding();
+      final speakerInfo = await _whisper.getSpeakerInfo();
+      final identifiedName = speakerInfo['identity'] as String? ?? '';
+
+      if (identifiedName.isNotEmpty &&
+          contactName.isNotEmpty &&
+          identifiedName != contactName) {
+        debugPrint(
+            '[AgentService] Voiceprint save BLOCKED: SpeakerID identified '
+            '"$identifiedName" but contact is "$contactName" — '
+            'skipping to prevent cross-contamination');
+        return;
+      }
+
+      final embedding = await _whisper.getRawRemoteEmbedding();
       if (embedding == null || embedding.isEmpty) return;
 
       await CallHistoryDb.upsertSpeakerEmbedding(
