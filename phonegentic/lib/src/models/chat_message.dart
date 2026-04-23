@@ -2,7 +2,7 @@ import 'dart:convert';
 
 enum ChatRole { user, agent, host, remoteParty, system }
 
-enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms, reminder }
+enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms, reminder, note }
 
 class MessageAction {
   final String label;
@@ -96,6 +96,18 @@ class ChatMessage {
       : id = id ?? _uid(),
         role = ChatRole.user,
         type = MessageType.whisper,
+        timestamp = DateTime.now(),
+        speakerName = null,
+        isStreaming = false,
+        actions = const [];
+
+  /// A private, read-only note entered by the manager via the `/note`
+  /// command. Notes are **never** sent to the LLM — they live purely in the
+  /// transcript as UI annotations.
+  ChatMessage.note(this.text, {String? id, this.metadata})
+      : id = id ?? _uid(),
+        role = ChatRole.user,
+        type = MessageType.note,
         timestamp = DateTime.now(),
         speakerName = null,
         isStreaming = false,

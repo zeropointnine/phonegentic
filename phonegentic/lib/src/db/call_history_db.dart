@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -34,7 +35,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 20,
+        version: 21,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -77,7 +78,8 @@ class CallHistoryDb {
         duration_seconds INTEGER DEFAULT 0,
         recording_path TEXT,
         parent_call_id INTEGER REFERENCES call_records(id),
-        notes TEXT
+        notes TEXT,
+        job_function_id INTEGER REFERENCES job_functions(id)
       )
     ''');
 
@@ -267,6 +269,13 @@ class CallHistoryDb {
         'ALTER TABLE job_functions ADD COLUMN pocket_tts_voice_id INTEGER',
       );
     }
+
+    if (oldVersion < 21) {
+      await db.execute(
+        'ALTER TABLE call_records ADD COLUMN job_function_id INTEGER '
+        'REFERENCES job_functions(id)',
+      );
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -436,6 +445,7 @@ class CallHistoryDb {
     String? remoteDisplayName,
     String? localIdentity,
     int? contactId,
+    int? jobFunctionId,
   }) async {
     final db = await database;
     return db.insert('call_records', {
@@ -445,8 +455,54 @@ class CallHistoryDb {
       'remote_display_name': remoteDisplayName,
       'local_identity': localIdentity,
       'contact_id': contactId,
+      'job_function_id': jobFunctionId,
       'started_at': DateTime.now().toIso8601String(),
     });
+  }
+
+  /// Update the job_function_id on an active call record — used when a
+  /// transfer-rule or calendar-rule switches the persona mid-call.
+  static Future<void> updateCallJobFunction(int id, int? jobFunctionId) async {
+    final db = await database;
+    await db.update(
+      'call_records',
+      {'job_function_id': jobFunctionId},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Look up the most recent completed call with [remoteIdentity] that was
+  /// handled by a specific job function. Used to provide persona continuity
+  /// when the same remote party calls back — the agent answers as the same
+  /// persona that spoke with them last.
+  ///
+  /// Returns a row with all call_records columns plus `jf_agent_name` and
+  /// `jf_title` if a match is found within [since], or null otherwise.
+  static Future<Map<String, dynamic>?> getMostRecentCallWithPersona(
+    String remoteIdentity, {
+    DateTime? since,
+  }) async {
+    final db = await database;
+    final where = <String>[
+      'cr.remote_identity = ?',
+      'cr.job_function_id IS NOT NULL',
+      "cr.status != 'active'",
+    ];
+    final args = <dynamic>[remoteIdentity];
+    if (since != null) {
+      where.add('cr.started_at >= ?');
+      args.add(since.toIso8601String());
+    }
+    final rows = await db.rawQuery('''
+      SELECT cr.*, jf.agent_name AS jf_agent_name, jf.name AS jf_title
+      FROM call_records cr
+      LEFT JOIN job_functions jf ON jf.id = cr.job_function_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY cr.started_at DESC
+      LIMIT 1
+    ''', args);
+    return rows.isNotEmpty ? rows.first : null;
   }
 
   static Future<void> finalizeCallRecord(
@@ -618,9 +674,12 @@ class CallHistoryDb {
     final whereClause = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
     return db.rawQuery('''
       SELECT cr.*, c.display_name AS contact_name,
-             c.thumbnail_path AS contact_thumbnail
+             c.thumbnail_path AS contact_thumbnail,
+             jf.agent_name AS jf_agent_name,
+             jf.name AS jf_title
       FROM call_records cr
       LEFT JOIN contacts c ON c.id = cr.contact_id
+      LEFT JOIN job_functions jf ON jf.id = cr.job_function_id
       $whereClause
       ORDER BY cr.started_at DESC
       LIMIT ?
@@ -686,10 +745,13 @@ class CallHistoryDb {
 
     return db.rawQuery('''
       SELECT DISTINCT cr.*, c.display_name AS contact_name,
-             c.thumbnail_path AS contact_thumbnail
+             c.thumbnail_path AS contact_thumbnail,
+             jf.agent_name AS jf_agent_name,
+             jf.name AS jf_title
       FROM call_records cr
       INNER JOIN call_transcripts ct ON ct.call_record_id = cr.id
       LEFT JOIN contacts c ON c.id = cr.contact_id
+      LEFT JOIN job_functions jf ON jf.id = cr.job_function_id
       WHERE ${where.join(' AND ')}
       ORDER BY cr.started_at DESC
       LIMIT ?
@@ -1784,6 +1846,24 @@ class CallHistoryDb {
     await db.update(
       'session_messages',
       {'text': text},
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  /// Overwrite a session message's stored metadata. Used by the `/note`
+  /// pending-attachment flow to transition from pending → finalized without
+  /// rewriting the whole row.
+  static Future<void> updateSessionMessageMetadata(
+      String messageId, Map<String, dynamic>? metadata) async {
+    final db = await database;
+    await db.update(
+      'session_messages',
+      {
+        'metadata_json': (metadata != null && metadata.isNotEmpty)
+            ? jsonEncode(metadata)
+            : null,
+      },
       where: 'message_id = ?',
       whereArgs: [messageId],
     );

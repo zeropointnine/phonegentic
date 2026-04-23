@@ -400,6 +400,7 @@ class CallHistoryService extends ChangeNotifier {
     String? remoteIdentity,
     String? remoteDisplayName,
     String? localIdentity,
+    int? jobFunctionId,
   }) async {
     if (_activeCallRecordId != null) return;
     try {
@@ -421,10 +422,45 @@ class CallHistoryService extends ChangeNotifier {
         remoteDisplayName: displayName,
         localIdentity: localIdentity,
         contactId: contactId,
+        jobFunctionId: jobFunctionId,
       );
-      debugPrint('[CallHistory] Started record #$_activeCallRecordId');
+      debugPrint('[CallHistory] Started record #$_activeCallRecordId '
+          '(jf=$jobFunctionId)');
     } catch (e) {
       debugPrint('[CallHistory] Failed to start record: $e');
+    }
+  }
+
+  /// Update the active call's job_function_id — for mid-call persona
+  /// switches triggered by transfer rules or calendar auto-switching.
+  Future<void> updateActiveCallJobFunction(int? jobFunctionId) async {
+    final id = _activeCallRecordId;
+    if (id == null) return;
+    try {
+      await CallHistoryDb.updateCallJobFunction(id, jobFunctionId);
+      debugPrint(
+          '[CallHistory] Updated record #$id job_function_id=$jobFunctionId');
+    } catch (e) {
+      debugPrint('[CallHistory] Failed to update job_function_id: $e');
+    }
+  }
+
+  /// Look up the most recent completed call with [remoteIdentity] that was
+  /// handled by a specific persona (job function) within [since]. Used by
+  /// AgentService to preserve persona continuity when the same remote party
+  /// calls back after a recent outbound conversation.
+  Future<Map<String, dynamic>?> findRecentCallWithPersona(
+    String remoteIdentity, {
+    Duration since = const Duration(hours: 2),
+  }) async {
+    try {
+      return await CallHistoryDb.getMostRecentCallWithPersona(
+        remoteIdentity,
+        since: DateTime.now().subtract(since),
+      );
+    } catch (e) {
+      debugPrint('[CallHistory] findRecentCallWithPersona failed: $e');
+      return null;
     }
   }
 

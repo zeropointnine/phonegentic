@@ -61,17 +61,17 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     // noSpeechThreshold: model's no-speech probability above which the result is
     //   discarded.  Lower = stricter (default WhisperKit: 0.6).
     //   TODO: expose in Settings > Agents.
-    private static let noSpeechThreshold: Float? = nil  // nil = use WhisperKit default (0.6)
+    private static let noSpeechThreshold: Float? = 0.4  // stricter than default 0.6 — silence produces "Thank God" hallucinations
     //
     // logProbThreshold: average token log-probability below which the result is
     //   discarded.  Higher (less negative) = stricter (default WhisperKit: -1.0).
     //   TODO: expose in Settings > Agents.
-    private static let logProbThreshold: Float? = nil  // nil = use WhisperKit default (-1.0)
+    private static let logProbThreshold: Float? = -0.6  // stricter than default -1.0 — hallucinations have low avg log-prob
     //
     // compressionRatioThreshold: repetition ratio above which the result is
     //   discarded (catches looping hallucinations).  Lower = stricter
     //   (default WhisperKit: 2.4).  TODO: expose in Settings > Agents.
-    private static let compressionRatioThreshold: Float? = nil  // nil = use WhisperKit default (2.4)
+    private static let compressionRatioThreshold: Float? = 1.8  // stricter than default 2.4 — "Thank God. Thank God." has very high compression ratio
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Tail of the previous transcription buffer, prepended to the next buffer

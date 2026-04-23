@@ -136,7 +136,13 @@ class TranscriptExporter {
       String label;
       switch (msg.role) {
         case ChatRole.user:
-          label = msg.type == MessageType.whisper ? 'Whisper' : 'You';
+          if (msg.type == MessageType.note) {
+            label = 'NOTE';
+          } else if (msg.type == MessageType.whisper) {
+            label = 'Whisper';
+          } else {
+            label = 'You';
+          }
           break;
         case ChatRole.agent:
           label = 'AI';

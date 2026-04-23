@@ -67,6 +67,7 @@ class WhisperKitSttService {
 
       _transcriptSub = _transcriptChannel.receiveBroadcastStream().listen(
         (data) {
+          if (_transcriptionController.isClosed) return;
           if (data is Map) {
             final warning = data['warning'] as String?;
             if (warning != null) {

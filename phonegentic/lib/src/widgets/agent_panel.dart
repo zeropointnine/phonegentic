@@ -142,12 +142,22 @@ class _AgentPanelState extends State<AgentPanel> {
       return;
     }
 
+    // /note — private transcript annotation, never sent to the LLM.
+    final lower = text.toLowerCase();
+    if (lower.startsWith('/note ') || lower.startsWith('/note\n')) {
+      final body = text.substring(5).trim();
+      if (body.isNotEmpty) agent.addNote(body);
+      return;
+    }
+    if (lower == '/note') {
+      return;
+    }
+
     if (agent.whisperMode) {
       agent.sendWhisperMessage(text);
       return;
     }
 
-    final lower = text.toLowerCase();
     if (lower.startsWith('/w ') || lower.startsWith('/whisper ')) {
       final body = text.substring(text.indexOf(' ') + 1).trim();
       if (body.isNotEmpty) agent.sendWhisperMessage(body);
@@ -2430,6 +2440,12 @@ class _MessageBubble extends StatelessWidget {
       child = _CallStatePill(text: message.text);
     } else if (message.type == MessageType.whisper) {
       child = _WhisperBubble(message: message);
+    } else if (message.type == MessageType.note) {
+      if (message.metadata?['pending_attachment'] == true) {
+        child = _PendingNoteBubble(message: message);
+      } else {
+        child = _NoteBubble(message: message);
+      }
     } else if (message.type == MessageType.attachment) {
       child = _AttachmentBubble(message: message);
     } else if (message.type == MessageType.reminder) {
@@ -2981,6 +2997,461 @@ class _WhisperBubble extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Slick, full-width annotation bubble for `/note` entries — styled as a
+/// warm sticky-note with a left accent bar, pin icon, and NOTE chip so it
+/// reads as a first-class annotation rather than a chat turn.
+class _NoteBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _NoteBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final noteColor = AppColors.orange;
+    final bodyColor = noteColor.withValues(alpha: 0.08);
+    final borderColor = noteColor.withValues(alpha: 0.35);
+
+    final attachedName = message.metadata?['attached_call_name'] as String?;
+    final attachedId = message.metadata?['attached_call_id'] as int?;
+    final hasAttachment = attachedId != null;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          color: bodyColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: borderColor, width: 0.5),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 3,
+                decoration: BoxDecoration(
+                  color: noteColor,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(10),
+                    bottomLeft: Radius.circular(10),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.sticky_note_2_outlined,
+                              size: 13, color: noteColor),
+                          const SizedBox(width: 6),
+                          Text(
+                            'NOTE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.1,
+                              color: noteColor,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: noteColor.withValues(alpha: 0.4),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatTime(message.timestamp),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.textTertiary
+                                  .withValues(alpha: 0.75),
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(Icons.push_pin_outlined,
+                              size: 11,
+                              color: noteColor.withValues(alpha: 0.55)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        message.text,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.textPrimary.withValues(alpha: 0.9),
+                          height: 1.45,
+                        ),
+                      ),
+                      if (hasAttachment) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Icon(Icons.link_rounded,
+                                size: 11,
+                                color: noteColor.withValues(alpha: 0.7)),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                attachedName != null && attachedName.isNotEmpty
+                                    ? 'Attached to $attachedName'
+                                    : 'Attached to this call',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontStyle: FontStyle.italic,
+                                  color: noteColor.withValues(alpha: 0.8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline "where should this note go?" card — shown when `/note` is typed
+/// with no active call. Lists the most recent calls so the manager can tag
+/// the note to one with a single tap, or finalize it as a free-floating
+/// session note.
+class _PendingNoteBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _PendingNoteBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final noteColor = AppColors.orange;
+    final rawCandidates =
+        (message.metadata?['candidates'] as List?) ?? const [];
+    final candidates = rawCandidates
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          color: noteColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: noteColor.withValues(alpha: 0.35), width: 0.5),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 3,
+                decoration: BoxDecoration(
+                  color: noteColor,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(10),
+                    bottomLeft: Radius.circular(10),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.sticky_note_2_outlined,
+                              size: 13, color: noteColor),
+                          const SizedBox(width: 6),
+                          Text(
+                            'NEW NOTE',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.1,
+                              color: noteColor,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: noteColor.withValues(alpha: 0.4),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _formatTime(message.timestamp),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppColors.textTertiary
+                                  .withValues(alpha: 0.75),
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          HoverButton(
+                            onTap: () => context
+                                .read<AgentService>()
+                                .removeMessage(message),
+                            tooltip: 'Discard note',
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: Icon(Icons.close_rounded,
+                                  size: 13,
+                                  color: AppColors.textTertiary
+                                      .withValues(alpha: 0.7)),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        message.text,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.textPrimary.withValues(alpha: 0.9),
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _NoteCandidateDivider(label: 'Attach to a recent call?'),
+                      const SizedBox(height: 4),
+                      ...candidates.map((c) => _NoteCandidateRow(
+                            pending: message,
+                            candidate: c,
+                            accent: noteColor,
+                          )),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: HoverButton(
+                          onTap: () => context
+                              .read<AgentService>()
+                              .confirmNoteAsSession(message),
+                          tooltip: 'Keep as a free-floating session note',
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 2, vertical: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.bookmark_border_rounded,
+                                    size: 11,
+                                    color: AppColors.textTertiary
+                                        .withValues(alpha: 0.85)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Keep as session note',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textTertiary
+                                        .withValues(alpha: 0.85),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NoteCandidateDivider extends StatelessWidget {
+  final String label;
+  const _NoteCandidateDivider({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            height: 0.5,
+            color: AppColors.border.withValues(alpha: 0.5),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: AppColors.textTertiary.withValues(alpha: 0.85),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Container(
+            height: 0.5,
+            color: AppColors.border.withValues(alpha: 0.5),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _NoteCandidateRow extends StatelessWidget {
+  final ChatMessage pending;
+  final Map<String, dynamic> candidate;
+  final Color accent;
+  const _NoteCandidateRow({
+    required this.pending,
+    required this.candidate,
+    required this.accent,
+  });
+
+  String get _name => (candidate['name'] as String?)?.trim().isNotEmpty == true
+      ? candidate['name'] as String
+      : (candidate['phone'] as String? ?? 'Unknown');
+
+  bool get _isOutbound => candidate['direction'] == 'outbound';
+  bool get _isMissed => (candidate['status'] as String?) == 'missed';
+
+  String get _subline {
+    final parts = <String>[];
+    final dur = (candidate['duration_seconds'] ?? 0) as int;
+    if (_isMissed) {
+      parts.add('missed');
+    } else if (dur > 0) {
+      final m = dur ~/ 60;
+      final s = dur % 60;
+      parts.add(m > 0 ? '${m}m ${s}s' : '${s}s');
+    }
+    parts.add(_isOutbound ? 'outbound' : 'inbound');
+    final started = candidate['started_at'] as String? ?? '';
+    final rel = _relativeTime(started);
+    if (rel.isNotEmpty) parts.add(rel);
+    return parts.join(' · ');
+  }
+
+  static String _relativeTime(String iso) {
+    if (iso.isEmpty) return '';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '';
+    final diff = DateTime.now().difference(dt.toLocal());
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.month}/${dt.day}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final agent = context.read<AgentService>();
+    final id = candidate['id'] as int;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: HoverButton(
+        onTap: () => agent.attachNoteToCall(pending, id, _name),
+        tooltip: 'Attach note to call with $_name',
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppColors.card.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: AppColors.border.withValues(alpha: 0.4),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(
+                  _isMissed
+                      ? Icons.call_missed_rounded
+                      : _isOutbound
+                          ? Icons.call_made_rounded
+                          : Icons.call_received_rounded,
+                  size: 12,
+                  color: _isMissed ? AppColors.red : accent,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary.withValues(alpha: 0.92),
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      _subline,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textTertiary.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.link_rounded,
+                  size: 13, color: accent.withValues(alpha: 0.65)),
+            ],
+          ),
+        ),
       ),
     );
   }

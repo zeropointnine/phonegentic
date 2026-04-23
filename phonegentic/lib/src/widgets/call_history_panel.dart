@@ -1160,6 +1160,8 @@ class _TranscriptLine extends StatelessWidget {
   final Map<String, dynamic> transcript;
   const _TranscriptLine({required this.transcript});
 
+  bool get _isNote => transcript['role'] == 'note';
+
   Color get _roleColor {
     switch (transcript['role']) {
       case 'agent':
@@ -1168,6 +1170,8 @@ class _TranscriptLine extends StatelessWidget {
         return AppColors.hotSignal;
       case 'remote':
         return AppColors.burntAmber;
+      case 'note':
+        return AppColors.orange;
       default:
         return AppColors.textTertiary;
     }
@@ -1175,8 +1179,11 @@ class _TranscriptLine extends StatelessWidget {
 
   String get _roleLabel {
     final speaker = transcript['speaker_name'] as String?;
+    final role = transcript['role'];
+    // For notes, always use the NOTE label regardless of any stored speaker.
+    if (role == 'note') return 'NOTE';
     if (speaker != null && speaker.isNotEmpty) return speaker;
-    switch (transcript['role']) {
+    switch (role) {
       case 'agent':
         return 'AI';
       case 'host':
@@ -1186,12 +1193,13 @@ class _TranscriptLine extends StatelessWidget {
       case 'user':
         return 'You';
       default:
-        return transcript['role'] as String? ?? '';
+        return role as String? ?? '';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isNote) return _buildNote(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -1221,6 +1229,73 @@ class _TranscriptLine extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildNote(BuildContext context) {
+    final color = _roleColor;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 2,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(6),
+                    bottomLeft: Radius.circular(6),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.sticky_note_2_outlined,
+                              size: 10, color: color),
+                          const SizedBox(width: 4),
+                          Text(
+                            'NOTE',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.8,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        transcript['text'] as String? ?? '',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color:
+                              AppColors.textSecondary.withValues(alpha: 0.95),
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
