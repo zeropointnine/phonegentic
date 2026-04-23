@@ -578,8 +578,13 @@ class CallHistoryDb {
     if (contactName != null && contactName.isNotEmpty) {
       where.add(
         '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
-        'OR c.display_name LIKE ?)');
-      args.addAll(['%$contactName%', '%$contactName%', '%$contactName%']);
+        'OR c.display_name LIKE ? '
+        'OR cr.remote_identity IN '
+        '(SELECT phone_number FROM contacts WHERE display_name LIKE ?))');
+      args.addAll([
+        '%$contactName%', '%$contactName%', '%$contactName%',
+        '%$contactName%',
+      ]);
     }
     if (minDurationSeconds != null) {
       where.add('cr.duration_seconds >= ?');
@@ -643,8 +648,13 @@ class CallHistoryDb {
     if (contactName != null && contactName.isNotEmpty) {
       where.add(
           '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
-          'OR c.display_name LIKE ?)');
-      args.addAll(['%$contactName%', '%$contactName%', '%$contactName%']);
+          'OR c.display_name LIKE ? '
+          'OR cr.remote_identity IN '
+          '(SELECT phone_number FROM contacts WHERE display_name LIKE ?))');
+      args.addAll([
+        '%$contactName%', '%$contactName%', '%$contactName%',
+        '%$contactName%',
+      ]);
     }
     if (minDurationSeconds != null) {
       where.add('cr.duration_seconds >= ?');
@@ -717,11 +727,13 @@ class CallHistoryDb {
       LEFT JOIN contacts c ON c.id = cr.contact_id
       WHERE cr.status != 'active'
         AND (cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ?
-             OR c.display_name LIKE ?)
+             OR c.display_name LIKE ?
+             OR cr.remote_identity IN
+               (SELECT phone_number FROM contacts WHERE display_name LIKE ?))
       GROUP BY label
       ORDER BY MAX(cr.started_at) DESC
       LIMIT ?
-    ''', [like, like, like, limit]);
+    ''', [like, like, like, like, limit]);
 
     // Merge in contacts that haven't called yet
     final contactRows = await db.query(
