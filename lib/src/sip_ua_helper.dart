@@ -409,7 +409,8 @@ class SIPUAHelper extends EventManager {
         },
         'optional': <dynamic>[],
         if (_uaSettings?.requireHdCodecs == true)
-          'offerModifiers': <Future<RTCSessionDescription> Function(RTCSessionDescription)>[
+          'offerModifiers':
+              <Future<RTCSessionDescription> Function(RTCSessionDescription)>[
             _stripNarrowbandCodecs,
           ],
       },
@@ -435,21 +436,24 @@ class SIPUAHelper extends EventManager {
   /// remote must negotiate a wideband codec (Opus / G722).
   static Future<RTCSessionDescription> _stripNarrowbandCodecs(
       RTCSessionDescription desc) async {
-    final sdp = desc.sdp;
+    final String? sdp = desc.sdp;
     if (sdp == null) return desc;
 
-    final lines = sdp.split('\r\n');
-    final out = <String>[];
-    const narrowband = {'0', '8'}; // PCMU, PCMA payload types
+    final List<String> lines = sdp.split('\r\n');
+    final List<String> out = <String>[];
+    const Set<String> narrowband = <String>{
+      '0',
+      '8'
+    }; // PCMU, PCMA payload types
 
-    for (final line in lines) {
+    for (final String line in lines) {
       if (line.startsWith('m=audio ')) {
-        final parts = line.split(' ');
+        final List<String> parts = line.split(' ');
         // m=audio <port> <proto> <pt1> <pt2> ...
         if (parts.length > 3) {
-          final filtered = [
+          final List<String> filtered = <String>[
             ...parts.sublist(0, 3),
-            ...parts.sublist(3).where((pt) => !narrowband.contains(pt)),
+            ...parts.sublist(3).where((String pt) => !narrowband.contains(pt)),
           ];
           out.add(filtered.join(' '));
           continue;
@@ -457,9 +461,9 @@ class SIPUAHelper extends EventManager {
       }
       // Drop a=rtpmap / a=fmtp lines for narrowband PTs
       if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:')) {
-        final colon = line.indexOf(':');
-        final space = line.indexOf(' ', colon);
-        final pt = space > 0
+        final int colon = line.indexOf(':');
+        final int space = line.indexOf(' ', colon);
+        final String pt = space > 0
             ? line.substring(colon + 1, space)
             : line.substring(colon + 1);
         if (narrowband.contains(pt)) continue;

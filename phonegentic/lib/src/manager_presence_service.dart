@@ -100,7 +100,8 @@ class ManagerPresenceService extends ChangeNotifier
     _isAway = true;
     _lastUnfocusedAt ??= _lastActivityAt ?? DateTime.now();
     _agent?.muteForAway();
-    debugPrint('[ManagerPresence] Away after ${_awayThreshold.inMinutes}min idle');
+    debugPrint(
+        '[ManagerPresence] Away after ${_awayThreshold.inMinutes}min idle');
     notifyListeners();
   }
 
@@ -114,7 +115,7 @@ class ManagerPresenceService extends ChangeNotifier
     _manuallyAway = true;
     _awayTimer?.cancel();
     _idleTimer?.cancel();
-    if (_lastUnfocusedAt == null) _lastUnfocusedAt = DateTime.now();
+    _lastUnfocusedAt ??= DateTime.now();
     _agent?.muteForAway();
     debugPrint('[ManagerPresence] Manually set away');
     notifyListeners();

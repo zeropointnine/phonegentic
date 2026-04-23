@@ -22,6 +22,7 @@ import '../db/call_history_db.dart';
 import '../conference/conference_service.dart';
 import '../demo_mode_service.dart';
 import '../inbound_call_flow_service.dart';
+import '../inbound_call_router.dart';
 import '../job_function_service.dart';
 import '../messaging/messaging_service.dart';
 import '../models/agent_context.dart';
@@ -2124,6 +2125,7 @@ class _ConferenceCallBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final conf = context.watch<ConferenceService>();
     final demo = context.watch<DemoModeService>();
+    final router = context.watch<InboundCallRouter>();
 
     // Fallback to original single-call bar when no conference service legs
     if (conf.legCount <= 1 && !conf.hasConference) {
@@ -2132,6 +2134,7 @@ class _ConferenceCallBar extends StatelessWidget {
 
     final legs = conf.legs;
     final hasConference = conf.hasConference;
+    final pendingInboundId = router.pendingInbound?.id;
 
     return Container(
       decoration: BoxDecoration(
@@ -2218,6 +2221,20 @@ class _ConferenceCallBar extends StatelessWidget {
                                 conf.holdLeg(legs[i].sipCallId);
                               }
                             },
+                            isPendingInbound:
+                                legs[i].sipCallId == pendingInboundId,
+                            onHoldAndAnswer: legs[i].sipCallId ==
+                                    pendingInboundId
+                                ? router.holdCurrentAndAnswer
+                                : null,
+                            onHangupAndAnswer: legs[i].sipCallId ==
+                                    pendingInboundId
+                                ? router.hangupCurrentAndAnswer
+                                : null,
+                            onDeclinePending: legs[i].sipCallId ==
+                                    pendingInboundId
+                                ? router.decline
+                                : null,
                           ),
                       ],
                     ),
@@ -2240,6 +2257,16 @@ class _ConferenceCallBar extends StatelessWidget {
                     conf.holdLeg(legs[i].sipCallId);
                   }
                 },
+                isPendingInbound: legs[i].sipCallId == pendingInboundId,
+                onHoldAndAnswer: legs[i].sipCallId == pendingInboundId
+                    ? router.holdCurrentAndAnswer
+                    : null,
+                onHangupAndAnswer: legs[i].sipCallId == pendingInboundId
+                    ? router.hangupCurrentAndAnswer
+                    : null,
+                onDeclinePending: legs[i].sipCallId == pendingInboundId
+                    ? router.decline
+                    : null,
               ),
               if (i < legs.length - 1)
                 _MergeConnector(
@@ -2262,6 +2289,13 @@ class _CallLegRow extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onHold;
 
+  /// If true, this leg is the InboundCallRouter's pending inbound — render an
+  /// accent outline and mini Hold+Answer / Hangup+Answer / Decline buttons.
+  final bool isPendingInbound;
+  final Future<void> Function()? onHoldAndAnswer;
+  final Future<void> Function()? onHangupAndAnswer;
+  final Future<void> Function()? onDeclinePending;
+
   const _CallLegRow({
     required this.leg,
     required this.isFocused,
@@ -2269,6 +2303,10 @@ class _CallLegRow extends StatelessWidget {
     required this.demo,
     required this.onTap,
     required this.onHold,
+    this.isPendingInbound = false,
+    this.onHoldAndAnswer,
+    this.onHangupAndAnswer,
+    this.onDeclinePending,
   });
 
   Color get _stateColor {
@@ -2315,12 +2353,24 @@ class _CallLegRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(14, 6, 10, 6),
         decoration: BoxDecoration(
-          color: isFocused
-              ? AppColors.accent.withValues(alpha: 0.10)
-              : Colors.transparent,
-          border: isFocused && !inMergedConference
-              ? Border(left: BorderSide(color: AppColors.accent, width: 2))
-              : null,
+          color: isPendingInbound
+              ? AppColors.accent.withValues(alpha: 0.14)
+              : isFocused
+                  ? AppColors.accent.withValues(alpha: 0.10)
+                  : Colors.transparent,
+          border: isPendingInbound
+              ? Border(
+                  left: BorderSide(color: AppColors.accent, width: 2),
+                  top: BorderSide(
+                      color: AppColors.accent.withValues(alpha: 0.35),
+                      width: 0.5),
+                  bottom: BorderSide(
+                      color: AppColors.accent.withValues(alpha: 0.35),
+                      width: 0.5),
+                )
+              : (isFocused && !inMergedConference
+                  ? Border(left: BorderSide(color: AppColors.accent, width: 2))
+                  : null),
         ),
         child: Row(
           children: [
@@ -2377,35 +2427,107 @@ class _CallLegRow extends StatelessWidget {
                 ],
               ),
             ),
-            HoverButton(
-              onTap: onHold,
-              borderRadius: BorderRadius.circular(7),
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(7),
-                  color: leg.state == LegState.held
-                      ? AppColors.accent.withValues(alpha: 0.15)
-                      : AppColors.surface,
-                  border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.4),
-                    width: 0.5,
+            if (isPendingInbound) ...[
+              _PendingInboundMiniAction(
+                icon: Icons.pause_rounded,
+                tooltip: 'Hold current & answer',
+                background: AppColors.accent,
+                foreground: AppColors.onAccent,
+                onTap: onHoldAndAnswer,
+              ),
+              const SizedBox(width: 4),
+              _PendingInboundMiniAction(
+                icon: Icons.call_end_rounded,
+                tooltip: 'Hang up current & answer',
+                background: AppColors.red,
+                foreground: Colors.white,
+                onTap: onHangupAndAnswer,
+              ),
+              const SizedBox(width: 4),
+              HoverButton(
+                onTap: onDeclinePending,
+                tooltip: 'Decline',
+                borderRadius: BorderRadius.circular(7),
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(7),
+                    color: AppColors.surface,
+                    border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.4),
+                      width: 0.5,
+                    ),
                   ),
-                ),
-                child: Icon(
-                  leg.state == LegState.held
-                      ? Icons.play_arrow_rounded
-                      : Icons.pause_rounded,
-                  size: 14,
-                  color: leg.state == LegState.held
-                      ? AppColors.accent
-                      : AppColors.textTertiary,
+                  child: Icon(Icons.close_rounded,
+                      size: 12, color: AppColors.textTertiary),
                 ),
               ),
-            ),
+            ] else
+              HoverButton(
+                onTap: onHold,
+                borderRadius: BorderRadius.circular(7),
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(7),
+                    color: leg.state == LegState.held
+                        ? AppColors.accent.withValues(alpha: 0.15)
+                        : AppColors.surface,
+                    border: Border.all(
+                      color: AppColors.border.withValues(alpha: 0.4),
+                      width: 0.5,
+                    ),
+                  ),
+                  child: Icon(
+                    leg.state == LegState.held
+                        ? Icons.play_arrow_rounded
+                        : Icons.pause_rounded,
+                    size: 14,
+                    color: leg.state == LegState.held
+                        ? AppColors.accent
+                        : AppColors.textTertiary,
+                  ),
+                ),
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PendingInboundMiniAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final Color background;
+  final Color foreground;
+  final Future<void> Function()? onTap;
+
+  const _PendingInboundMiniAction({
+    required this.icon,
+    required this.tooltip,
+    required this.background,
+    required this.foreground,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return HoverButton(
+      onTap: onTap == null ? null : () => onTap!(),
+      tooltip: tooltip,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: background,
+        ),
+        alignment: Alignment.center,
+        child: Icon(icon, size: 14, color: foreground),
       ),
     );
   }

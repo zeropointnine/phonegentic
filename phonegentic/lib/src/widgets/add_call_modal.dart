@@ -1,4 +1,5 @@
 import 'dart:async';
+// ignore: unnecessary_import
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -174,8 +175,7 @@ class _AddCallModalState extends State<AddCallModal> {
       if (key == LogicalKeyboardKey.arrowUp ||
           (key == LogicalKeyboardKey.tab &&
               HardwareKeyboard.instance.isShiftPressed)) {
-        setState(
-            () => _highlightedIndex = (_highlightedIndex - 1 + len) % len);
+        setState(() => _highlightedIndex = (_highlightedIndex - 1 + len) % len);
         return true;
       }
       if (key == LogicalKeyboardKey.enter && _highlightedIndex >= 0) {
@@ -411,8 +411,7 @@ class _AddCallModalState extends State<AddCallModal> {
           SizedBox(height: isActiveCall ? 40 : 4),
           Expanded(
             child: Align(
-              alignment:
-                  isActiveCall ? Alignment.topCenter : Alignment.center,
+              alignment: isActiveCall ? Alignment.topCenter : Alignment.center,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 360),
                 child: _phase == _ModalPhase.connected
@@ -463,8 +462,7 @@ class _AddCallModalState extends State<AddCallModal> {
             ),
           ),
         ScrollConfiguration(
-          behavior:
-              ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1108,8 +1106,7 @@ class _ConferenceCallButtonState extends State<_ConferenceCallButton>
                       ),
                   ],
                 ),
-                child:
-                    Icon(Icons.phone, size: 30, color: AppColors.crtBlack),
+                child: Icon(Icons.phone, size: 30, color: AppColors.crtBlack),
               );
             },
           ),

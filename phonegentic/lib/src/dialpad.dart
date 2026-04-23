@@ -22,6 +22,7 @@ import 'conference/conference_service.dart';
 import 'contact_service.dart';
 import 'demo_mode_service.dart';
 import 'inbound_call_flow_service.dart';
+import 'inbound_call_router.dart';
 import 'models/agent_context.dart';
 import 'messaging/messaging_service.dart';
 import 'messaging/phone_numbers.dart';
@@ -38,6 +39,7 @@ import 'widgets/call_history_panel.dart';
 import 'widgets/contact_list_panel.dart';
 import 'widgets/messaging_panel.dart';
 import 'widgets/inbound_call_flow_editor.dart';
+import 'widgets/inbound_call_toast.dart';
 import 'widgets/job_function_editor.dart';
 import 'widgets/dialpad_autocomplete_overlay.dart';
 import 'widgets/dialpad_contact_preview.dart';
@@ -107,7 +109,71 @@ class _MyDialPadWidget extends State<DialPadWidget>
     _loadSettings();
     _loadPanelWidth();
     HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoRegister());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeAutoRegister();
+      _attachInboundCallRouter();
+    });
+  }
+
+  void _attachInboundCallRouter() {
+    final h = helper;
+    if (h == null || !mounted) return;
+    final router = context.read<InboundCallRouter>();
+    router.attach(
+      sipHelper: h,
+      jobFunctionService: context.read<JobFunctionService>(),
+      managerPresence: context.read<ManagerPresenceService>(),
+      messaging: context.read<MessagingService>(),
+      conference: context.read<ConferenceService>(),
+      agent: context.read<AgentService>(),
+      callsLookup: () => _calls,
+      focusCall: (id) {
+        final target = _calls[id];
+        if (target != null) {
+          setState(() => _focusedCall = target);
+          context.read<ConferenceService>().focusLeg(id);
+        }
+      },
+      dial: _dialNumberForRouter,
+      onAnswered: _onRouterAnswered,
+    );
+  }
+
+  /// Router-invoked after the second inbound call has been accepted.
+  /// The native mic tap is a process-wide setting so a previous soft-mute
+  /// (e.g. from the first call screen, or manager-away auto-mute) would
+  /// otherwise persist and leave the operator's mic silently disabled on
+  /// the newly-answered call. We also pull the AgentService out of any
+  /// saved "for-away" mute so whisper/TTS listens on the new leg.
+  void _onRouterAnswered(String sipCallId) {
+    _tapChannel
+        .invokeMethod('setMicMute', {'muted': false})
+        .catchError((e) => debugPrint('[Dialpad] unmute-on-answer failed: $e'));
+    debugPrint('[Dialpad] Router answered $sipCallId → cleared mic soft-mute');
+    final agent = context.read<AgentService>();
+    agent.restoreFromAway();
+  }
+
+  Future<void> _dialNumberForRouter(String number) async {
+    final h = helper;
+    if (h == null) return;
+    final mediaConstraints = <String, dynamic>{
+      'audio': {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+        'channelCount': 2,
+      },
+      'video': false,
+    };
+    try {
+      final mediaStream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      final normalized = number.contains('@') ? number : ensureE164(number);
+      h.call(normalized, voiceOnly: true, mediaStream: mediaStream);
+    } catch (e) {
+      debugPrint('[Dialpad] _dialNumberForRouter failed for "$number": $e');
+    }
   }
 
   void _maybeAutoRegister() {
@@ -825,6 +891,12 @@ class _MyDialPadWidget extends State<DialPadWidget>
               right: showPanel ? panelWidth : 0,
               child: const InboundCallFlowEditor(),
             ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: showPanel ? panelWidth : 0,
+            child: const InboundCallToast(),
+          ),
           if (showPanel)
             Positioned(
               top: 0,
@@ -2187,10 +2259,33 @@ class _MyDialPadWidget extends State<DialPadWidget>
           _forkGraceTimer = null;
         }
 
-        final isConferenceLeg = _calls.isNotEmpty && !isForkReplacement;
+        // Is there an already-connected (not just ringing) call? If so the
+        // new inbound is a concurrent second call, and the router takes over
+        // the UX (toast + job-function policy) rather than swapping focus.
+        final hasExistingLive = !isForkReplacement &&
+            isIncoming &&
+            _calls.values.any((c) =>
+                c.id != call.id &&
+                c.state != CallStateEnum.ENDED &&
+                c.state != CallStateEnum.FAILED &&
+                c.state != CallStateEnum.CALL_INITIATION);
+
+        // Conference audio mode mixes two active legs together on the
+        // native side. We MUST NOT flip it on for a second inbound INVITE
+        // that is only ringing — that audibly enters "conference" for the
+        // primary caller before the user has even decided how to handle
+        // the new leg. Wait until the router hands off to Hold+Answer /
+        // Hangup+Answer (which drives the call into CONFIRMED) before the
+        // leg earns conference-mode status.
+        final isConferenceLeg = _calls.isNotEmpty &&
+            !isForkReplacement &&
+            !(isIncoming && hasExistingLive);
         setState(() {
           _calls[call.id] = call;
-          _focusedCall = call;
+          // Only steal focus if we aren't preserving an existing live call.
+          if (!hasExistingLive) {
+            _focusedCall = call;
+          }
         });
         conf.addLeg(call, isOutbound: !isIncoming);
         if (isConferenceLeg) {
@@ -2203,9 +2298,27 @@ class _MyDialPadWidget extends State<DialPadWidget>
         if (isIncoming && !isForkReplacement) {
           _inboundRingCaller = _normalizeCaller(caller);
           _inboundRingStart = DateTime.now();
-          _logicalCallKey = 'inbound_${DateTime.now().millisecondsSinceEpoch}';
+          if (!hasExistingLive) {
+            _logicalCallKey =
+                'inbound_${DateTime.now().millisecondsSinceEpoch}';
+          }
           context.read<AgentService>().forkCoalescing = true;
-          _handleInboundRing(call);
+
+          if (hasExistingLive) {
+            // Hand off to the router. If it claims the call (shows toast or
+            // auto-SMS-declines), we skip the normal ring-auto-answer flow.
+            //
+            // We deliberately do NOT start the audible ringtone here: a
+            // ringing sound on top of the primary call's audio bleeds into
+            // the first caller's experience and is jarring for the operator.
+            // The visual toast (plus the agent panel highlight) is the
+            // notification surface for a second inbound while on a call.
+            context
+                .read<InboundCallRouter>()
+                .onInboundInitiation(call, hasExistingCall: true);
+          } else {
+            _handleInboundRing(call);
+          }
         } else if (isForkReplacement) {
           debugPrint('[Dialpad] Fork coalesced for $_inboundRingCaller');
           if (_pendingAutoAnswer) {
@@ -2223,6 +2336,17 @@ class _MyDialPadWidget extends State<DialPadWidget>
         context.read<AgentService>().forkCoalescing = false;
         conf.updateLegState(call.id!, LegState.active);
         _cancelConferenceTimeout(call.id!);
+        // If there are now multiple legs (e.g. the router just accepted a
+        // second inbound on top of a held primary), flip the native audio
+        // tap into conference mode. We deferred this from CALL_INITIATION
+        // to avoid silently entering conference while the second call was
+        // merely ringing.
+        if (_calls.length > 1) {
+          _tapChannel.invokeMethod('setConferenceMode', {
+            'active': true,
+            'slotCount': conf.legs.length,
+          });
+        }
         break;
       case CallStateEnum.HOLD:
         conf.updateLegState(call.id!, LegState.held);
@@ -2233,6 +2357,17 @@ class _MyDialPadWidget extends State<DialPadWidget>
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
         _cancelConferenceTimeout(call.id!);
+
+        // Notify the router so it can clear any toast pointing at this call
+        // and queue held-hangup records for auto-callback.
+        final router = context.read<InboundCallRouter>();
+        final remoteHangup = callState.originator == Originator.remote;
+        final wasHeld = call.state == CallStateEnum.HOLD ||
+            conf.legById(call.id ?? '')?.state == LegState.held;
+        router.onCallEnded(call, remoteHangup: remoteHangup);
+        if (remoteHangup && wasHeld) {
+          router.noteHeldEndedByRemote(call);
+        }
 
         // ── Fork coalescing: during an active inbound ring session,
         // DON'T tear down state or rebuild the UI for individual fork
@@ -2277,6 +2412,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
         if (_calls.isEmpty) {
           context.read<InboundCallFlowService>().clearActiveFlow();
+          // Give the router a chance to surface a callback prompt / auto-dial
+          // if any held callers hung up during the session.
+          Future.microtask(() => router.primaryCallEnded());
           if (_safetyCallModeForced) {
             _safetyCallModeForced = false;
             Future.delayed(const Duration(milliseconds: 500), () {

@@ -55,6 +55,12 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
   // Comfort noise override (null = use global, '' = disabled, path = custom)
   String? _comfortNoisePath;
 
+  // Multiple-inbound-call handling
+  bool _autoAnswerAndHold = false;
+  bool _respondBySmsWhenAway = false;
+  bool _speakPoliteHoldNotice = false;
+  final _awaySmsController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -74,6 +80,11 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       _selectedPocketVoiceId = _existing!.pocketTtsVoiceId;
       _mutePolicyOverride = _existing!.mutePolicyOverride;
       _comfortNoisePath = _existing!.comfortNoisePath;
+      _autoAnswerAndHold = _existing!.autoAnswerAndHold;
+      _respondBySmsWhenAway = _existing!.respondBySmsWhenAway;
+      _speakPoliteHoldNotice = _existing!.speakPoliteHoldNotice;
+      _awaySmsController.text =
+          _existing!.awaySmsTemplate ?? JobFunction.defaultAwaySmsTemplate;
       _speakers = _existing!.speakers
           .map((s) => _SpeakerRow(
                 role: TextEditingController(text: s.role),
@@ -86,6 +97,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
     } else {
       _roleController.text =
           'You are a voice AI agent participating in a 3-party phone call.';
+      _awaySmsController.text = JobFunction.defaultAwaySmsTemplate;
       _speakers = SpeakerDef.defaultSpeakers
           .map((s) => _SpeakerRow(
                 role: TextEditingController(text: s.role),
@@ -148,6 +160,7 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
     _agentNameController.dispose();
     _roleController.dispose();
     _descController.dispose();
+    _awaySmsController.dispose();
     _nameFocus.dispose();
     _scrollController.dispose();
     for (final s in _speakers) {
@@ -191,6 +204,14 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
       pocketTtsVoiceId: _selectedPocketVoiceId,
       mutePolicyOverride: _mutePolicyOverride,
       comfortNoisePath: _comfortNoisePath,
+      autoAnswerAndHold: _autoAnswerAndHold,
+      respondBySmsWhenAway: _respondBySmsWhenAway,
+      speakPoliteHoldNotice: _speakPoliteHoldNotice,
+      awaySmsTemplate: () {
+        final t = _awaySmsController.text.trim();
+        if (t.isEmpty || t == JobFunction.defaultAwaySmsTemplate) return null;
+        return t;
+      }(),
       createdAt: _existing?.createdAt,
     );
 
@@ -378,6 +399,8 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                           const SizedBox(height: 14),
                           _buildPocketTtsVoiceSelector(),
                         ],
+                        const SizedBox(height: 14),
+                        _buildMultiInboundSection(),
                         const SizedBox(height: 14),
                         _buildSpeakersSection(),
                         const SizedBox(height: 14),
@@ -735,6 +758,143 @@ class _JobFunctionEditorState extends State<JobFunctionEditor> {
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 color:
                     selected ? AppColors.textPrimary : AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───── Multiple Inbound Call Handling ─────
+
+  Widget _buildMultiInboundSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionLabel('When a call arrives while on another call'),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+          ),
+          child: Column(
+            children: [
+              _multiInboundTile(
+                value: _autoAnswerAndHold,
+                onTap: () => setState(
+                    () => _autoAnswerAndHold = !_autoAnswerAndHold),
+                title: 'Auto Answer & Hold',
+                subtitle:
+                    "Primary toast button holds the current call and answers the new one.",
+                icon: Icons.pause_circle_outline_rounded,
+              ),
+              _thinDivider(),
+              _multiInboundTile(
+                value: _speakPoliteHoldNotice,
+                onTap: () => setState(() =>
+                    _speakPoliteHoldNotice = !_speakPoliteHoldNotice),
+                title: 'Polite Hold Notice',
+                subtitle:
+                    'Agent briefly tells the current caller to hold before switching.',
+                icon: Icons.record_voice_over_rounded,
+              ),
+              _thinDivider(),
+              _multiInboundTile(
+                value: _respondBySmsWhenAway,
+                onTap: () => setState(() =>
+                    _respondBySmsWhenAway = !_respondBySmsWhenAway),
+                title: 'Respond by SMS when Away',
+                subtitle:
+                    'If you\'re away, auto-send an SMS and decline the new call.',
+                icon: Icons.sms_outlined,
+              ),
+            ],
+          ),
+        ),
+        if (_respondBySmsWhenAway) ...[
+          const SizedBox(height: 8),
+          _buildSectionLabel('Auto-Reply SMS Message'),
+          _buildTextField(
+            controller: _awaySmsController,
+            hint: JobFunction.defaultAwaySmsTemplate,
+            maxLines: 3,
+            minLines: 2,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _multiInboundTile({
+    required bool value,
+    required VoidCallback onTap,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    return HoverButton(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: value ? AppColors.accent : AppColors.textTertiary,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight:
+                          value ? FontWeight.w600 : FontWeight.w500,
+                      color: value
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 36,
+              height: 20,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: value
+                    ? AppColors.accent
+                    : AppColors.border.withValues(alpha: 0.4),
+              ),
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 150),
+                alignment:
+                    value ? Alignment.centerRight : Alignment.centerLeft,
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.onAccent,
+                  ),
+                ),
               ),
             ),
           ],

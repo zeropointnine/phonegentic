@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+// ignore: unnecessary_import
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -35,7 +36,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 22,
+        version: 23,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -61,8 +62,8 @@ class CallHistoryDb {
       )
     ''');
 
-    await db.execute(
-        'CREATE INDEX idx_contacts_phone ON contacts(phone_number)');
+    await db
+        .execute('CREATE INDEX idx_contacts_phone ON contacts(phone_number)');
 
     await db.execute('''
       CREATE TABLE call_records (
@@ -116,10 +117,9 @@ class CallHistoryDb {
       )
     ''');
 
-    await db.execute(
-        'CREATE INDEX idx_cr_started ON call_records(started_at)');
-    await db.execute(
-        'CREATE INDEX idx_cr_direction ON call_records(direction)');
+    await db.execute('CREATE INDEX idx_cr_started ON call_records(started_at)');
+    await db
+        .execute('CREATE INDEX idx_cr_direction ON call_records(direction)');
     await db.execute('CREATE INDEX idx_cr_status ON call_records(status)');
     await db.execute(
         'CREATE INDEX idx_ct_call ON call_transcripts(call_record_id)');
@@ -287,6 +287,17 @@ class CallHistoryDb {
           'ALTER TABLE sms_messages ADD COLUMN reply_to_local_id INTEGER');
       await _createSmsThreadDeletesTable(db);
     }
+
+    if (oldVersion < 23) {
+      await db.execute(
+          'ALTER TABLE job_functions ADD COLUMN auto_answer_and_hold INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          'ALTER TABLE job_functions ADD COLUMN respond_by_sms_when_away INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          'ALTER TABLE job_functions ADD COLUMN speak_polite_hold_notice INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          'ALTER TABLE job_functions ADD COLUMN away_sms_template TEXT');
+    }
   }
 
   static Future<void> _createJobFunctionsTable(Database db) async {
@@ -305,6 +316,10 @@ class CallHistoryDb {
         pocket_tts_voice_id INTEGER,
         mute_policy_override INTEGER,
         comfort_noise_path TEXT,
+        auto_answer_and_hold INTEGER NOT NULL DEFAULT 0,
+        respond_by_sms_when_away INTEGER NOT NULL DEFAULT 0,
+        speak_polite_hold_notice INTEGER NOT NULL DEFAULT 0,
+        away_sms_template TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -716,8 +731,7 @@ class CallHistoryDb {
   /// Returns the set of call record IDs (from [callIds]) that have at least
   /// one transcript with role = 'host'.  Used to distinguish calls where the
   /// host was actually on the line from agent-only calls.
-  static Future<Set<int>> callIdsWithHostTranscripts(
-      List<int> callIds) async {
+  static Future<Set<int>> callIdsWithHostTranscripts(List<int> callIds) async {
     if (callIds.isEmpty) return {};
     final db = await database;
     final placeholders = callIds.map((_) => '?').join(',');
@@ -774,13 +788,14 @@ class CallHistoryDb {
     final args = <dynamic>[];
 
     if (contactName != null && contactName.isNotEmpty) {
-      where.add(
-        '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
-        'OR c.display_name LIKE ? '
-        'OR cr.remote_identity IN '
-        '(SELECT phone_number FROM contacts WHERE display_name LIKE ?))');
+      where.add('(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
+          'OR c.display_name LIKE ? '
+          'OR cr.remote_identity IN '
+          '(SELECT phone_number FROM contacts WHERE display_name LIKE ?))');
       args.addAll([
-        '%$contactName%', '%$contactName%', '%$contactName%',
+        '%$contactName%',
+        '%$contactName%',
+        '%$contactName%',
         '%$contactName%',
       ]);
     }
@@ -847,13 +862,14 @@ class CallHistoryDb {
     final args = <dynamic>['%$query%'];
 
     if (contactName != null && contactName.isNotEmpty) {
-      where.add(
-          '(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
+      where.add('(cr.remote_display_name LIKE ? OR cr.remote_identity LIKE ? '
           'OR c.display_name LIKE ? '
           'OR cr.remote_identity IN '
           '(SELECT phone_number FROM contacts WHERE display_name LIKE ?))');
       args.addAll([
-        '%$contactName%', '%$contactName%', '%$contactName%',
+        '%$contactName%',
+        '%$contactName%',
+        '%$contactName%',
         '%$contactName%',
       ]);
     }
@@ -918,8 +934,8 @@ class CallHistoryDb {
   /// Distinct caller names and numbers for autocomplete suggestions.
   /// Returns rows with `label` (display name or number) and `phone` fields,
   /// ordered by most recent call first, limited to [limit] entries.
-  static Future<List<Map<String, String>>> searchSuggestions(
-      String prefix, {int limit = 12}) async {
+  static Future<List<Map<String, String>>> searchSuggestions(String prefix,
+      {int limit = 12}) async {
     final db = await database;
     final like = '%$prefix%';
 
@@ -1003,8 +1019,7 @@ class CallHistoryDb {
     });
   }
 
-  static Future<void> updateContact(
-      int id, Map<String, dynamic> fields) async {
+  static Future<void> updateContact(int id, Map<String, dynamic> fields) async {
     final db = await database;
     await db.update('contacts', fields, where: 'id = ?', whereArgs: [id]);
   }
@@ -1027,13 +1042,11 @@ class CallHistoryDb {
     return null;
   }
 
-  static Future<List<Map<String, dynamic>>> searchContacts(
-      String query) async {
+  static Future<List<Map<String, dynamic>>> searchContacts(String query) async {
     final db = await database;
     return db.query(
       'contacts',
-      where:
-          'display_name LIKE ? OR phone_number LIKE ? OR email LIKE ?',
+      where: 'display_name LIKE ? OR phone_number LIKE ? OR email LIKE ?',
       whereArgs: ['%$query%', '%$query%', '%$query%'],
       orderBy: 'display_name ASC',
     );
@@ -1196,8 +1209,7 @@ class CallHistoryDb {
         columns: ['id', 'phone_number'],
       );
       for (final item in items) {
-        final itemPhone =
-            normalizePhone(item['phone_number'] as String? ?? '');
+        final itemPhone = normalizePhone(item['phone_number'] as String? ?? '');
         if (itemPhone.isNotEmpty && itemPhone == normalized) {
           await db.update(
             'tear_sheet_items',
@@ -1267,13 +1279,13 @@ class CallHistoryDb {
     });
   }
 
-  static Future<void> updateTearSheetItemStatus(
-      int id, String status, {int? callRecordId}) async {
+  static Future<void> updateTearSheetItemStatus(int id, String status,
+      {int? callRecordId}) async {
     final db = await database;
     final fields = <String, dynamic>{'status': status};
     if (callRecordId != null) fields['call_record_id'] = callRecordId;
-    await db.update('tear_sheet_items', fields,
-        where: 'id = ?', whereArgs: [id]);
+    await db
+        .update('tear_sheet_items', fields, where: 'id = ?', whereArgs: [id]);
   }
 
   static Future<List<Map<String, dynamic>>> getTearSheetItems(
@@ -1420,8 +1432,7 @@ class CallHistoryDb {
         if (existingStart != null &&
             existingEnd != null &&
             (existingStart != incomingStart || existingEnd != incomingEnd)) {
-          debugPrint(
-              '[CalendarSync] SKIP upsert id=$id — local times differ '
+          debugPrint('[CalendarSync] SKIP upsert id=$id — local times differ '
               '(local=$existingStart, remote=$incomingStart)');
           return;
         }
@@ -1433,8 +1444,8 @@ class CallHistoryDb {
           map['job_function_id'] = existingJfId;
         }
         debugPrint('[CalendarSync] UPSERT id=$id — updating from remote');
-        await db.update('calendar_events', map,
-            where: 'id = ?', whereArgs: [id]);
+        await db
+            .update('calendar_events', map, where: 'id = ?', whereArgs: [id]);
         return;
       }
     }
@@ -1460,8 +1471,7 @@ class CallHistoryDb {
         if (existingStart != null &&
             existingEnd != null &&
             (existingStart != incomingStart || existingEnd != incomingEnd)) {
-          debugPrint(
-              '[CalendarSync] SKIP upsert id=$id — local times differ '
+          debugPrint('[CalendarSync] SKIP upsert id=$id — local times differ '
               '(local=$existingStart, remote=$incomingStart)');
           return;
         }
@@ -1473,8 +1483,8 @@ class CallHistoryDb {
           map['job_function_id'] = existingJfId;
         }
         debugPrint('[CalendarSync] UPSERT id=$id — updating from remote');
-        await db.update('calendar_events', map,
-            where: 'id = ?', whereArgs: [id]);
+        await db
+            .update('calendar_events', map, where: 'id = ?', whereArgs: [id]);
         return;
       }
     }
@@ -1531,12 +1541,11 @@ class CallHistoryDb {
     map.remove('id');
     if (markLocallyModified) {
       map['locally_modified'] = 1;
-      debugPrint(
-          '[CalendarSync] updateCalendarEvent id=${event.id} '
+      debugPrint('[CalendarSync] updateCalendarEvent id=${event.id} '
           'markLocallyModified=true start=${event.startTime}');
     }
-    await db.update('calendar_events', map,
-        where: 'id = ?', whereArgs: [event.id]);
+    await db
+        .update('calendar_events', map, where: 'id = ?', whereArgs: [event.id]);
   }
 
   static Future<void> deleteCalendarEvent(int id) async {
@@ -1601,7 +1610,8 @@ class CallHistoryDb {
         conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
-  static Future<void> updateSmsMessage(int id, Map<String, dynamic> fields) async {
+  static Future<void> updateSmsMessage(
+      int id, Map<String, dynamic> fields) async {
     final db = await database;
     await db.update('sms_messages', fields, where: 'id = ?', whereArgs: [id]);
   }
@@ -1757,8 +1767,7 @@ class CallHistoryDb {
     );
   }
 
-  static Future<List<Map<String, dynamic>>> searchSmsMessages(
-      String query,
+  static Future<List<Map<String, dynamic>>> searchSmsMessages(String query,
       {int limit = 50}) async {
     final db = await database;
     final pattern = '%$query%';
@@ -1877,8 +1886,8 @@ class CallHistoryDb {
 
   static Future<Map<String, dynamic>?> getInboundCallFlow(int id) async {
     final db = await database;
-    final rows = await db.query('inbound_call_flows',
-        where: 'id = ?', whereArgs: [id]);
+    final rows =
+        await db.query('inbound_call_flows', where: 'id = ?', whereArgs: [id]);
     return rows.isEmpty ? null : rows.first;
   }
 

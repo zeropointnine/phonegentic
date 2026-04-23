@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' show pi;
+// ignore: unnecessary_import
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -54,7 +55,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _systemPromptCtrl = TextEditingController();
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
-
 
   bool _whisperModelAvailable = false;
 
@@ -200,11 +200,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       'and those crazy things were given to me. The quick brown fox jumps '
       'over a lazy dog, catching the breeze with joy.';
 
-  static const _tapChannel =
-      MethodChannel('com.agentic_ai/audio_tap_control');
+  static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
 
-  static const _pocketChannel =
-      MethodChannel('com.agentic_ai/pocket_tts');
+  static const _pocketChannel = MethodChannel('com.agentic_ai/pocket_tts');
   static const _pocketAudioChannel =
       EventChannel('com.agentic_ai/pocket_tts_audio');
 
@@ -232,8 +230,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     try {
       // Ensure the native engine is running (idempotent on the native side
       // when already initialized — replaces engine only if needed).
-      final ok =
-          await _pocketChannel.invokeMethod<bool>('initialize') ?? false;
+      final ok = await _pocketChannel.invokeMethod<bool>('initialize') ?? false;
       if (!ok || _pocketPreviewToken != token) {
         _resetPocketPreview(token);
         return;
@@ -248,8 +245,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         });
         await _pocketChannel.invokeMethod('setVoice', {'voice': tag});
       } else if (voice.audioPath != null && voice.audioPath!.isNotEmpty) {
-        final pcm = await PocketTtsService.decodeAudioFileToPcm16(
-            voice.audioPath!);
+        final pcm =
+            await PocketTtsService.decodeAudioFileToPcm16(voice.audioPath!);
         if (pcm.isNotEmpty) {
           await _pocketChannel.invokeMethod('encodeVoice', {
             'audioData': pcm,
@@ -349,9 +346,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       el.endGeneration();
 
       await el.speakingState.firstWhere((playing) => !playing).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => false,
-      );
+            const Duration(seconds: 30),
+            onTimeout: () => false,
+          );
 
       if (_elevenLabsPreviewToken != token) return;
 
@@ -518,9 +515,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           padding: EdgeInsets.symmetric(
               horizontal: wide ? 6 : 0, vertical: wide ? 0 : 6),
           child: Icon(
-            wide
-                ? Icons.arrow_forward_rounded
-                : Icons.arrow_downward_rounded,
+            wide ? Icons.arrow_forward_rounded : Icons.arrow_downward_rounded,
             size: 18,
             color: AppColors.textTertiary.withValues(alpha: 0.6),
           ),
@@ -564,8 +559,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       height: 7,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color:
-                            configured ? AppColors.green : AppColors.orange,
+                        color: configured ? AppColors.green : AppColors.orange,
                       ),
                     ),
                     Icon(Icons.edit_rounded,
@@ -592,8 +586,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     )),
                 const SizedBox(height: 2),
                 Text(sub,
-                    style: TextStyle(
-                        fontSize: 12, color: AppColors.textTertiary),
+                    style:
+                        TextStyle(fontSize: 12, color: AppColors.textTertiary),
                     textAlign: TextAlign.center),
                 const SizedBox(height: 6),
                 Text(model,
@@ -608,8 +602,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 if (badge.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 7, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(3),
                       color: AppColors.textTertiary.withValues(alpha: 0.1),
@@ -690,9 +684,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           padding: EdgeInsets.symmetric(
               horizontal: wide ? 6 : 0, vertical: wide ? 0 : 6),
           child: Icon(
-            wide
-                ? Icons.arrow_forward_rounded
-                : Icons.arrow_downward_rounded,
+            wide ? Icons.arrow_forward_rounded : Icons.arrow_downward_rounded,
             size: 18,
             color: AppColors.textTertiary.withValues(alpha: 0.3),
           ),
@@ -772,9 +764,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               ],
             ),
           ),
-          Divider(
-              height: 0.5,
-              color: AppColors.border.withValues(alpha: 0.5)),
+          Divider(height: 0.5, color: AppColors.border.withValues(alpha: 0.5)),
           ..._sectionContent(section),
           const SizedBox(height: 8),
         ],
@@ -784,8 +774,14 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
 
   // ───── Tile data helpers ─────
 
-  (Widget icon, String label, String subtitle, String model, String badge,
-      bool configured) _tileData(_PipelineSection section) {
+  (
+    Widget icon,
+    String label,
+    String subtitle,
+    String model,
+    String badge,
+    bool configured
+  ) _tileData(_PipelineSection section) {
     return switch (section) {
       _PipelineSection.stt => (
           Icon(Icons.hearing_rounded, size: 22, color: AppColors.textPrimary),
@@ -799,8 +795,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           SvgPicture.asset('assets/brain.svg',
               width: 22,
               height: 22,
-              colorFilter: ColorFilter.mode(
-                  AppColors.textPrimary, BlendMode.srcIn)),
+              colorFilter:
+                  ColorFilter.mode(AppColors.textPrimary, BlendMode.srcIn)),
           'LLM',
           'Thinking Model',
           _llmModelInfo,
@@ -816,21 +812,15 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           _ttsBadge,
           _tts.isConfigured || (_voice.enabled && !_text.enabled),
         ),
-      _PipelineSection.none => (
-          const SizedBox.shrink(),
-          '',
-          '',
-          '',
-          '',
-          false
-        ),
+      _PipelineSection.none => (const SizedBox.shrink(), '', '', '', '', false),
     };
   }
 
   Widget _smallIcon(_PipelineSection section, {bool active = false}) {
     final color = active ? AppColors.accent : AppColors.textPrimary;
     return switch (section) {
-      _PipelineSection.stt => Icon(Icons.hearing_rounded, size: 17, color: color),
+      _PipelineSection.stt =>
+        Icon(Icons.hearing_rounded, size: 17, color: color),
       _PipelineSection.llm => SvgPicture.asset('assets/brain.svg',
           width: 17,
           height: 17,
@@ -909,8 +899,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               height: 28,
               child: Switch.adaptive(
                 value: _voice.enabled,
-                onChanged: (v) =>
-                    _updateVoice(_voice.copyWith(enabled: v)),
+                onChanged: (v) => _updateVoice(_voice.copyWith(enabled: v)),
                 activeTrackColor: AppColors.accent,
               ),
             ),
@@ -1003,8 +992,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             child: Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text('Provider',
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textSecondary)),
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textSecondary)),
             ),
           ),
           Expanded(
@@ -1078,9 +1067,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                     width: 17,
                     height: 17,
                     colorFilter: ColorFilter.mode(
-                      _text.enabled
-                          ? AppColors.accent
-                          : AppColors.textTertiary,
+                      _text.enabled ? AppColors.accent : AppColors.textTertiary,
                       BlendMode.srcIn,
                     )),
               ),
@@ -1117,8 +1104,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               height: 28,
               child: Switch.adaptive(
                 value: _text.enabled,
-                onChanged: (v) =>
-                    _updateText(_text.copyWith(enabled: v)),
+                onChanged: (v) => _updateText(_text.copyWith(enabled: v)),
                 activeTrackColor: AppColors.accent,
               ),
             ),
@@ -1182,8 +1168,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           'Model',
           _textCustomModelCtrl,
           hint: 'e.g. meta-llama/llama-3.3-70b-instruct',
-          onChanged: (val) =>
-              _updateText(_text.copyWith(customModel: val)),
+          onChanged: (val) => _updateText(_text.copyWith(customModel: val)),
         ),
       ],
     ];
@@ -1213,9 +1198,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               ),
               child: Icon(Icons.spatial_audio_off_rounded,
                   size: 17,
-                  color: isEnabled
-                      ? AppColors.accent
-                      : AppColors.textTertiary),
+                  color: isEnabled ? AppColors.accent : AppColors.textTertiary),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1425,38 +1408,36 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           ),
           const SizedBox(height: 8),
           _mutePolicyOption(
-                AgentMutePolicy.autoToggle,
-                Icons.swap_horiz_rounded,
-                'Auto unmute on call',
-                'Agent speaks when a call starts, goes silent when it ends',
-              ),
-              Divider(
-                  height: 0.5,
-                  indent: 16,
-                  color: AppColors.border.withValues(alpha: 0.5)),
-              _mutePolicyOption(
-                AgentMutePolicy.stayMuted,
-                Icons.volume_off_rounded,
-                'Stay muted',
-                'Agent stays text-only unless you manually unmute',
-              ),
-              Divider(
-                  height: 0.5,
-                  indent: 16,
-                  color: AppColors.border.withValues(alpha: 0.5)),
-              _mutePolicyOption(
-                AgentMutePolicy.stayUnmuted,
-                Icons.volume_up_rounded,
-                'Stay unmuted',
-                'Agent always speaks, even when not on a call',
-              ),
+            AgentMutePolicy.autoToggle,
+            Icons.swap_horiz_rounded,
+            'Auto unmute on call',
+            'Agent speaks when a call starts, goes silent when it ends',
+          ),
+          Divider(
+              height: 0.5,
+              indent: 16,
+              color: AppColors.border.withValues(alpha: 0.5)),
+          _mutePolicyOption(
+            AgentMutePolicy.stayMuted,
+            Icons.volume_off_rounded,
+            'Stay muted',
+            'Agent stays text-only unless you manually unmute',
+          ),
+          Divider(
+              height: 0.5,
+              indent: 16,
+              color: AppColors.border.withValues(alpha: 0.5)),
+          _mutePolicyOption(
+            AgentMutePolicy.stayUnmuted,
+            Icons.volume_up_rounded,
+            'Stay unmuted',
+            'Agent always speaks, even when not on a call',
+          ),
           Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Text(
               'Can be overridden per job function.',
-              style:
-                  TextStyle(fontSize: 10, color: AppColors.textTertiary),
+              style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
             ),
           ),
         ],
@@ -1488,8 +1469,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               ),
               child: Icon(icon,
                   size: 17,
-                  color:
-                      selected ? AppColors.accent : AppColors.textTertiary),
+                  color: selected ? AppColors.accent : AppColors.textTertiary),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1510,8 +1490,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   const SizedBox(height: 1),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                        fontSize: 10, color: AppColors.textTertiary),
+                    style:
+                        TextStyle(fontSize: 10, color: AppColors.textTertiary),
                   ),
                 ],
               ),
@@ -1576,110 +1556,108 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             ),
             const SizedBox(height: 12),
             Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        color: _comfortNoise.enabled
-                            ? AppColors.accent.withValues(alpha: 0.12)
-                            : AppColors.card,
-                      ),
-                      child: Icon(Icons.graphic_eq_rounded,
-                          size: 17,
-                          color: _comfortNoise.enabled
-                              ? AppColors.accent
-                              : AppColors.textTertiary),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Play comfort noise',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Loop audio into the call before the agent speaks',
-                            style: TextStyle(
-                                fontSize: 11, color: AppColors.textTertiary),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(
-                      height: 28,
-                      child: Switch.adaptive(
-                        value: _comfortNoise.enabled,
-                        onChanged: (v) => _updateComfortNoise(
-                            _comfortNoise.copyWith(enabled: v)),
-                        activeTrackColor: AppColors.accent,
-                      ),
-                    ),
-                  ],
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: _comfortNoise.enabled
+                        ? AppColors.accent.withValues(alpha: 0.12)
+                        : AppColors.card,
+                  ),
+                  child: Icon(Icons.graphic_eq_rounded,
+                      size: 17,
+                      color: _comfortNoise.enabled
+                          ? AppColors.accent
+                          : AppColors.textTertiary),
                 ),
-                if (_comfortNoise.enabled) ...[
-                  const SizedBox(height: 16),
-                  Row(
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.volume_down,
-                          size: 16, color: AppColors.textTertiary),
-                      Expanded(
-                        child: Slider(
-                          value: _comfortNoise.volume,
-                          min: 0.0,
-                          max: 1.0,
-                          divisions: 20,
-                          activeColor: AppColors.accent,
-                          inactiveColor:
-                              AppColors.textTertiary.withValues(alpha: 0.2),
-                          onChanged: (v) => _updateComfortNoise(
-                              _comfortNoise.copyWith(volume: v)),
+                      Text(
+                        'Play comfort noise',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.2,
                         ),
                       ),
-                      Icon(Icons.volume_up,
-                          size: 16, color: AppColors.textTertiary),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 36,
-                        child: Text(
-                          '${(_comfortNoise.volume * 100).round()}%',
-                          style: TextStyle(
-                              fontSize: 11, color: AppColors.textSecondary),
-                        ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Loop audio into the call before the agent speaks',
+                        style: TextStyle(
+                            fontSize: 11, color: AppColors.textTertiary),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  ComfortNoisePicker(
-                    selectedPath: _comfortNoise.selectedPath,
-                    onSelected: (path) => _updateComfortNoise(
-                      path != null
-                          ? _comfortNoise.copyWith(selectedPath: path)
-                          : _comfortNoise.copyWith(clearPath: true),
+                ),
+                SizedBox(
+                  height: 28,
+                  child: Switch.adaptive(
+                    value: _comfortNoise.enabled,
+                    onChanged: (v) =>
+                        _updateComfortNoise(_comfortNoise.copyWith(enabled: v)),
+                    activeTrackColor: AppColors.accent,
+                  ),
+                ),
+              ],
+            ),
+            if (_comfortNoise.enabled) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Icon(Icons.volume_down,
+                      size: 16, color: AppColors.textTertiary),
+                  Expanded(
+                    child: Slider(
+                      value: _comfortNoise.volume,
+                      min: 0.0,
+                      max: 1.0,
+                      divisions: 20,
+                      activeColor: AppColors.accent,
+                      inactiveColor:
+                          AppColors.textTertiary.withValues(alpha: 0.2),
+                      onChanged: (v) => _updateComfortNoise(
+                          _comfortNoise.copyWith(volume: v)),
+                    ),
+                  ),
+                  Icon(Icons.volume_up,
+                      size: 16, color: AppColors.textTertiary),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 36,
+                    child: Text(
+                      '${(_comfortNoise.volume * 100).round()}%',
+                      style: TextStyle(
+                          fontSize: 11, color: AppColors.textSecondary),
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              ComfortNoisePicker(
+                selectedPath: _comfortNoise.selectedPath,
+                onSelected: (path) => _updateComfortNoise(
+                  path != null
+                      ? _comfortNoise.copyWith(selectedPath: path)
+                      : _comfortNoise.copyWith(clearPath: true),
+                ),
+              ),
+            ],
             const SizedBox(height: 6),
             Text(
               'Can be overridden per job function.',
-              style:
-                  TextStyle(fontSize: 10, color: AppColors.textTertiary),
+              style: TextStyle(fontSize: 10, color: AppColors.textTertiary),
             ),
           ],
         ),
       ),
     );
   }
-
 
   Widget _buildTtsProviderChips() {
     final providers = <TtsProvider, String>{
@@ -1702,26 +1680,31 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             child: Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text('Provider',
-                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.textSecondary)),
             ),
           ),
           Expanded(
             child: Wrap(
               spacing: 8,
               runSpacing: 6,
-              children: providers.entries.map((e) => ChoiceChip(
-                    label: Text(e.value, style: const TextStyle(fontSize: 12)),
-                    selected: _tts.provider == e.key,
-                    onSelected: (_) => _updateTts(_tts.copyWith(provider: e.key)),
-                    selectedColor: AppColors.accent.withValues(alpha: 0.2),
-                    backgroundColor: AppColors.card,
-                    side: BorderSide(
-                      color: _tts.provider == e.key
-                          ? AppColors.accent
-                          : AppColors.border.withValues(alpha: 0.5),
-                      width: 0.5,
-                    ),
-                  )).toList(),
+              children: providers.entries
+                  .map((e) => ChoiceChip(
+                        label:
+                            Text(e.value, style: const TextStyle(fontSize: 12)),
+                        selected: _tts.provider == e.key,
+                        onSelected: (_) =>
+                            _updateTts(_tts.copyWith(provider: e.key)),
+                        selectedColor: AppColors.accent.withValues(alpha: 0.2),
+                        backgroundColor: AppColors.card,
+                        side: BorderSide(
+                          color: _tts.provider == e.key
+                              ? AppColors.accent
+                              : AppColors.border.withValues(alpha: 0.5),
+                          width: 0.5,
+                        ),
+                      ))
+                  .toList(),
             ),
           ),
         ],
@@ -1775,19 +1758,18 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                           width: 0.5),
                     ),
                     child: DropdownButton<int>(
-                      value: _pocketVoiceList.any(
-                              (v) => v.id == _tts.pocketTtsVoiceId)
+                      value: _pocketVoiceList
+                              .any((v) => v.id == _tts.pocketTtsVoiceId)
                           ? _tts.pocketTtsVoiceId
                           : null,
                       hint: Text('Default',
                           style: TextStyle(
-                              fontSize: 13,
-                              color: AppColors.textTertiary)),
+                              fontSize: 13, color: AppColors.textTertiary)),
                       isExpanded: true,
                       underline: const SizedBox.shrink(),
                       dropdownColor: AppColors.card,
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textPrimary),
+                      style:
+                          TextStyle(fontSize: 13, color: AppColors.textPrimary),
                       icon: Icon(Icons.unfold_more_rounded,
                           size: 16, color: AppColors.textTertiary),
                       items: _buildPocketVoiceDropdownItems(),
@@ -1811,14 +1793,12 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 height: 28,
                 child: TextButton.icon(
                   onPressed: _openPocketVoiceUploadModal,
-                  icon: Icon(Icons.add_rounded, size: 14,
-                      color: AppColors.accent),
+                  icon: Icon(Icons.add_rounded,
+                      size: 14, color: AppColors.accent),
                   label: Text('Add Voice',
-                      style: TextStyle(
-                          fontSize: 12, color: AppColors.accent)),
+                      style: TextStyle(fontSize: 12, color: AppColors.accent)),
                   style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(6),
                       side: BorderSide(
@@ -1832,15 +1812,13 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 height: 28,
                 child: TextButton.icon(
                   onPressed: _fetchPocketVoiceList,
-                  icon: Icon(Icons.refresh_rounded, size: 14,
-                      color: AppColors.textTertiary),
+                  icon: Icon(Icons.refresh_rounded,
+                      size: 14, color: AppColors.textTertiary),
                   label: Text('Refresh',
                       style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textTertiary)),
+                          fontSize: 12, color: AppColors.textTertiary)),
                   style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
                 ),
               ),
@@ -1862,18 +1840,15 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                           )
                         : Icon(Icons.play_arrow_rounded,
                             size: 14, color: AppColors.accent),
-                    label: Text(
-                        _pocketPreviewPlaying ? 'Stop' : 'Preview',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.accent)),
+                    label: Text(_pocketPreviewPlaying ? 'Stop' : 'Preview',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.accent)),
                     style: TextButton.styleFrom(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                         side: BorderSide(
-                            color:
-                                AppColors.accent.withValues(alpha: 0.3)),
+                            color: AppColors.accent.withValues(alpha: 0.3)),
                       ),
                     ),
                   ),
@@ -1969,8 +1944,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                           TextButton(
                             onPressed: () => Navigator.of(ctx).pop(false),
                             child: Text('Cancel',
-                                style: TextStyle(
-                                    color: AppColors.textTertiary)),
+                                style:
+                                    TextStyle(color: AppColors.textTertiary)),
                           ),
                           TextButton(
                             onPressed: () => Navigator.of(ctx).pop(true),
@@ -1988,8 +1963,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       _fetchPocketVoiceList();
                     }
                   },
-                  child: Icon(Icons.close, size: 14,
-                      color: AppColors.textTertiary),
+                  child: Icon(Icons.close,
+                      size: 14, color: AppColors.textTertiary),
                 ),
               ],
             ),
@@ -2017,9 +1992,10 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final parts = style.split('_');
     if (parts.length < 2) return style;
     final prefix = parts[0];
-    final name = parts.sublist(1).map((s) =>
-      s[0].toUpperCase() + s.substring(1)
-    ).join(' ');
+    final name = parts
+        .sublist(1)
+        .map((s) => s[0].toUpperCase() + s.substring(1))
+        .join(' ');
     final gender = prefix.startsWith('a')
         ? (prefix.contains('m') ? 'Male' : 'Female')
         : (prefix.contains('m') ? 'Male' : 'Female');
@@ -2089,19 +2065,18 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                           width: 0.5),
                     ),
                     child: DropdownButton<String>(
-                      value: _voiceList!.any(
-                              (v) => v.voiceId == _tts.elevenLabsVoiceId)
+                      value: _voiceList!
+                              .any((v) => v.voiceId == _tts.elevenLabsVoiceId)
                           ? _tts.elevenLabsVoiceId
                           : null,
                       hint: Text('Select a voice',
                           style: TextStyle(
-                              fontSize: 13,
-                              color: AppColors.textTertiary)),
+                              fontSize: 13, color: AppColors.textTertiary)),
                       isExpanded: true,
                       underline: const SizedBox.shrink(),
                       dropdownColor: AppColors.card,
-                      style: TextStyle(
-                          fontSize: 13, color: AppColors.textPrimary),
+                      style:
+                          TextStyle(fontSize: 13, color: AppColors.textPrimary),
                       icon: Icon(Icons.unfold_more_rounded,
                           size: 16, color: AppColors.textTertiary),
                       items: _voiceList!
@@ -2116,8 +2091,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       onChanged: (v) {
                         if (v != null) {
                           _ttsVoiceIdCtrl.text = v;
-                          _updateTts(
-                              _tts.copyWith(elevenLabsVoiceId: v));
+                          _updateTts(_tts.copyWith(elevenLabsVoiceId: v));
                         }
                       },
                     ),
@@ -2127,8 +2101,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 Expanded(
                   child: Text(
                     _voiceListError ?? 'Enter API key to load voices',
-                    style: TextStyle(
-                        fontSize: 12, color: AppColors.textTertiary),
+                    style:
+                        TextStyle(fontSize: 12, color: AppColors.textTertiary),
                   ),
                 ),
             ],
@@ -2143,14 +2117,12 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   onPressed: _tts.elevenLabsApiKey.isEmpty
                       ? null
                       : _openVoiceCloneModal,
-                  icon: Icon(Icons.add_rounded, size: 14,
-                      color: AppColors.accent),
+                  icon: Icon(Icons.add_rounded,
+                      size: 14, color: AppColors.accent),
                   label: Text('Clone Voice',
-                      style: TextStyle(
-                          fontSize: 12, color: AppColors.accent)),
+                      style: TextStyle(fontSize: 12, color: AppColors.accent)),
                   style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(6),
                       side: BorderSide(
@@ -2163,18 +2135,15 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               SizedBox(
                 height: 28,
                 child: TextButton.icon(
-                  onPressed: _tts.elevenLabsApiKey.isEmpty
-                      ? null
-                      : _fetchVoiceList,
-                  icon: Icon(Icons.refresh_rounded, size: 14,
-                      color: AppColors.textTertiary),
+                  onPressed:
+                      _tts.elevenLabsApiKey.isEmpty ? null : _fetchVoiceList,
+                  icon: Icon(Icons.refresh_rounded,
+                      size: 14, color: AppColors.textTertiary),
                   label: Text('Refresh',
                       style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textTertiary)),
+                          fontSize: 12, color: AppColors.textTertiary)),
                   style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                   ),
                 ),
               ),
@@ -2197,18 +2166,15 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                           )
                         : Icon(Icons.play_arrow_rounded,
                             size: 14, color: AppColors.accent),
-                    label: Text(
-                        _elevenLabsPreviewPlaying ? 'Stop' : 'Preview',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.accent)),
+                    label: Text(_elevenLabsPreviewPlaying ? 'Stop' : 'Preview',
+                        style:
+                            TextStyle(fontSize: 12, color: AppColors.accent)),
                     style: TextButton.styleFrom(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                         side: BorderSide(
-                            color:
-                                AppColors.accent.withValues(alpha: 0.3)),
+                            color: AppColors.accent.withValues(alpha: 0.3)),
                       ),
                     ),
                   ),
@@ -2235,8 +2201,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
 
   // ───── Shared field builders ─────
 
-  Widget _buildKeyField(
-      String label, TextEditingController ctrl, ValueChanged<String> onChanged) {
+  Widget _buildKeyField(String label, TextEditingController ctrl,
+      ValueChanged<String> onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
@@ -2244,8 +2210,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           SizedBox(
             width: 100,
             child: Text(label,
-                style:
-                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           ),
           Expanded(
             child: TextField(
@@ -2271,8 +2236,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     );
   }
 
-  Widget _buildTextField(
-      String label, TextEditingController ctrl,
+  Widget _buildTextField(String label, TextEditingController ctrl,
       {String hint = '', required ValueChanged<String> onChanged}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -2281,8 +2245,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           SizedBox(
             width: 100,
             child: Text(label,
-                style:
-                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           ),
           Expanded(
             child: TextField(
@@ -2307,8 +2270,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     );
   }
 
-  Widget _buildDropdown<T>(
-      String label, T value, Map<T, String> options, ValueChanged<T> onChanged) {
+  Widget _buildDropdown<T>(String label, T value, Map<T, String> options,
+      ValueChanged<T> onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -2316,8 +2279,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           SizedBox(
             width: 100,
             child: Text(label,
-                style:
-                    TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           ),
           Expanded(
             child: Container(
@@ -2333,8 +2295,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                 isExpanded: true,
                 underline: const SizedBox.shrink(),
                 dropdownColor: AppColors.card,
-                style: TextStyle(
-                    fontSize: 13, color: AppColors.textPrimary),
+                style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
                 icon: Icon(Icons.unfold_more_rounded,
                     size: 16, color: AppColors.textTertiary),
                 items: options.entries
@@ -2393,8 +2354,8 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
     final duration = await PocketTtsService.getAudioDurationSeconds(path);
     if (!mounted) return;
     if (duration > 30) {
-      setState(
-          () => _error = 'File too long — voice sample must be 30 seconds or less');
+      setState(() =>
+          _error = 'File too long — voice sample must be 30 seconds or less');
       return;
     }
     setState(() {
@@ -2476,23 +2437,21 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                         const SizedBox(height: 2),
                         Text('Upload an audio sample for voice cloning',
                             style: TextStyle(
-                                fontSize: 11,
-                                color: AppColors.textTertiary)),
+                                fontSize: 11, color: AppColors.textTertiary)),
                       ],
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 20),
-
               TextField(
                 controller: _nameCtrl,
                 autocorrect: false,
                 style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'Voice name',
-                  hintStyle: TextStyle(
-                      fontSize: 13, color: AppColors.textTertiary),
+                  hintStyle:
+                      TextStyle(fontSize: 13, color: AppColors.textTertiary),
                   filled: true,
                   fillColor: AppColors.card,
                   contentPadding:
@@ -2510,7 +2469,6 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                 ),
               ),
               const SizedBox(height: 12),
-
               Row(
                 children: [
                   Expanded(
@@ -2544,7 +2502,6 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                 ],
               ),
               const SizedBox(height: 16),
-
               HoverButton(
                 onTap: _pickFile,
                 child: Container(
@@ -2585,14 +2542,12 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                         const SizedBox(height: 4),
                         Text('WAV, MP3, M4A, OGG, FLAC, AAC — max 30s',
                             style: TextStyle(
-                                fontSize: 10,
-                                color: AppColors.textTertiary)),
+                                fontSize: 10, color: AppColors.textTertiary)),
                       ],
                     ],
                   ),
                 ),
               ),
-
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -2609,7 +2564,6 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                       style: TextStyle(fontSize: 12, color: AppColors.red)),
                 ),
               ],
-
               const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -2635,8 +2589,7 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                             AppColors.accent.withValues(alpha: 0.3),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8)),
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 20),
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
                       ),
                       child: _submitting
                           ? SizedBox(
@@ -2650,8 +2603,7 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
                             )
                           : const Text('Add Voice',
                               style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600)),
+                                  fontSize: 13, fontWeight: FontWeight.w600)),
                     ),
                   ),
                 ],
@@ -2663,8 +2615,8 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
     );
   }
 
-  Widget _buildMiniDropdown<T>(
-      String hint, T? value, Map<T, String> options, ValueChanged<T?> onChanged) {
+  Widget _buildMiniDropdown<T>(String hint, T? value, Map<T, String> options,
+      ValueChanged<T?> onChanged) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
@@ -2676,8 +2628,7 @@ class _PocketVoiceUploadDialogState extends State<_PocketVoiceUploadDialog> {
       child: DropdownButton<T>(
         value: value,
         hint: Text(hint,
-            style:
-                TextStyle(fontSize: 12, color: AppColors.textTertiary)),
+            style: TextStyle(fontSize: 12, color: AppColors.textTertiary)),
         isExpanded: true,
         underline: const SizedBox.shrink(),
         dropdownColor: AppColors.card,

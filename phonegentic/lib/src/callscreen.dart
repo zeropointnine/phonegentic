@@ -13,8 +13,6 @@ import 'package:provider/provider.dart';
 
 import 'agent_config_service.dart';
 import 'agent_service.dart';
-import 'audio_device_service.dart';
-import 'calendar_sync_service.dart';
 import 'call_history_service.dart';
 import 'conference/conference_service.dart';
 import 'contact_service.dart';
@@ -31,8 +29,7 @@ import 'widgets/action_button.dart';
 import 'widgets/add_call_modal.dart';
 import 'widgets/dialpad_contact_preview.dart';
 import 'widgets/glass_plate_modal.dart';
-import 'widgets/audio_device_sheet.dart';
-import 'widgets/phonegentic_logo.dart';
+
 import 'widgets/add_2_call_icon.dart';
 import 'widgets/voice_clone_modal.dart';
 
@@ -93,7 +90,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   bool _videoMuted = false;
   bool _hold = false;
   bool _mirror = true;
-  bool _showLocalVideo = false;
+  final bool _showLocalVideo = false;
   Originator? _holdOriginator;
   bool _callConfirmed = false;
   bool _enteredCallMode = false;
@@ -316,8 +313,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     _singleLevelTimer =
         Timer.periodic(const Duration(milliseconds: 80), (_) async {
       try {
-        final result =
-            await _tapChannel.invokeMethod('getRemoteAudioLevel');
+        final result = await _tapChannel.invokeMethod('getRemoteAudioLevel');
         if (result is num && mounted) {
           final raw = result.toDouble();
           setState(() {
@@ -720,8 +716,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
 
   Future<void> _savePocketTtsVoiceSample(
       String samplePath, String? party) async {
-    final defaultName =
-        party == 'host' ? 'My Voice' : 'Remote Voice';
+    final defaultName = party == 'host' ? 'My Voice' : 'Remote Voice';
     final nameCtrl = TextEditingController(text: defaultName);
     final result = await showDialog<String>(
       context: context,
@@ -744,8 +739,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
               borderSide: BorderSide(
-                  color: AppColors.border.withValues(alpha: 0.5),
-                  width: 0.5),
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
@@ -756,14 +750,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(null),
-            child: Text('Cancel',
-                style: TextStyle(color: AppColors.textTertiary)),
+            child:
+                Text('Cancel', style: TextStyle(color: AppColors.textTertiary)),
           ),
           TextButton(
-            onPressed: () =>
-                Navigator.of(ctx).pop(nameCtrl.text.trim()),
-            child: Text('Save',
-                style: TextStyle(color: AppColors.accent)),
+            onPressed: () => Navigator.of(ctx).pop(nameCtrl.text.trim()),
+            child: Text('Save', style: TextStyle(color: AppColors.accent)),
           ),
         ],
       ),
@@ -910,8 +902,7 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   bool _wasAway = false;
 
   void _initPresenceListener() {
-    _presence =
-        Provider.of<ManagerPresenceService>(context, listen: false);
+    _presence = Provider.of<ManagerPresenceService>(context, listen: false);
     _wasAway = _presence!.isAway;
     _presence!.addListener(_onPresenceChanged);
   }
@@ -936,9 +927,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (!_softMute) {
       _softMute = true;
       setState(() {});
-      _tapChannel
-          .invokeMethod('setMicMute', {'muted': true})
-          .catchError((e) => debugPrint('[CallScreen] setMicMute failed: $e'));
+      _tapChannel.invokeMethod('setMicMute', {'muted': true}).catchError(
+          (e) => debugPrint('[CallScreen] setMicMute failed: $e'));
     }
     debugPrint('[CallScreen] Soft-muted for away '
         '(was ${_softMuteBeforeAway ? "muted" : "unmuted"})');
@@ -950,9 +940,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     if (!_softMuteBeforeAway && _softMute) {
       _softMute = false;
       setState(() {});
-      _tapChannel
-          .invokeMethod('setMicMute', {'muted': false})
-          .catchError((e) => debugPrint('[CallScreen] setMicMute failed: $e'));
+      _tapChannel.invokeMethod('setMicMute', {'muted': false}).catchError(
+          (e) => debugPrint('[CallScreen] setMicMute failed: $e'));
     }
     debugPrint('[CallScreen] Restored from away (softMute=$_softMute)');
   }
@@ -1096,47 +1085,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
   }
 
-  void _showAudioDevices() {
-    showAudioDeviceSheet(
-      context,
-      onDeviceSelected: _onAudioDeviceSelected,
-    );
-  }
-
-  Future<void> _onAudioDeviceSelected(AudioDevice device, bool isOutput) async {
-    if (isOutput) {
-      await AudioDeviceService.setDefaultOutputDevice(device.id);
-    } else {
-      await AudioDeviceService.setDefaultInputDevice(device.id);
-      if (_localStream != null) {
-        final newStream = await navigator.mediaDevices.getUserMedia({
-          'audio': {
-            'deviceId': device.uid,
-            'echoCancellation': true,
-            'noiseSuppression': true,
-            'autoGainControl': true,
-            'channelCount': 2,
-          },
-          'video': false,
-        });
-        final newTrack = newStream.getAudioTracks().first;
-        final oldTrack = _localStream!.getAudioTracks().first;
-        final senders = await call?.peerConnection?.getSenders() ?? [];
-        for (final sender in senders) {
-          if (sender.track?.kind == 'audio') {
-            await sender.replaceTrack(newTrack);
-            break;
-          }
-        }
-        await oldTrack.stop();
-        _localStream!.removeTrack(oldTrack);
-        _localStream!.addTrack(newTrack);
-        newStream.removeTrack(newTrack);
-        await newStream.dispose();
-      }
-    }
-  }
-
   // -- State label --
   String get _stateLabel {
     switch (_state) {
@@ -1169,441 +1117,6 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     );
   }
 
-  static const double _collapseThreshold = 480;
-
-  Widget _buildCallTopBar() {
-    final agent = context.watch<AgentService>();
-    final conf = context.watch<ConferenceService>();
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= _collapseThreshold;
-        return Padding(
-          padding:
-              const EdgeInsets.only(left: 90, right: 16, top: 18, bottom: 15),
-          child: Row(
-            children: [
-              const PhonegenticLogo(size: 30),
-              const SizedBox(width: 10),
-              Text(
-                'Phonegentic',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                  letterSpacing: -0.5,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                'AI',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.accent,
-                  letterSpacing: -0.5,
-                  shadows: [
-                    Shadow(
-                      color: AppColors.phosphor.withValues(alpha: 0.4),
-                      blurRadius: 6,
-                    ),
-                  ],
-                ),
-              ),
-              _buildCallConferenceBadge(conf),
-              if (agent.whisperMode) _buildWhisperBadge(),
-              const Spacer(),
-              if (wide) ...[
-                _buildBarBtn(
-                  icon: Icons.chat_bubble_outline_rounded,
-                  onTap: () => context.read<MessagingService>().toggleOpen(),
-                  active: context.read<MessagingService>().isOpen,
-                  badge: context.read<MessagingService>().unreadCount,
-                ),
-                const SizedBox(width: 4),
-                _buildBarBtn(
-                  icon: Icons.receipt_long_rounded,
-                  onTap: () {
-                    final ts = context.read<TearSheetService>();
-                    ts.isActive ? ts.dismissSheet() : ts.openEditor();
-                  },
-                  active: context.read<TearSheetService>().isActive,
-                ),
-                const SizedBox(width: 4),
-                _buildBarBtn(
-                  icon: Icons.contacts_rounded,
-                  onTap: () => context.read<ContactService>().toggleContacts(),
-                ),
-                const SizedBox(width: 4),
-                _buildBarBtn(
-                  icon: Icons.history_rounded,
-                  onTap: () =>
-                      context.read<CallHistoryService>().toggleHistory(),
-                ),
-                const SizedBox(width: 4),
-                _buildBarBtn(
-                  icon: Icons.headphones_rounded,
-                  onTap: _showAudioDevices,
-                ),
-                const SizedBox(width: 4),
-                if (_callConfirmed && _localStream != null)
-                  _buildBarBtn(
-                    icon: _showLocalVideo
-                        ? Icons.videocam_rounded
-                        : Icons.videocam_off_rounded,
-                    onTap: () =>
-                        setState(() => _showLocalVideo = !_showLocalVideo),
-                    active: _showLocalVideo,
-                  ),
-                if (_callConfirmed && _localStream != null)
-                  const SizedBox(width: 4),
-              ],
-              _buildCallMenuButton(context, collapsed: !wide),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildWhisperBadge() {
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: AppColors.burntAmber.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-              color: AppColors.burntAmber.withValues(alpha: 0.4), width: 0.5),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.hearing_disabled, size: 12, color: AppColors.burntAmber),
-            const SizedBox(width: 4),
-            Text(
-              'Whisper',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: AppColors.burntAmber,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCallConferenceBadge(ConferenceService conf) {
-    if (!conf.hasConference && conf.legCount < 2) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.only(left: 10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: conf.hasConference
-              ? AppColors.green.withValues(alpha: 0.12)
-              : AppColors.burntAmber.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: conf.hasConference
-                ? AppColors.green.withValues(alpha: 0.3)
-                : AppColors.burntAmber.withValues(alpha: 0.3),
-            width: 0.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              conf.hasConference
-                  ? Icons.groups_rounded
-                  : Icons.call_split_rounded,
-              size: 12,
-              color:
-                  conf.hasConference ? AppColors.green : AppColors.burntAmber,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              conf.hasConference
-                  ? 'Conference (${conf.legCount})'
-                  : '${conf.legCount} calls',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color:
-                    conf.hasConference ? AppColors.green : AppColors.burntAmber,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBarBtn({
-    required IconData icon,
-    required VoidCallback onTap,
-    bool active = false,
-    int badge = 0,
-  }) {
-    return HoverButton(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: active
-                  ? AppColors.accent.withValues(alpha: 0.12)
-                  : AppColors.card,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: active
-                    ? AppColors.accent.withValues(alpha: 0.4)
-                    : AppColors.border.withValues(alpha: 0.5),
-                width: 0.5,
-              ),
-            ),
-            child: Icon(icon,
-                size: 16,
-                color: active ? AppColors.accent : AppColors.textSecondary),
-          ),
-          if (badge > 0)
-            Positioned(
-              top: -4,
-              right: -4,
-              child: Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: AppColors.red,
-                  shape: BoxShape.circle,
-                ),
-                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                child: Text(
-                  badge > 99 ? '99+' : '$badge',
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.onAccent,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCallMenuButton(BuildContext context, {bool collapsed = false}) {
-    return PopupMenuButton<String>(
-      onSelected: (value) {
-        switch (value) {
-          case 'tear_sheet':
-            final ts = context.read<TearSheetService>();
-            ts.isActive ? ts.dismissSheet() : ts.openEditor();
-            break;
-          case 'contacts':
-            context.read<ContactService>().toggleContacts();
-            break;
-          case 'history':
-            context.read<CallHistoryService>().toggleHistory();
-            break;
-          case 'audio':
-            _showAudioDevices();
-            break;
-          case 'messages':
-            context.read<MessagingService>().toggleOpen();
-            break;
-          case 'calendar':
-            context.read<CalendarSyncService>().toggleOpen();
-            break;
-          case 'settings':
-            Navigator.pushNamed(context, '/register');
-            break;
-          case 'theme_amber':
-            context.read<ThemeProvider>().setTheme(AppTheme.amberVt100);
-            break;
-          case 'theme_miami':
-            context.read<ThemeProvider>().setTheme(AppTheme.miamiVice);
-            break;
-          case 'theme_light':
-            context.read<ThemeProvider>().setTheme(AppTheme.light);
-            break;
-        }
-      },
-      icon: Icon(Icons.more_horiz, color: AppColors.textSecondary, size: 20),
-      color: AppColors.card,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: AppColors.border, width: 0.5),
-      ),
-      itemBuilder: (_) => [
-        if (collapsed) ...[
-          PopupMenuItem(
-            value: 'history',
-            child: Row(
-              children: [
-                Icon(Icons.history_rounded,
-                    size: 18, color: AppColors.textSecondary),
-                const SizedBox(width: 10),
-                const Text('Call History', style: TextStyle(fontSize: 13)),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'contacts',
-            child: Row(
-              children: [
-                Icon(Icons.contacts_rounded,
-                    size: 18, color: AppColors.textSecondary),
-                const SizedBox(width: 10),
-                const Text('Contacts', style: TextStyle(fontSize: 13)),
-              ],
-            ),
-          ),
-          PopupMenuItem(
-            value: 'tear_sheet',
-            child: Row(
-              children: [
-                Icon(Icons.receipt_long_rounded,
-                    size: 18, color: AppColors.textSecondary),
-                const SizedBox(width: 10),
-                Text(
-                  context.read<TearSheetService>().isActive
-                      ? 'Dismiss Tear Sheet'
-                      : 'New Tear Sheet',
-                  style: const TextStyle(fontSize: 13),
-                ),
-              ],
-            ),
-          ),
-          const PopupMenuDivider(),
-          PopupMenuItem(
-            value: 'audio',
-            child: Row(
-              children: [
-                Icon(Icons.headphones_rounded,
-                    size: 18, color: AppColors.textSecondary),
-                const SizedBox(width: 10),
-                const Text('Audio Devices', style: TextStyle(fontSize: 13)),
-              ],
-            ),
-          ),
-        ],
-        PopupMenuItem(
-          value: 'messages',
-          child: Row(
-            children: [
-              Icon(Icons.chat_bubble_outline_rounded,
-                  size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 10),
-              Text(
-                'Messages${context.read<MessagingService>().unreadCount > 0 ? ' (${context.read<MessagingService>().unreadCount})' : ''}',
-                style: const TextStyle(fontSize: 13),
-              ),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'calendar',
-          child: Row(
-            children: [
-              Icon(Icons.calendar_month_rounded,
-                  size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 10),
-              const Text('Calendar', style: TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'settings',
-          child: Row(
-            children: [
-              Icon(Icons.settings_outlined,
-                  size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 10),
-              const Text('Settings', style: TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          enabled: false,
-          height: 28,
-          child: Text(
-            'Theme',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textTertiary,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
-        ..._buildThemeMenuItems(context),
-      ],
-    );
-  }
-
-  List<PopupMenuEntry<String>> _buildThemeMenuItems(BuildContext context) {
-    final current = context.read<ThemeProvider>().appTheme;
-    return [
-      PopupMenuItem(
-        value: 'theme_amber',
-        child: Row(
-          children: [
-            Icon(Icons.terminal_rounded,
-                size: 18, color: AppColors.textSecondary),
-            const SizedBox(width: 10),
-            const Expanded(
-                child: Text('Amber VT-100', style: TextStyle(fontSize: 13))),
-            if (current == AppTheme.amberVt100)
-              Icon(Icons.check, size: 16, color: AppColors.accent),
-          ],
-        ),
-      ),
-      PopupMenuItem(
-        value: 'theme_miami',
-        child: Row(
-          children: [
-            Icon(Icons.nightlife_rounded,
-                size: 18, color: AppColors.textSecondary),
-            const SizedBox(width: 10),
-            const Expanded(
-                child: Text('Miami Vice', style: TextStyle(fontSize: 13))),
-            if (current == AppTheme.miamiVice)
-              Icon(Icons.check, size: 16, color: AppColors.accent),
-          ],
-        ),
-      ),
-      PopupMenuItem(
-        value: 'theme_light',
-        child: Row(
-          children: [
-            Icon(Icons.light_mode_rounded,
-                size: 18, color: AppColors.textSecondary),
-            const SizedBox(width: 10),
-            const Expanded(
-                child:
-                    Text('Pedestrian Neutral', style: TextStyle(fontSize: 13))),
-            if (current == AppTheme.light)
-              Icon(Icons.check, size: 16, color: AppColors.accent),
-          ],
-        ),
-      ),
-    ];
-  }
-
   Widget _buildSingleCallAvatar(String seed, String? thumbnailPath) {
     final isSpeaking = _smoothedSingleRms > _speechThreshold;
     final intensity = isSpeaking
@@ -1629,14 +1142,14 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                       spreadRadius: 1 + 3 * intensity,
                     ),
                     BoxShadow(
-                      color: AppColors.green.withValues(
-                          alpha: (0.08 + 0.22 * intensity) * v),
+                      color: AppColors.green
+                          .withValues(alpha: (0.08 + 0.22 * intensity) * v),
                       blurRadius: 18 + 16 * v * intensity,
                       spreadRadius: 3 + 8 * v * intensity,
                     ),
                     BoxShadow(
-                      color: AppColors.green.withValues(
-                          alpha: (0.04 + 0.10 * intensity) * vInv),
+                      color: AppColors.green
+                          .withValues(alpha: (0.04 + 0.10 * intensity) * vInv),
                       blurRadius: 28 + 14 * vInv * intensity,
                       spreadRadius: 5 + 10 * vInv * intensity,
                     ),
@@ -1672,10 +1185,9 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                 : null;
             final rawNameRaw =
                 match?['display_name'] as String? ?? leg.displayName;
-            final rawName =
-                (rawNameRaw != null && rawNameRaw.trim().isNotEmpty)
-                    ? rawNameRaw
-                    : null;
+            final rawName = (rawNameRaw != null && rawNameRaw.trim().isNotEmpty)
+                ? rawNameRaw
+                : null;
             final seed = rawName ?? leg.remoteNumber;
             final nameIsPhone = rawName != null &&
                 rawName.replaceAll(RegExp(r'[^\d]'), '').length >= 7 &&
@@ -1684,13 +1196,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
             final label = hasRealName
                 ? demoMode.maskDisplayName(rawName)
                 : demoMode.maskPhone(leg.remoteNumber);
-            final phoneLabel = hasRealName
-                ? demoMode.maskPhone(leg.remoteNumber)
-                : null;
+            final phoneLabel =
+                hasRealName ? demoMode.maskPhone(leg.remoteNumber) : null;
 
-            final smoothRms = i < _smoothedLevels.length
-                ? _smoothedLevels[i]
-                : 0.0;
+            final smoothRms =
+                i < _smoothedLevels.length ? _smoothedLevels[i] : 0.0;
             final isSpeaking = smoothRms > _speechThreshold;
             final intensity = isSpeaking
                 ? ((smoothRms - _speechThreshold) /
@@ -1721,19 +1231,16 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
                                   ),
                                   BoxShadow(
                                     color: AppColors.green.withValues(
-                                        alpha:
-                                            (0.08 + 0.22 * intensity) * v),
+                                        alpha: (0.08 + 0.22 * intensity) * v),
                                     blurRadius: 14 + 14 * v * intensity,
                                     spreadRadius: 2 + 6 * v * intensity,
                                   ),
                                   BoxShadow(
                                     color: AppColors.green.withValues(
-                                        alpha: (0.04 + 0.10 * intensity) *
-                                            vInv),
-                                    blurRadius:
-                                        22 + 10 * vInv * intensity,
-                                    spreadRadius:
-                                        4 + 8 * vInv * intensity,
+                                        alpha:
+                                            (0.04 + 0.10 * intensity) * vInv),
+                                    blurRadius: 22 + 10 * vInv * intensity,
+                                    spreadRadius: 4 + 8 * vInv * intensity,
                                   ),
                                 ]
                               : null,
@@ -2041,9 +1548,8 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
           ActionButton(
             title: 'Add Call',
             iconWidget: Add2CallIcon(color: AppColors.textSecondary),
-            onPressed: _addCallReady && !conf.atCapacity
-                ? _handleAddCall
-                : null,
+            onPressed:
+                _addCallReady && !conf.atCapacity ? _handleAddCall : null,
           ),
         ]);
         // Row 2: Contact - Keypad - [Hangup] - Clone - Message

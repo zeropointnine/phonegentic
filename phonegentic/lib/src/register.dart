@@ -478,7 +478,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
               ),
               if (isActive) ...[
-                Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
+                Divider(
+                    height: 1, color: AppColors.border.withValues(alpha: 0.4)),
                 Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -502,8 +503,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                                   ? 'SIP REFER limited to 2'
                                   : 'Remote call legs in conference',
                               style: TextStyle(
-                                  fontSize: 11,
-                                  color: AppColors.textTertiary),
+                                  fontSize: 11, color: AppColors.textTertiary),
                             ),
                           ],
                         ),
@@ -534,7 +534,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
               ],
               if (isBasic) ...[
-                Divider(height: 1, color: AppColors.border.withValues(alpha: 0.4)),
+                Divider(
+                    height: 1, color: AppColors.border.withValues(alpha: 0.4)),
                 _buildBasicConfToggle(
                   label: 'Platform supports sending Updates',
                   subtitle: 'Use SIP UPDATE for hold; otherwise re-INVITE',
@@ -766,7 +767,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                 ),
                 Switch.adaptive(
                   value: _requireHdCodecs,
-                  activeColor: AppColors.accent,
+                  activeTrackColor: AppColors.accent,
                   onChanged: (v) {
                     setState(() => _requireHdCodecs = v);
                     _preferences.setBool('require_hd_codecs', v);

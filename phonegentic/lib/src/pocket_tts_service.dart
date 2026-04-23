@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+// ignore: unnecessary_import
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -26,10 +27,8 @@ import 'text_segmenter.dart';
 // =============================================================================
 
 class PocketTtsService implements LocalTtsService {
-  static const _channel =
-      MethodChannel('com.agentic_ai/pocket_tts');
-  static const _audioChannel =
-      EventChannel('com.agentic_ai/pocket_tts_audio');
+  static const _channel = MethodChannel('com.agentic_ai/pocket_tts');
+  static const _audioChannel = EventChannel('com.agentic_ai/pocket_tts_audio');
 
   final TtsConfig _config;
   bool _initialized = false;
@@ -224,7 +223,8 @@ class PocketTtsService implements LocalTtsService {
           'text': text,
           'voice': _currentVoice,
         });
-        debugPrint('[PocketTTS] Synthesis done in ${sw.elapsedMilliseconds} ms');
+        debugPrint(
+            '[PocketTTS] Synthesis done in ${sw.elapsedMilliseconds} ms');
       } on PlatformException catch (e) {
         debugPrint('[PocketTTS] Synthesis failed: ${e.message}');
       }
@@ -250,7 +250,7 @@ class PocketTtsService implements LocalTtsService {
     try {
       final result = await _channel.invokeMethod<bool>('encodeVoice', {
         'audioData': audioData,
-        'voiceId':   voiceId,
+        'voiceId': voiceId,
       });
       debugPrint('[PocketTTS] cloneVoice "$voiceId": ${result == true}');
       return result == true;
@@ -280,7 +280,8 @@ class PocketTtsService implements LocalTtsService {
     try {
       final result = await _channel.invokeMethod<bool>(
           'importVoiceEmbedding', {'voiceId': voiceId, 'embeddingData': data});
-      debugPrint('[PocketTTS] importVoiceEmbedding "$voiceId": ${result == true}');
+      debugPrint(
+          '[PocketTTS] importVoiceEmbedding "$voiceId": ${result == true}');
       return result == true;
     } on PlatformException catch (e) {
       debugPrint('[PocketTTS] importVoiceEmbedding failed: ${e.message}');
@@ -327,19 +328,21 @@ class PocketTtsService implements LocalTtsService {
   static Uint8List _decodeWavToPcm16(Uint8List wav) {
     final ByteData hdr = wav.buffer.asByteData(wav.offsetInBytes);
 
-    final int channels    = hdr.getInt16(22, Endian.little);
-    final int sampleRate  = hdr.getInt32(24, Endian.little);
-    final int bitDepth    = hdr.getInt16(34, Endian.little);
+    final int channels = hdr.getInt16(22, Endian.little);
+    final int sampleRate = hdr.getInt32(24, Endian.little);
+    final int bitDepth = hdr.getInt16(34, Endian.little);
 
     if (bitDepth != 16) throw Exception('WAV: unsupported bit depth $bitDepth');
 
     // Find the 'data' sub-chunk.
     int dataOffset = 0;
-    int dataSize   = 0;
+    int dataSize = 0;
     for (int i = 12; i < wav.length - 8; i++) {
-      if (wav[i] == 0x64 && wav[i+1] == 0x61 &&
-          wav[i+2] == 0x74 && wav[i+3] == 0x61) {
-        dataSize   = hdr.getInt32(i + 4, Endian.little);
+      if (wav[i] == 0x64 &&
+          wav[i + 1] == 0x61 &&
+          wav[i + 2] == 0x74 &&
+          wav[i + 3] == 0x61) {
+        dataSize = hdr.getInt32(i + 4, Endian.little);
         dataOffset = i + 8;
         break;
       }
@@ -351,12 +354,12 @@ class PocketTtsService implements LocalTtsService {
 
     // Stereo → mono (average channels).
     if (channels == 2) {
-      final ByteData bd    = pcm.buffer.asByteData(pcm.offsetInBytes);
-      final int n          = pcm.length ~/ 4;
+      final ByteData bd = pcm.buffer.asByteData(pcm.offsetInBytes);
+      final int n = pcm.length ~/ 4;
       final Uint8List mono = Uint8List(n * 2);
-      final ByteData mbd   = mono.buffer.asByteData();
+      final ByteData mbd = mono.buffer.asByteData();
       for (int i = 0; i < n; i++) {
-        final int l = bd.getInt16(i * 4,     Endian.little);
+        final int l = bd.getInt16(i * 4, Endian.little);
         final int r = bd.getInt16(i * 4 + 2, Endian.little);
         mbd.setInt16(i * 2, (l + r) ~/ 2, Endian.little);
       }
@@ -372,10 +375,11 @@ class PocketTtsService implements LocalTtsService {
     final ProcessResult result = await Process.run(
       _resolveBinary('ffmpeg'),
       <String>['-i', path, '-ar', '24000', '-ac', '1', '-f', 's16le', 'pipe:1'],
-      stdoutEncoding: null,  // raw bytes
+      stdoutEncoding: null, // raw bytes
     );
     if (result.exitCode != 0) {
-      throw Exception('ffmpeg failed (exit ${result.exitCode}): ${result.stderr}');
+      throw Exception(
+          'ffmpeg failed (exit ${result.exitCode}): ${result.stderr}');
     }
     final List<int> raw = result.stdout as List<int>;
     return raw is Uint8List ? raw : Uint8List.fromList(raw);
@@ -395,20 +399,22 @@ class PocketTtsService implements LocalTtsService {
 
   /// Linear-interpolation resampler for mono PCM16.
   static Uint8List _resamplePcm16(Uint8List input, int srcRate, int dstRate) {
-    final ByteData bd     = input.buffer.asByteData(input.offsetInBytes);
-    final int srcCount    = input.length ~/ 2;
-    final int dstCount    = (srcCount * dstRate / srcRate).round();
-    final Uint8List out   = Uint8List(dstCount * 2);
-    final ByteData obd    = out.buffer.asByteData();
-    final double ratio    = srcRate / dstRate;
+    final ByteData bd = input.buffer.asByteData(input.offsetInBytes);
+    final int srcCount = input.length ~/ 2;
+    final int dstCount = (srcCount * dstRate / srcRate).round();
+    final Uint8List out = Uint8List(dstCount * 2);
+    final ByteData obd = out.buffer.asByteData();
+    final double ratio = srcRate / dstRate;
 
     for (int i = 0; i < dstCount; i++) {
       final double pos = i * ratio;
-      final int idx    = pos.floor();
+      final int idx = pos.floor();
       final double frac = pos - idx;
-      final int s0 = idx < srcCount         ? bd.getInt16(idx * 2, Endian.little) : 0;
-      final int s1 = (idx + 1) < srcCount   ? bd.getInt16((idx + 1) * 2, Endian.little) : s0;
-      obd.setInt16(i * 2, (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767), Endian.little);
+      final int s0 = idx < srcCount ? bd.getInt16(idx * 2, Endian.little) : 0;
+      final int s1 =
+          (idx + 1) < srcCount ? bd.getInt16((idx + 1) * 2, Endian.little) : s0;
+      obd.setInt16(i * 2, (s0 + (s1 - s0) * frac).round().clamp(-32768, 32767),
+          Endian.little);
     }
     return out;
   }
@@ -417,10 +423,14 @@ class PocketTtsService implements LocalTtsService {
   /// Returns 0 on failure.
   static Future<double> getAudioDurationSeconds(String filePath) async {
     try {
-      final ProcessResult result = await Process.run(_resolveBinary('ffprobe'), [
-        '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
+      final ProcessResult result =
+          await Process.run(_resolveBinary('ffprobe'), [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'default=noprint_wrappers=1:nokey=1',
         filePath,
       ]);
       if (result.exitCode != 0) return 0;

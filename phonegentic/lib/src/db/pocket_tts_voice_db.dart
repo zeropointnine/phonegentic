@@ -1,4 +1,5 @@
 import 'dart:io';
+// ignore: unnecessary_import
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -134,8 +135,7 @@ class PocketTtsVoiceDb {
 
   static Future<void> deleteVoice(int id) async {
     final db = await CallHistoryDb.database;
-    await db
-        .delete('pocket_tts_voices', where: 'id = ?', whereArgs: [id]);
+    await db.delete('pocket_tts_voices', where: 'id = ?', whereArgs: [id]);
   }
 
   /// Extract a bundled asset to a writable file in the documents directory.
@@ -159,11 +159,10 @@ class PocketTtsVoiceDb {
   /// Replaces stale defaults when the built-in voice set changes.
   static Future<void> seedDefaultVoices() async {
     final db = await CallHistoryDb.database;
-    final existing = await db.query('pocket_tts_voices',
-        where: 'is_default = 1');
+    final existing =
+        await db.query('pocket_tts_voices', where: 'is_default = 1');
 
-    final expectedNames =
-        _defaultVoices.map((v) => v['name']!).toSet();
+    final expectedNames = _defaultVoices.map((v) => v['name']!).toSet();
     final existingNames =
         existing.map((r) => r['name'] as String? ?? '').toSet();
 
@@ -179,7 +178,8 @@ class PocketTtsVoiceDb {
       await db.delete('pocket_tts_voices', where: 'is_default = 1');
     }
 
-    debugPrint('[PocketTtsVoiceDb] Seeding ${_defaultVoices.length} default voices');
+    debugPrint(
+        '[PocketTtsVoiceDb] Seeding ${_defaultVoices.length} default voices');
 
     for (final v in _defaultVoices) {
       try {

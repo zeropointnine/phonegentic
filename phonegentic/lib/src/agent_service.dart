@@ -4329,7 +4329,7 @@ class AgentService extends ChangeNotifier {
           result = _handleCheckLocale();
           break;
         case 'end_call':
-          result = await _handleEndCall();
+          result = await _handleEndCall(args);
           break;
         case 'send_dtmf':
           result = _handleSendDtmf(args);
@@ -4507,7 +4507,7 @@ class AgentService extends ChangeNotifier {
           result = _handleCheckLocale();
           break;
         case 'end_call':
-          result = await _handleEndCall();
+          result = await _handleEndCall(req.arguments);
           break;
         case 'send_dtmf':
           result = _handleSendDtmf(req.arguments);
@@ -6042,10 +6042,29 @@ class AgentService extends ChangeNotifier {
     }
   }
 
-  Future<String> _handleEndCall() async {
+  /// Resolve the call a tool should act on. When the model passes an explicit
+  /// `call_id`, we operate on that specific call — this is essential in
+  /// multi-call situations where `sipHelper.activeCall` may point at the
+  /// wrong leg. Falls back to `sipHelper.activeCall` when no id is provided.
+  Call? _resolveTargetCall(Map<String, dynamic> args) {
+    final helper = sipHelper;
+    if (helper == null) return null;
+    final raw = args['call_id'];
+    final id = raw is String ? raw.trim() : null;
+    if (id != null && id.isNotEmpty) {
+      final found = helper.findCall(id);
+      if (found != null) return found;
+      debugPrint(
+          '[AgentService] _resolveTargetCall: call_id="$id" not found, '
+          'falling back to activeCall');
+    }
+    return helper.activeCall;
+  }
+
+  Future<String> _handleEndCall([Map<String, dynamic>? args]) async {
     if (sipHelper == null) return 'SIP helper not available.';
-    final active = sipHelper!.activeCall;
-    if (active == null) return 'No active call to end.';
+    final target = _resolveTargetCall(args ?? const {});
+    if (target == null) return 'No active call to end.';
 
     if (_connectedAt != null) {
       final elapsed = DateTime.now().difference(_connectedAt!).inSeconds;
@@ -6080,7 +6099,12 @@ class AgentService extends ChangeNotifier {
       }
     }
 
-    sipHelper!.activeCall?.hangup();
+    try {
+      target.hangup();
+    } catch (e) {
+      debugPrint('[AgentService] end_call hangup failed: $e');
+      return 'Failed to end call: $e';
+    }
     return 'Call ended.';
   }
 
@@ -6088,9 +6112,9 @@ class AgentService extends ChangeNotifier {
     if (sipHelper == null) return 'SIP helper not available.';
     final tones = args['tones'] as String?;
     if (tones == null || tones.isEmpty) return 'No tones provided.';
-    final active = sipHelper!.activeCall;
-    if (active == null) return 'No active call for DTMF.';
-    active.sendDTMF(tones);
+    final target = _resolveTargetCall(args);
+    if (target == null) return 'No active call for DTMF.';
+    target.sendDTMF(tones);
     return 'Sent DTMF: $tones';
   }
 
@@ -6113,13 +6137,13 @@ class AgentService extends ChangeNotifier {
     if (sipHelper == null) return 'SIP helper not available.';
     final action = args['action'] as String?;
     if (action == null) return 'No action provided (hold or resume).';
-    final active = sipHelper!.activeCall;
-    if (active == null) return 'No active call.';
+    final target = _resolveTargetCall(args);
+    if (target == null) return 'No active call.';
     if (action == 'hold') {
-      active.hold();
+      target.hold();
       return 'Call placed on hold.';
     } else if (action == 'resume') {
-      active.unhold();
+      target.unhold();
       return 'Call resumed.';
     }
     return 'Unknown action "$action". Use "hold" or "resume".';
@@ -7691,6 +7715,51 @@ class AgentService extends ChangeNotifier {
   void addSystemMessage(String text) {
     _addMsg(ChatMessage.system(text));
     notifyListeners();
+  }
+
+  /// Briefly speak [text] aloud on the current active call, e.g. the polite
+  /// hold notice when a second inbound arrives.
+  ///
+  /// If the realtime agent pipeline is live (`_active`), the agent is
+  /// instructed to say only this phrase immediately. Returns when the agent
+  /// stops speaking or [timeout] elapses, whichever comes first. If the
+  /// pipeline is not live we return quickly (caller can proceed silently).
+  Future<void> speakToCurrentCaller(
+    String text, {
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+
+    if (!_active) {
+      debugPrint(
+          '[AgentService] speakToCurrentCaller: pipeline idle, skipping "$trimmed"');
+      return;
+    }
+
+    final directive =
+        '[HOLD TRANSITION] Immediately and only say to the current caller: '
+        '"$trimmed". Say nothing else. Do not explain. Do not elaborate. '
+        'Keep it under two seconds.';
+    try {
+      _whisper.sendSystemDirective(directive);
+    } catch (e) {
+      debugPrint('[AgentService] speakToCurrentCaller directive failed: $e');
+      return;
+    }
+
+    final deadline = DateTime.now().add(timeout);
+    // Give TTS a brief head-start before checking for end-of-speech, so we
+    // don't race out before the agent has begun synthesizing.
+    await Future.delayed(const Duration(milliseconds: 400));
+    while (DateTime.now().isBefore(deadline)) {
+      if (!_speaking && !_whisper.isTtsPlaying) {
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    debugPrint('[AgentService] speakToCurrentCaller timed out after '
+        '${timeout.inMilliseconds}ms');
   }
 
   /// Send a system-level context update that the model can see and act on.

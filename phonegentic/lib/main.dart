@@ -16,6 +16,7 @@ import 'package:phonegentic/src/db/call_history_db.dart';
 import 'package:phonegentic/src/db/pocket_tts_voice_db.dart';
 import 'package:phonegentic/src/demo_mode_service.dart';
 import 'package:phonegentic/src/inbound_call_flow_service.dart';
+import 'package:phonegentic/src/inbound_call_router.dart';
 import 'package:phonegentic/src/transfer_rule_service.dart';
 import 'package:phonegentic/src/job_function_service.dart';
 import 'package:phonegentic/src/messaging/messaging_service.dart';
@@ -218,6 +219,9 @@ class MyApp extends StatelessWidget {
             agent.conferenceService = conf;
             return conf!;
           },
+        ),
+        ChangeNotifierProvider<InboundCallRouter>(
+          create: (_) => InboundCallRouter(),
         ),
       ],
       child: MaterialApp(
