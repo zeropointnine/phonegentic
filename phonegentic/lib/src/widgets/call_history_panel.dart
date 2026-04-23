@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -7,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:sip_ua/sip_ua.dart';
 
+import '../agent_service.dart';
 import '../call_history_service.dart';
 import '../contact_service.dart';
 import '../demo_mode_service.dart';
@@ -415,6 +417,36 @@ class _CallRecordTileState extends State<_CallRecordTile> {
   bool _loadingTranscripts = false;
   bool _autoPlayRecording = false;
 
+  /// Transcript id the tile should scroll into view once transcripts
+  /// are rendered (set from `CallHistoryService.pendingScrollTranscriptId`
+  /// when a deep-link — like the history icon on a finalized `/note` —
+  /// lands on this specific call). Cleared after one ensureVisible pass.
+  int? _scrollTargetId;
+  final GlobalKey _scrollTargetKey = GlobalKey();
+
+  /// Transcript id to flash a brief highlight on after scrolling, so the
+  /// viewer can visually locate the deep-linked row.
+  int? _highlightedTranscriptId;
+  Timer? _highlightTimer;
+
+  CallHistoryService? _subscribedService;
+  VoidCallback? _serviceListener;
+
+  @override
+  void initState() {
+    super.initState();
+    // When focusCall lands on this tile it may be created already
+    // expanded — didUpdateWidget only fires on updates, not initial
+    // mount, so without this the transcripts never get loaded and the
+    // scroll-to-note deep-link silently bails in _maybeScrollToPendingTarget.
+    if (widget.isExpanded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _loadTranscripts();
+      });
+    }
+  }
+
   @override
   void didUpdateWidget(_CallRecordTile old) {
     super.didUpdateWidget(old);
@@ -426,8 +458,46 @@ class _CallRecordTileState extends State<_CallRecordTile> {
     }
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final service = context.read<CallHistoryService>();
+    if (_subscribedService == service) return;
+    if (_subscribedService != null && _serviceListener != null) {
+      _subscribedService!.removeListener(_serviceListener!);
+    }
+    _subscribedService = service;
+    _serviceListener = () {
+      if (!mounted) return;
+      if (!widget.isExpanded) return;
+      // Transcripts may not be loaded yet on a freshly-expanded tile —
+      // kick off a load; _loadTranscripts will fall through to
+      // _maybeScrollToPendingTarget once it has data.
+      if (_transcripts == null) {
+        _loadTranscripts();
+      } else {
+        _maybeScrollToPendingTarget();
+      }
+    };
+    service.addListener(_serviceListener!);
+  }
+
+  @override
+  void dispose() {
+    _highlightTimer?.cancel();
+    if (_subscribedService != null && _serviceListener != null) {
+      _subscribedService!.removeListener(_serviceListener!);
+    }
+    super.dispose();
+  }
+
   Future<void> _loadTranscripts() async {
-    if (_transcripts != null) return;
+    if (_transcripts != null) {
+      _maybeScrollToPendingTarget();
+      return;
+    }
+    if (_loadingTranscripts) return; // a concurrent load is already in flight
+    debugPrint('[TileScroll] call=${widget.record['id']} loading transcripts');
     setState(() => _loadingTranscripts = true);
     final service = context.read<CallHistoryService>();
     final results = await service.getTranscripts(widget.record['id'] as int);
@@ -436,7 +506,87 @@ class _CallRecordTileState extends State<_CallRecordTile> {
         _transcripts = results;
         _loadingTranscripts = false;
       });
+      debugPrint('[TileScroll] call=${widget.record['id']} loaded '
+          '${results.length} rows — checking pending scroll');
+      _maybeScrollToPendingTarget();
     }
+  }
+
+  /// If `CallHistoryService.pendingScrollTranscriptId` points at a row
+  /// that belongs to this tile, scroll it into view and flash a brief
+  /// highlight. Called both on fresh transcript load and when transcripts
+  /// were already cached (deep-link onto an already-expanded tile).
+  void _maybeScrollToPendingTarget() {
+    final service = context.read<CallHistoryService>();
+    final targetId = service.pendingScrollTranscriptId;
+    final callId = widget.record['id'];
+    debugPrint('[TileScroll] call=$callId check target=$targetId '
+        'transcripts=${_transcripts?.length} expanded=${widget.isExpanded}');
+    if (targetId == null) return;
+    final transcripts = _transcripts;
+    if (transcripts == null) return;
+    if (!transcripts.any((t) => t['id'] == targetId)) {
+      debugPrint('[TileScroll] call=$callId target=$targetId NOT in '
+          '${transcripts.map((t) => t['id']).toList()} — ignoring');
+      return;
+    }
+
+    debugPrint('[TileScroll] call=$callId armed scroll target=$targetId');
+    setState(() {
+      _scrollTargetId = targetId;
+      _highlightedTranscriptId = targetId;
+    });
+    service.consumePendingScrollTranscriptId();
+
+    void attemptScroll(int attempt) {
+      final ctx = _scrollTargetKey.currentContext;
+      debugPrint('[TileScroll] attempt=$attempt ctx=${ctx != null}');
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOut,
+          alignment: 0.3,
+        );
+        return;
+      }
+      // Key wasn't attached yet — retry up to 3 frames. Can happen when
+      // the tile expanded with a tall AnimatedContainer whose child
+      // hasn't painted on the first frame.
+      if (attempt < 3 && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          attemptScroll(attempt + 1);
+        });
+      } else {
+        debugPrint('[TileScroll] gave up after $attempt frames');
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      attemptScroll(0);
+      _highlightTimer?.cancel();
+      _highlightTimer = Timer(const Duration(milliseconds: 1600), () {
+        if (!mounted) return;
+        setState(() {
+          _highlightedTranscriptId = null;
+          _scrollTargetId = null;
+        });
+      });
+    });
+  }
+
+  Future<void> _deleteNote(int transcriptId) async {
+    final service = context.read<CallHistoryService>();
+    final agent = context.read<AgentService>();
+    final ok = await service.deleteNote(transcriptId);
+    if (!ok) return;
+    agent.handleNoteTranscriptDeleted(transcriptId);
+    if (!mounted) return;
+    setState(() {
+      _transcripts = _transcripts
+          ?.where((t) => t['id'] != transcriptId)
+          .toList(growable: false);
+    });
   }
 
   static bool _looksLikePhone(String s) =>
@@ -734,7 +884,22 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                       ],
                     ),
                     const SizedBox(height: 6),
-                    ..._transcripts!.map((t) => _TranscriptLine(transcript: t)),
+                    ..._transcripts!.map((t) {
+                      final tid = t['id'] as int?;
+                      final isNote = t['role'] == 'note';
+                      return _TranscriptLine(
+                        key: tid != null ? ValueKey('transcript-$tid') : null,
+                        transcript: t,
+                        scrollKey: (tid != null && tid == _scrollTargetId)
+                            ? _scrollTargetKey
+                            : null,
+                        highlighted:
+                            tid != null && tid == _highlightedTranscriptId,
+                        onDeleteNote: (isNote && tid != null)
+                            ? () => _deleteNote(tid)
+                            : null,
+                      );
+                    }),
                   ],
                 ),
     );
@@ -1158,7 +1323,28 @@ class _RecordingPlayerState extends State<_RecordingPlayer> {
 
 class _TranscriptLine extends StatelessWidget {
   final Map<String, dynamic> transcript;
-  const _TranscriptLine({required this.transcript});
+
+  /// Key attached to the outer container when this transcript is the
+  /// deep-link scroll target, so the parent tile can call
+  /// `Scrollable.ensureVisible` on it.
+  final Key? scrollKey;
+
+  /// When true, render a brief highlight treatment (stronger border +
+  /// warmer fill) so the viewer can visually locate the deep-linked row.
+  final bool highlighted;
+
+  /// Callback to delete this specific note (only wired when the
+  /// transcript row is a `role='note'` entry). Rendered as a hoverable
+  /// trash-can icon inside the note bubble.
+  final VoidCallback? onDeleteNote;
+
+  const _TranscriptLine({
+    super.key,
+    required this.transcript,
+    this.scrollKey,
+    this.highlighted = false,
+    this.onDeleteNote,
+  });
 
   bool get _isNote => transcript['role'] == 'note';
 
@@ -1235,13 +1421,22 @@ class _TranscriptLine extends StatelessWidget {
 
   Widget _buildNote(BuildContext context) {
     final color = _roleColor;
+    final fillAlpha = highlighted ? 0.18 : 0.08;
+    final borderAlpha = highlighted ? 0.6 : 0.3;
+    final borderWidth = highlighted ? 1.0 : 0.5;
     return Padding(
+      key: scrollKey,
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
+          color: color.withValues(alpha: fillAlpha),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+          border: Border.all(
+            color: color.withValues(alpha: borderAlpha),
+            width: borderWidth,
+          ),
         ),
         child: IntrinsicHeight(
           child: Row(
@@ -1259,42 +1454,120 @@ class _TranscriptLine extends StatelessWidget {
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
-                  child: Column(
+                  padding: const EdgeInsets.fromLTRB(8, 5, 4, 6),
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(Icons.sticky_note_2_outlined,
-                              size: 10, color: color),
-                          const SizedBox(width: 4),
-                          Text(
-                            'NOTE',
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.8,
-                              color: color,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.sticky_note_2_outlined,
+                                    size: 10, color: color),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'NOTE',
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.8,
+                                    color: color,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        transcript['text'] as String? ?? '',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color:
-                              AppColors.textSecondary.withValues(alpha: 0.95),
-                          height: 1.4,
+                            const SizedBox(height: 3),
+                            Text(
+                              transcript['text'] as String? ?? '',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary
+                                    .withValues(alpha: 0.95),
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                      if (onDeleteNote != null)
+                        _NoteTrashButton(
+                          accent: color,
+                          onDelete: onDeleteNote!,
+                          noteText: transcript['text'] as String? ?? '',
+                        ),
                     ],
                   ),
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small hover-revealed trash can shown inside a note bubble in the
+/// call-history detail view. Asks the user to confirm before deleting
+/// the note (the guarded `role='note'` DB path makes the delete safe,
+/// but the confirmation prevents accidental single-click loss).
+class _NoteTrashButton extends StatelessWidget {
+  final Color accent;
+  final VoidCallback onDelete;
+  final String noteText;
+
+  const _NoteTrashButton({
+    required this.accent,
+    required this.onDelete,
+    required this.noteText,
+  });
+
+  Future<void> _confirmAndDelete(BuildContext context) async {
+    final preview = noteText.length > 80
+        ? '${noteText.substring(0, 80)}…'
+        : noteText;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.card,
+        title: Text('Delete note?',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+        content: Text(
+          preview.isEmpty ? 'This note will be removed from the call.' : preview,
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Delete',
+                style: TextStyle(color: AppColors.hotSignal)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) onDelete();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return HoverButton(
+      onTap: () => _confirmAndDelete(context),
+      tooltip: 'Delete note',
+      borderRadius: BorderRadius.circular(4),
+      hoverColor: AppColors.hotSignal.withValues(alpha: 0.15),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(
+          Icons.delete_outline_rounded,
+          size: 13,
+          color: accent.withValues(alpha: 0.7),
         ),
       ),
     );

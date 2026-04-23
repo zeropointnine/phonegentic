@@ -7389,20 +7389,47 @@ class AgentService extends ChangeNotifier {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    final activeCallId = callHistory?.activeCallRecordId;
-    if (activeCallId != null) {
-      _addMsg(ChatMessage.note(
-        trimmed,
-        metadata: {
-          'attached_call_id': activeCallId,
-        },
-      ));
-      callHistory?.addTranscript(
+    final activeSummary = callHistory?.activeCallSummary();
+    if (activeSummary != null) {
+      final activeCallId = activeSummary['id'] as int;
+      final initialMeta = _buildAttachedNoteMetadata(activeSummary);
+      final noteMsg = ChatMessage.note(trimmed, metadata: initialMeta);
+      _addMsg(noteMsg);
+      notifyListeners();
+
+      final transcriptId = await callHistory?.addTranscript(
         role: 'note',
         speakerName: 'Host',
         text: trimmed,
       );
-      notifyListeners();
+      if (transcriptId != null) {
+        final idx = _messages.indexWhere((m) => m.id == noteMsg.id);
+        if (idx >= 0) {
+          final updatedMeta = {
+            ...initialMeta,
+            'attached_call_transcript_id': transcriptId,
+          };
+          _messages[idx] = ChatMessage(
+            id: noteMsg.id,
+            role: noteMsg.role,
+            type: noteMsg.type,
+            text: noteMsg.text,
+            timestamp: noteMsg.timestamp,
+            metadata: updatedMeta,
+          );
+          if (_persistEnabled) {
+            CallHistoryDb.updateSessionMessageMetadata(noteMsg.id, updatedMeta)
+                .catchError((e) {
+              debugPrint('[AgentService] Failed to persist note tid: $e');
+            });
+          }
+          notifyListeners();
+        }
+      }
+      // activeCallId is intentionally unused here (already embedded in meta)
+      // but kept bound so future extensions (e.g. logging) can reference it.
+      debugPrint('[AgentService] Inline note attached to active call '
+          '#$activeCallId');
       return;
     }
 
@@ -7460,13 +7487,20 @@ class AgentService extends ChangeNotifier {
   /// `call_transcripts` row so the note surfaces in the call-history
   /// detail view, and replaces the pending bubble with a finalized note
   /// that remembers which call it was attached to.
+  ///
+  /// [candidate] is the recent-call summary the manager tapped on; the
+  /// name / direction / time from it become the human-readable label shown
+  /// on the finalized note ("Attached to a call to Patrick at 10:40 PM").
   Future<void> attachNoteToCall(
-      ChatMessage pending, int callRecordId, String? callLabel) async {
+      ChatMessage pending, Map<String, dynamic> candidate) async {
     final idx = _messages.indexWhere((m) => m.id == pending.id);
     if (idx < 0) return;
 
+    final callRecordId = candidate['id'] as int;
+
+    int? transcriptId;
     try {
-      await CallHistoryDb.insertTranscript(
+      transcriptId = await CallHistoryDb.insertTranscript(
         callRecordId: callRecordId,
         role: 'note',
         speakerName: 'Host',
@@ -7476,10 +7510,10 @@ class AgentService extends ChangeNotifier {
       debugPrint('[AgentService] Failed to attach note to call: $e');
     }
 
-    final newMeta = <String, dynamic>{
-      'attached_call_id': callRecordId,
-      if (callLabel != null && callLabel.isNotEmpty) 'attached_call_name': callLabel,
-    };
+    final newMeta = _buildAttachedNoteMetadata(
+      candidate,
+      transcriptId: transcriptId,
+    );
     final replaced = ChatMessage(
       id: pending.id,
       role: pending.role,
@@ -7498,8 +7532,86 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Shared metadata shape for a finalized `/note` bubble, used both by
+  /// the in-call path (`addNote` → active-call summary) and the
+  /// post-call attach path (`attachNoteToCall` → candidate row). Kept
+  /// in one place so the agent-panel footer renders the full
+  /// "Attached to a call to Patrick at 10:40 PM" descriptor regardless
+  /// of how the note was created.
+  static Map<String, dynamic> _buildAttachedNoteMetadata(
+    Map<String, dynamic> callSummary, {
+    int? transcriptId,
+  }) {
+    final callRecordId = callSummary['id'] as int;
+    final name = (callSummary['name'] as String?)?.trim() ?? '';
+    final phone = (callSummary['phone'] as String?)?.trim() ?? '';
+    final direction = (callSummary['direction'] as String?) ?? 'inbound';
+    final startedAt = (callSummary['started_at'] as String?) ?? '';
+    final timeLabel = _formatAttachedCallTime(startedAt);
+    return <String, dynamic>{
+      'attached_call_id': callRecordId,
+      if (name.isNotEmpty) 'attached_call_name': name,
+      if (phone.isNotEmpty) 'attached_call_phone': phone,
+      'attached_call_direction': direction,
+      if (timeLabel.isNotEmpty) 'attached_call_time_label': timeLabel,
+      if (transcriptId != null) 'attached_call_transcript_id': transcriptId,
+    };
+  }
+
+  /// Human-readable "10:42 PM" / "Yesterday 9:15 AM" / "3/14 4:05 PM"
+  /// label for a call's started_at timestamp. Stored on finalized notes
+  /// so the UI can render "Attached to a call … at <time>" without
+  /// reloading the call record.
+  static String _formatAttachedCallTime(String isoStartedAt) {
+    if (isoStartedAt.isEmpty) return '';
+    final dt = DateTime.tryParse(isoStartedAt);
+    if (dt == null) return '';
+    final local = dt.toLocal();
+    final now = DateTime.now();
+    final h = local.hour > 12
+        ? local.hour - 12
+        : (local.hour == 0 ? 12 : local.hour);
+    final ampm = local.hour >= 12 ? 'PM' : 'AM';
+    final time = '$h:${local.minute.toString().padLeft(2, '0')} $ampm';
+    final isToday = local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day;
+    if (isToday) return time;
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = local.year == yesterday.year &&
+        local.month == yesterday.month &&
+        local.day == yesterday.day;
+    if (isYesterday) return 'Yesterday $time';
+    return '${local.month}/${local.day} $time';
+  }
+
   /// Finalize a pending `/note` as a session-only annotation — no call is
   /// tagged, but the note remains in the agent-panel transcript.
+  /// Called after a note transcript row has been deleted from the
+  /// call-history panel. Walks the in-memory session and strips the
+  /// `attached_call_*` metadata from any note bubble that pointed at
+  /// [transcriptId], so the agent panel stops showing a deep-link to a
+  /// row that no longer exists. The DB-side unlink is done by
+  /// `CallHistoryDb.clearNoteAttachmentByTranscriptId`.
+  void handleNoteTranscriptDeleted(int transcriptId) {
+    var changed = false;
+    for (var i = 0; i < _messages.length; i++) {
+      final m = _messages[i];
+      if (m.type != MessageType.note) continue;
+      if (m.metadata?['attached_call_transcript_id'] != transcriptId) continue;
+      _messages[i] = ChatMessage(
+        id: m.id,
+        role: m.role,
+        type: m.type,
+        text: m.text,
+        timestamp: m.timestamp,
+        metadata: null,
+      );
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
   Future<void> confirmNoteAsSession(ChatMessage pending) async {
     final idx = _messages.indexWhere((m) => m.id == pending.id);
     if (idx < 0) return;

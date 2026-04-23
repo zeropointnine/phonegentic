@@ -377,6 +377,10 @@ class CallSearchParams {
 
 class CallHistoryService extends ChangeNotifier {
   int? _activeCallRecordId;
+  String? _activeCallDirection;
+  String? _activeCallRemoteIdentity;
+  String? _activeCallRemoteDisplayName;
+  DateTime? _activeCallStartedAt;
   final List<Map<String, dynamic>> _searchResults = [];
   bool _isOpen = false;
   String _searchQuery = '';
@@ -390,6 +394,27 @@ class CallHistoryService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   int? get activeCallRecordId => _activeCallRecordId;
   int? get expandedCallId => _expandedCallId;
+
+  /// Candidate-shaped summary of the currently active call, or null when
+  /// no call is active. Same shape as the rows returned from
+  /// `AgentService._loadNoteCandidateCalls`, so both the in-call and
+  /// post-call `/note` flows can feed the same attachment-metadata
+  /// builder.
+  Map<String, dynamic>? activeCallSummary() {
+    final id = _activeCallRecordId;
+    if (id == null) return null;
+    final name = (_activeCallRemoteDisplayName != null &&
+            _activeCallRemoteDisplayName!.isNotEmpty)
+        ? _activeCallRemoteDisplayName!
+        : (_activeCallRemoteIdentity ?? 'Unknown');
+    return {
+      'id': id,
+      'name': name,
+      'phone': _activeCallRemoteIdentity ?? '',
+      'direction': _activeCallDirection ?? 'inbound',
+      'started_at': (_activeCallStartedAt ?? DateTime.now()).toIso8601String(),
+    };
+  }
 
   // ---------------------------------------------------------------------------
   // Call lifecycle — called by AgentService during active calls
@@ -424,6 +449,10 @@ class CallHistoryService extends ChangeNotifier {
         contactId: contactId,
         jobFunctionId: jobFunctionId,
       );
+      _activeCallDirection = direction;
+      _activeCallRemoteIdentity = remoteIdentity;
+      _activeCallRemoteDisplayName = displayName;
+      _activeCallStartedAt = DateTime.now();
       debugPrint('[CallHistory] Started record #$_activeCallRecordId '
           '(jf=$jobFunctionId)');
     } catch (e) {
@@ -487,18 +516,27 @@ class CallHistoryService extends ChangeNotifier {
       debugPrint('[CallHistory] Failed to finalize record: $e');
     }
     _activeCallRecordId = null;
+    _activeCallDirection = null;
+    _activeCallRemoteIdentity = null;
+    _activeCallRemoteDisplayName = null;
+    _activeCallStartedAt = null;
     // Refresh the displayed list so new/ended calls appear immediately.
     loadRecentCalls();
   }
 
-  Future<void> addTranscript({
+  /// Insert a transcript row on the active call and return the new
+  /// primary-key id (or null if there's no active call / the insert
+  /// fails). Callers like the `/note` flow use the id to link session
+  /// messages back to the specific transcript row they just wrote so
+  /// deep-links can scroll to it and deletions can unlink it.
+  Future<int?> addTranscript({
     required String role,
     String? speakerName,
     required String text,
   }) async {
-    if (_activeCallRecordId == null) return;
+    if (_activeCallRecordId == null) return null;
     try {
-      await CallHistoryDb.insertTranscript(
+      return await CallHistoryDb.insertTranscript(
         callRecordId: _activeCallRecordId!,
         role: role,
         speakerName: speakerName,
@@ -506,6 +544,7 @@ class CallHistoryService extends ChangeNotifier {
       );
     } catch (e) {
       debugPrint('[CallHistory] Failed to add transcript: $e');
+      return null;
     }
   }
 
@@ -542,6 +581,91 @@ class CallHistoryService extends ChangeNotifier {
   void toggleExpanded(int callId) {
     _expandedCallId = _expandedCallId == callId ? null : callId;
     notifyListeners();
+  }
+
+  /// Transcript row id that the expanded call tile should scroll into
+  /// view once its transcripts finish loading. Used by deep-links like
+  /// the history icon on a finalized `/note`, which wants to land the
+  /// viewer directly on that specific note row inside the call.
+  int? _pendingScrollTranscriptId;
+  int? get pendingScrollTranscriptId => _pendingScrollTranscriptId;
+  void consumePendingScrollTranscriptId() {
+    if (_pendingScrollTranscriptId == null) return;
+    _pendingScrollTranscriptId = null;
+    // Not a visible-state change; no notifyListeners() needed — the tile
+    // clears this after `Scrollable.ensureVisible` completes.
+  }
+
+  /// Open the call-history panel and focus/expand the specific [callId].
+  ///
+  /// Used by inline deep-links — e.g. the call-history icon on a finalized
+  /// `/note` that jumps to the call the note was attached to. If [callId]
+  /// is in the current recent results it's simply expanded; otherwise we
+  /// filter by [phoneNumber] so it appears in the list, then expand it.
+  ///
+  /// When [transcriptId] is provided (the note's specific row id), the
+  /// expanded tile will scroll that transcript line into view and flash
+  /// a brief highlight.
+  Future<void> focusCall(
+    int callId, {
+    String? phoneNumber,
+    int? transcriptId,
+  }) async {
+    debugPrint('[focusCall] call=$callId tid=$transcriptId phone=$phoneNumber '
+        'resultsCached=${_searchResults.length}');
+    _isOpen = true;
+    _expandedCallId = callId;
+    _pendingScrollTranscriptId = transcriptId;
+    notifyListeners();
+
+    if (_searchResults.any((r) => r['id'] == callId)) {
+      debugPrint('[focusCall] call=$callId already in cached results — '
+          'tile should receive pending tid=$transcriptId');
+      return;
+    }
+
+    debugPrint('[focusCall] call=$callId not in results — searching');
+    if (phoneNumber != null && phoneNumber.isNotEmpty) {
+      _searchQuery = phoneNumber;
+      notifyListeners();
+      await naturalSearch(phoneNumber);
+    } else {
+      await loadRecentCalls();
+    }
+
+    _expandedCallId = callId;
+    _pendingScrollTranscriptId = transcriptId;
+    debugPrint('[focusCall] call=$callId post-search results=${_searchResults.length} '
+        '— re-asserting expansion+scroll target');
+    notifyListeners();
+  }
+
+  /// Delete a single note transcript row (role='note') and unlink any
+  /// session-message metadata that referenced it. Guarded at the DB
+  /// level to `role='note'` so spoken transcripts can never be removed
+  /// through this path. Returns true if the note was deleted.
+  ///
+  /// The two DB calls are isolated in their own try/catch so a
+  /// metadata-cleanup failure never masks a successful delete — we
+  /// still report success to the UI and refresh the tile's local state.
+  Future<bool> deleteNote(int transcriptId) async {
+    int removed;
+    try {
+      removed = await CallHistoryDb.deleteNote(transcriptId);
+    } catch (e) {
+      debugPrint('[CallHistory] Failed to delete note $transcriptId: $e');
+      return false;
+    }
+    if (removed == 0) return false;
+    try {
+      await CallHistoryDb.clearNoteAttachmentByTranscriptId(transcriptId);
+    } catch (e) {
+      debugPrint(
+          '[CallHistory] Delete succeeded but metadata cleanup failed for '
+          '$transcriptId: $e');
+    }
+    notifyListeners();
+    return true;
   }
 
   void setSearchQuery(String query) {

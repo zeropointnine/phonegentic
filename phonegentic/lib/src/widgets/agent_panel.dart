@@ -12,6 +12,7 @@ import 'package:just_audio/just_audio.dart';
 
 import '../agent_config_service.dart';
 import '../agent_service.dart';
+import '../call_history_service.dart';
 import '../calendar_sync_service.dart';
 import '../manager_presence_service.dart';
 import '../db/call_history_db.dart';
@@ -3017,6 +3018,13 @@ class _NoteBubble extends StatelessWidget {
 
     final attachedName = message.metadata?['attached_call_name'] as String?;
     final attachedId = message.metadata?['attached_call_id'] as int?;
+    final attachedPhone = message.metadata?['attached_call_phone'] as String?;
+    final attachedDirection =
+        message.metadata?['attached_call_direction'] as String?;
+    final attachedTime =
+        message.metadata?['attached_call_time_label'] as String?;
+    final attachedTranscriptId =
+        message.metadata?['attached_call_transcript_id'] as int?;
     final hasAttachment = attachedId != null;
 
     return Padding(
@@ -3099,25 +3107,15 @@ class _NoteBubble extends StatelessWidget {
                       ),
                       if (hasAttachment) ...[
                         const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(Icons.link_rounded,
-                                size: 11,
-                                color: noteColor.withValues(alpha: 0.7)),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                attachedName != null && attachedName.isNotEmpty
-                                    ? 'Attached to $attachedName'
-                                    : 'Attached to this call',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontStyle: FontStyle.italic,
-                                  color: noteColor.withValues(alpha: 0.8),
-                                ),
-                              ),
-                            ),
-                          ],
+                        _NoteAttachmentFooter(
+                          callId: attachedId,
+                          transcriptId: attachedTranscriptId,
+                          noteText: message.text,
+                          name: attachedName,
+                          phone: attachedPhone,
+                          direction: attachedDirection,
+                          timeLabel: attachedTime,
+                          accent: noteColor,
                         ),
                       ],
                     ],
@@ -3128,6 +3126,102 @@ class _NoteBubble extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// "Attached to a call to Patrick at 10:40 PM · [history icon]" — footer
+/// shown on finalized notes with a call attachment. The history icon opens
+/// the call-history panel and jumps to the attached call.
+class _NoteAttachmentFooter extends StatelessWidget {
+  final int? callId;
+  final int? transcriptId;
+  final String noteText;
+  final String? name;
+  final String? phone;
+  final String? direction;
+  final String? timeLabel;
+  final Color accent;
+  const _NoteAttachmentFooter({
+    required this.callId,
+    required this.transcriptId,
+    required this.noteText,
+    required this.name,
+    required this.phone,
+    required this.direction,
+    required this.timeLabel,
+    required this.accent,
+  });
+
+  String get _descriptor {
+    final who = (name != null && name!.isNotEmpty)
+        ? name!
+        : (phone != null && phone!.isNotEmpty ? phone! : 'an unknown caller');
+    final preposition = direction == 'outbound' ? 'to' : 'from';
+    final atTime =
+        (timeLabel != null && timeLabel!.isNotEmpty) ? ' at $timeLabel' : '';
+    return 'Attached to a call $preposition $who$atTime';
+  }
+
+  Future<void> _openInHistory(BuildContext context) async {
+    final id = callId;
+    if (id == null) return;
+    final history = context.read<CallHistoryService>();
+
+    // Older notes (created before `attached_call_transcript_id` was
+    // stored on metadata) may land here without a specific transcript
+    // id. Fall back to a text-match lookup so the deep-link can still
+    // land on the right row instead of just opening the call.
+    int? tid = transcriptId;
+    if (tid == null && noteText.isNotEmpty) {
+      tid = await CallHistoryDb.resolveNoteTranscriptId(id, noteText);
+      debugPrint('[NoteFooter] resolved tid=$tid for call=$id via text match');
+    }
+
+    await history.focusCall(
+      id,
+      phoneNumber: phone,
+      transcriptId: tid,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canOpen = callId != null;
+    final textStyle = TextStyle(
+      fontSize: 10,
+      fontStyle: FontStyle.italic,
+      color: accent.withValues(alpha: 0.85),
+    );
+
+    return Row(
+      children: [
+        Icon(Icons.link_rounded, size: 11, color: accent.withValues(alpha: 0.7)),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            _descriptor,
+            style: textStyle,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 6),
+        if (canOpen)
+          HoverButton(
+            onTap: () => _openInHistory(context),
+            tooltip: 'Open this call in call history',
+            borderRadius: BorderRadius.circular(4),
+            hoverColor: accent.withValues(alpha: 0.18),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Icon(
+                Icons.history_rounded,
+                size: 13,
+                color: accent.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -3380,12 +3474,11 @@ class _NoteCandidateRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final agent = context.read<AgentService>();
-    final id = candidate['id'] as int;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: HoverButton(
-        onTap: () => agent.attachNoteToCall(pending, id, _name),
+        onTap: () => agent.attachNoteToCall(pending, candidate),
         tooltip: 'Attach note to call with $_name',
         borderRadius: BorderRadius.circular(8),
         child: Container(

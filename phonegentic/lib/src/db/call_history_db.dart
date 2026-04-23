@@ -544,20 +544,100 @@ class CallHistoryDb {
   // Transcripts
   // ---------------------------------------------------------------------------
 
-  static Future<void> insertTranscript({
+  /// Insert a transcript row and return the new primary-key id so callers
+  /// (e.g. the /note flow) can link session messages back to the specific
+  /// transcript row they just wrote.
+  static Future<int> insertTranscript({
     required int callRecordId,
     required String role,
     String? speakerName,
     required String text,
   }) async {
     final db = await database;
-    await db.insert('call_transcripts', {
+    return db.insert('call_transcripts', {
       'call_record_id': callRecordId,
       'role': role,
       'speaker_name': speakerName,
       'text': text,
       'timestamp': DateTime.now().toIso8601String(),
     });
+  }
+
+  /// Best-effort lookup of a note transcript's id given its parent call
+  /// and the exact note text — used as a fallback for notes that were
+  /// created before `attached_call_transcript_id` started being stored
+  /// on session-message metadata. Returns the id of the most recent
+  /// matching row, or null if nothing matches.
+  static Future<int?> resolveNoteTranscriptId(
+      int callRecordId, String text) async {
+    if (text.isEmpty) return null;
+    final db = await database;
+    final rows = await db.query(
+      'call_transcripts',
+      columns: ['id'],
+      where: "call_record_id = ? AND role = 'note' AND text = ?",
+      whereArgs: [callRecordId, text],
+      orderBy: 'id DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['id'] as int?;
+  }
+
+  /// Delete a single `role='note'` transcript row. Guarded with
+  /// `role = 'note'` in the WHERE clause so this can never remove spoken
+  /// transcript content, even if the wrong id is passed in. Returns the
+  /// number of rows actually deleted.
+  static Future<int> deleteNote(int transcriptId) async {
+    final db = await database;
+    return db.delete(
+      'call_transcripts',
+      where: 'id = ? AND role = ?',
+      whereArgs: [transcriptId, 'note'],
+    );
+  }
+
+  /// Walk `session_messages` and unlink any note whose `metadata_json`
+  /// points at [transcriptId] — clearing `attached_call_*` fields so the
+  /// agent-panel bubble no longer shows "Attached to a call to …" / the
+  /// deep-link icon for a transcript row that no longer exists. Returns
+  /// the number of session-message rows that were updated.
+  static Future<int> clearNoteAttachmentByTranscriptId(int transcriptId) async {
+    final db = await database;
+    final needle = '"attached_call_transcript_id":$transcriptId';
+    final rows = await db.query(
+      'session_messages',
+      columns: ['message_id', 'metadata_json'],
+      where: "role = 'note' AND metadata_json LIKE ?",
+      whereArgs: ['%$needle%'],
+    );
+    var updated = 0;
+    for (final row in rows) {
+      final raw = row['metadata_json'] as String?;
+      if (raw == null || raw.isEmpty) continue;
+      Map<String, dynamic>? decoded;
+      try {
+        decoded = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        continue;
+      }
+      if (decoded['attached_call_transcript_id'] != transcriptId) continue;
+      decoded.remove('attached_call_id');
+      decoded.remove('attached_call_name');
+      decoded.remove('attached_call_phone');
+      decoded.remove('attached_call_direction');
+      decoded.remove('attached_call_time_label');
+      decoded.remove('attached_call_transcript_id');
+      final newMeta = decoded.isEmpty ? null : jsonEncode(decoded);
+      await db.update(
+        'session_messages',
+        {'metadata_json': newMeta},
+        where: 'message_id = ?',
+        whereArgs: [row['message_id']],
+      );
+      updated++;
+    }
+    return updated;
   }
 
   static Future<List<Map<String, dynamic>>> getTranscripts(
