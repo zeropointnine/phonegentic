@@ -49,7 +49,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 1);
     _registerState = helper!.registerState;
     helper!.addSipUaHelperListener(this);
     _loadSettings();

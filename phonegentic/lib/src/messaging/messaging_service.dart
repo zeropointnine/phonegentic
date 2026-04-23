@@ -589,15 +589,18 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
           lastRow != null ? SmsMessage.fromDbMap(lastRow) : null;
 
       String? contactName;
+      String? thumbnailPath;
       if (_contactService != null) {
         final contact = _contactService!.lookupByPhone(remotePhone);
         contactName = contact?['display_name'] as String?;
+        thumbnailPath = contact?['thumbnail_path'] as String?;
       }
 
       convos.add(SmsConversation(
         remotePhone: remotePhone,
         localPhone: localPhone,
         contactName: contactName,
+        thumbnailPath: thumbnailPath,
         lastMessage: lastMsg,
         unreadCount: unread,
         totalMessages: total,

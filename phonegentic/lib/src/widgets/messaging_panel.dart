@@ -78,7 +78,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
 
   Widget _buildHeader(MessagingService messaging) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 28, 8, 10),
+      padding: const EdgeInsets.fromLTRB(20, 28, 16, 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
@@ -125,23 +125,6 @@ class _MessagingPanelState extends State<MessagingPanel> {
             ),
           ),
           const SizedBox(width: 8),
-          HoverButton(
-            onTap: () => messaging.syncNow(),
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: AppColors.card,
-                border: Border.all(
-                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
-              ),
-              child: Icon(Icons.refresh_rounded,
-                  size: 16, color: AppColors.textSecondary),
-            ),
-          ),
-          const SizedBox(width: 6),
           HoverButton(
             onTap: () => setState(() => _showNewMessage = !_showNewMessage),
             borderRadius: BorderRadius.circular(8),
@@ -298,12 +281,13 @@ class _MessagingPanelState extends State<MessagingPanel> {
     return InkWell(
       onTap: () => messaging.selectConversation(convo.remotePhone),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         child: Row(
           children: [
             ContactIdenticon(
               seed: convo.contactName ?? convo.remotePhone,
-              size: 42,
+              size: 48,
+              thumbnailPath: convo.thumbnailPath,
             ),
             const SizedBox(width: 10),
             Expanded(

@@ -147,6 +147,17 @@ class _AgentPanelState extends State<AgentPanel> {
       return;
     }
 
+    final lower = text.toLowerCase();
+    if (lower.startsWith('/w ') || lower.startsWith('/whisper ')) {
+      final body = text.substring(text.indexOf(' ') + 1).trim();
+      if (body.isNotEmpty) agent.sendWhisperMessage(body);
+      return;
+    }
+    if (lower == '/w' || lower == '/whisper') {
+      agent.sendWhisperMessage(text);
+      return;
+    }
+
     if (text.startsWith('/')) {
       agent.sendUserMessage(_expandCommand(text));
     } else {
@@ -241,8 +252,9 @@ class _AgentPanelState extends State<AgentPanel> {
                       controller: _controller,
                       onSend: () => _send(agent),
                       onWhisperSend: () => _sendWhisperOneShot(agent),
-                      onToggleWhisper:
-                          agent.canToggleWhisper ? agent.toggleWhisperMode : null,
+                      onToggleWhisper: agent.canToggleWhisper
+                          ? agent.toggleWhisperMode
+                          : null,
                       onAttachFile: () => _pickAndAttachFile(agent),
                       active: agent.active,
                       whisperMode: agent.whisperMode,
@@ -265,7 +277,8 @@ class _AgentPanelState extends State<AgentPanel> {
                                 shape: BoxShape.circle,
                                 color: AppColors.accent.withValues(alpha: 0.12),
                                 border: Border.all(
-                                  color: AppColors.accent.withValues(alpha: 0.4),
+                                  color:
+                                      AppColors.accent.withValues(alpha: 0.4),
                                   width: 1.5,
                                 ),
                               ),
@@ -392,14 +405,17 @@ class _AgentHeaderState extends State<_AgentHeader> {
     final activeFlow = icfService.activeFlowName;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      padding: const EdgeInsets.fromLTRB(14, 21, 15, 14),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
       ),
       child: Row(
         children: [
-          if (widget.dragHandle != null) ...[widget.dragHandle!, const SizedBox(width: 8)],
+          if (widget.dragHandle != null) ...[
+            widget.dragHandle!,
+            const SizedBox(width: 8)
+          ],
           _WaveformPill(
             levels: agent.levels,
             color: _statusColor,
@@ -1143,8 +1159,7 @@ class _AwayCallSummaryBanner extends StatelessWidget {
               durationStr =
                   '${durationSec ~/ 3600}h ${(durationSec % 3600) ~/ 60}m';
             } else if (durationSec >= 60) {
-              durationStr =
-                  '${durationSec ~/ 60}m ${durationSec % 60}s';
+              durationStr = '${durationSec ~/ 60}m ${durationSec % 60}s';
             } else {
               durationStr = '${durationSec}s';
             }
@@ -1705,8 +1720,7 @@ class _ConferenceCallBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(
-                        left: 14, top: 4, bottom: 4),
+                    padding: const EdgeInsets.only(left: 14, top: 4, bottom: 4),
                     child: Container(
                       width: 2,
                       decoration: BoxDecoration(
@@ -1722,12 +1736,10 @@ class _ConferenceCallBar extends StatelessWidget {
                         for (int i = 0; i < legs.length; i++)
                           _CallLegRow(
                             leg: legs[i],
-                            isFocused:
-                                legs[i].sipCallId == conf.focusedLegId,
+                            isFocused: legs[i].sipCallId == conf.focusedLegId,
                             inMergedConference: true,
                             demo: demo,
-                            onTap: () =>
-                                conf.focusLeg(legs[i].sipCallId),
+                            onTap: () => conf.focusLeg(legs[i].sipCallId),
                             onHold: () {
                               if (legs[i].state == LegState.held) {
                                 conf.unholdLeg(legs[i].sipCallId);
@@ -2257,8 +2269,7 @@ class _MessageListState extends State<_MessageList> {
 // Quick SMS from a reminder bubble
 // ---------------------------------------------------------------------------
 
-Future<void> _sendReminderSms(
-    BuildContext ctx, ChatMessage message) async {
+Future<void> _sendReminderSms(BuildContext ctx, ChatMessage message) async {
   final name = message.metadata?['contact_name'] as String? ?? '';
   if (name.isEmpty) {
     if (ctx.mounted) {
@@ -2447,8 +2458,8 @@ class _MessageBubble extends StatelessWidget {
             if (rid != null) {
               CallHistoryDb.updateReminderStatus(rid, 'fired');
             }
-            final cleanText = message.text.replaceFirst(
-                RegExp(r'^Missed \([^)]+\):\s*'), '');
+            final cleanText =
+                message.text.replaceFirst(RegExp(r'^Missed \([^)]+\):\s*'), '');
             agent.sendSystemEvent(
               '[MISSED REMINDER CONFIRMED] Manager wants to proceed with: $cleanText',
               requireResponse: true,
@@ -2617,12 +2628,12 @@ class _VoiceCaptureBubbleState extends State<_VoiceCaptureBubble>
                     height: 8,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.red.withValues(
-                          alpha: 0.5 + 0.5 * _pulseCtrl.value),
+                      color: AppColors.red
+                          .withValues(alpha: 0.5 + 0.5 * _pulseCtrl.value),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.red.withValues(
-                              alpha: 0.3 * _pulseCtrl.value),
+                          color: AppColors.red
+                              .withValues(alpha: 0.3 * _pulseCtrl.value),
                           blurRadius: 6,
                           spreadRadius: 1,
                         ),
@@ -3706,9 +3717,7 @@ class _InlineRecordingBubbleState extends State<_InlineRecordingBubble> {
                       color: AppColors.accent,
                     ),
                     child: Icon(
-                      _playing
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
+                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
                       size: 16,
                       color: AppColors.crtBlack,
                     ),
@@ -3743,8 +3752,7 @@ class _InlineRecordingBubbleState extends State<_InlineRecordingBubble> {
                       },
                       onChangeEnd: (v) {
                         final target = Duration(
-                          milliseconds:
-                              (v * _duration.inMilliseconds).round(),
+                          milliseconds: (v * _duration.inMilliseconds).round(),
                         );
                         _player.seek(target);
                         setState(() => _dragging = false);

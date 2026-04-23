@@ -78,7 +78,7 @@ class _ContactListPanelState extends State<ContactListPanel> {
   Widget _buildHeader(ContactService service) {
     final isDetail = service.selectedContact != null;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 28, 8, 10),
+      padding: const EdgeInsets.fromLTRB(20, 28, 16, 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border:
@@ -552,7 +552,7 @@ class _ContactTile extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: AppColors.card,
@@ -625,7 +625,7 @@ class _ConflictTile extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 3),
           decoration: BoxDecoration(
             color: AppColors.card,
             borderRadius: BorderRadius.circular(10),

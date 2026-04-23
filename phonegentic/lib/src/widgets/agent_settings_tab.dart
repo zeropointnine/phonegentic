@@ -449,7 +449,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                       ),
                       _buildPipelineSection(wide),
                       Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        padding: const EdgeInsets.only(top: 32, bottom: 20),
                         child: Divider(
                           height: 1,
                           thickness: 1,
@@ -962,8 +962,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         },
         (v) => _updateVoice(_voice.copyWith(target: v)),
       ),
-      _divider(),
-      _buildInstructionsField(),
       if (BuildConfig.onDeviceModelsSupported) ...[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -1188,8 +1186,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
               _updateText(_text.copyWith(customModel: val)),
         ),
       ],
-      _divider(),
-      _buildPromptField(),
     ];
   }
 
@@ -1684,95 +1680,6 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     );
   }
 
-  Widget _buildInstructionsField() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Instructions',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-          const SizedBox(height: 6),
-          TextField(
-            controller: _voiceInstructionsCtrl,
-            maxLines: 3,
-            style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'e.g. You are a helpful agent on a phone call...',
-              hintStyle:
-                  TextStyle(fontSize: 13, color: AppColors.textTertiary),
-              filled: true,
-              fillColor: AppColors.card,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: AppColors.accent, width: 1),
-              ),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            onChanged: (val) =>
-                _updateVoice(_voice.copyWith(instructions: val)),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPromptField() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('System Prompt',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-          const SizedBox(height: 6),
-          TextField(
-            controller: _systemPromptCtrl,
-            maxLines: 3,
-            style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
-            decoration: InputDecoration(
-              hintText: 'Instructions for the text agent...',
-              hintStyle:
-                  TextStyle(fontSize: 13, color: AppColors.textTertiary),
-              filled: true,
-              fillColor: AppColors.card,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    BorderSide(color: AppColors.border.withValues(alpha: 0.5)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: AppColors.accent, width: 1),
-              ),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            onChanged: (val) =>
-                _updateText(_text.copyWith(systemPrompt: val)),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
 
   Widget _buildTtsProviderChips() {
     final providers = <TtsProvider, String>{

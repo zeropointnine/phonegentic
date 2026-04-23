@@ -612,7 +612,8 @@ class CallHistoryDb {
 
     final whereClause = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
     return db.rawQuery('''
-      SELECT cr.*, c.display_name AS contact_name
+      SELECT cr.*, c.display_name AS contact_name,
+             c.thumbnail_path AS contact_thumbnail
       FROM call_records cr
       LEFT JOIN contacts c ON c.id = cr.contact_id
       $whereClause
@@ -674,7 +675,8 @@ class CallHistoryDb {
     }
 
     return db.rawQuery('''
-      SELECT DISTINCT cr.*, c.display_name AS contact_name
+      SELECT DISTINCT cr.*, c.display_name AS contact_name,
+             c.thumbnail_path AS contact_thumbnail
       FROM call_records cr
       INNER JOIN call_transcripts ct ON ct.call_record_id = cr.id
       LEFT JOIN contacts c ON c.id = cr.contact_id
@@ -689,7 +691,8 @@ class CallHistoryDb {
   }) async {
     final db = await database;
     return db.rawQuery('''
-      SELECT cr.*, c.display_name AS contact_name
+      SELECT cr.*, c.display_name AS contact_name,
+             c.thumbnail_path AS contact_thumbnail
       FROM call_records cr
       LEFT JOIN contacts c ON c.id = cr.contact_id
       WHERE cr.status != 'active'

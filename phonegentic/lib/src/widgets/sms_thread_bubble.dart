@@ -33,16 +33,20 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
   String? get _contactName =>
       widget.message.metadata?['sms_contact_name'] as String?;
 
+  Map<String, dynamic>? get _contact =>
+      context.watch<ContactService>().lookupByPhone(_remotePhone);
+
   String get _displayName {
-    if (_contactName != null && _contactName!.isNotEmpty) return _contactName!;
-    final contact =
-        context.read<ContactService>().lookupByPhone(_remotePhone);
+    final contact = _contact;
     if (contact != null) {
       final name = contact['display_name'] as String?;
       if (name != null && name.isNotEmpty) return name;
     }
+    if (_contactName != null && _contactName!.isNotEmpty) return _contactName!;
     return PhoneFormatter.format(_remotePhone);
   }
+
+  String? get _thumbnailPath => _contact?['thumbnail_path'] as String?;
 
   String get _messageText {
     final raw = widget.message.text;
@@ -131,7 +135,7 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        ContactIdenticon(seed: _remotePhone, size: 22),
+        ContactIdenticon(seed: _remotePhone, size: 22, thumbnailPath: _thumbnailPath),
         const SizedBox(width: 8),
         Flexible(
           child: Column(

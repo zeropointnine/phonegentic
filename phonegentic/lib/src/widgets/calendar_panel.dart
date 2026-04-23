@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' show pi;
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -41,9 +41,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
     final source = _isSearching ? _searchResults : _events;
     var result = source;
     if (_hiddenSources.isNotEmpty) {
-      result = result
-          .where((e) => !_hiddenSources.contains(e.source))
-          .toList();
+      result = result.where((e) => !_hiddenSources.contains(e.source)).toList();
     }
     return result;
   }
@@ -91,8 +89,8 @@ class _CalendarPanelState extends State<CalendarPanel> {
               child: Material(
                 color: Colors.transparent,
                 child: Container(
-                  constraints: const BoxConstraints(
-                      maxHeight: 320, maxWidth: 400),
+                  constraints:
+                      const BoxConstraints(maxHeight: 320, maxWidth: 400),
                   decoration: BoxDecoration(
                     color: AppColors.surface,
                     borderRadius: BorderRadius.circular(10),
@@ -128,8 +126,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
                             itemCount: results.length,
                             separatorBuilder: (_, __) => Divider(
                               height: 1,
-                              color:
-                                  AppColors.border.withValues(alpha: 0.25),
+                              color: AppColors.border.withValues(alpha: 0.25),
                             ),
                             itemBuilder: (context, index) {
                               final event = results[index];
@@ -139,8 +136,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
                                 onTap: () {
                                   _navigateToEvent(event);
                                   _dismissSearch();
-                                  _showEditEventDialog(
-                                      stateContext, event);
+                                  _showEditEventDialog(stateContext, event);
                                 },
                               );
                             },
@@ -203,16 +199,15 @@ class _CalendarPanelState extends State<CalendarPanel> {
 
   Future<void> _loadEvents() async {
     final range = _currentRange;
-    final events =
-        await CallHistoryDb.getEventsBetween(range[0], range[1]);
+    final events = await CallHistoryDb.getEventsBetween(range[0], range[1]);
     if (mounted) setState(() => _events = events);
   }
 
   List<DateTime> get _currentRange {
     switch (_view) {
       case _CalendarView.day:
-        final start = DateTime.utc(
-            _focusDate.year, _focusDate.month, _focusDate.day);
+        final start =
+            DateTime.utc(_focusDate.year, _focusDate.month, _focusDate.day);
         return [start, start.add(const Duration(days: 1))];
       case _CalendarView.week:
         final weekStart =
@@ -222,10 +217,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
         return [start, start.add(const Duration(days: 7))];
       case _CalendarView.month:
         final start = DateTime.utc(_focusDate.year, _focusDate.month, 1);
-        return [
-          start,
-          DateTime.utc(_focusDate.year, _focusDate.month + 1, 1)
-        ];
+        return [start, DateTime.utc(_focusDate.year, _focusDate.month + 1, 1)];
     }
   }
 
@@ -239,8 +231,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
           _focusDate = _focusDate.add(Duration(days: 7 * delta));
           break;
         case _CalendarView.month:
-          _focusDate =
-              DateTime(_focusDate.year, _focusDate.month + delta, 1);
+          _focusDate = DateTime(_focusDate.year, _focusDate.month + delta, 1);
           break;
       }
     });
@@ -264,7 +255,8 @@ class _CalendarPanelState extends State<CalendarPanel> {
   Widget build(BuildContext context) {
     final syncService = context.watch<CalendarSyncService>();
     final gcalService = context.watch<GoogleCalendarService>();
-    final hasAnyIntegration = syncService.hasCalendly || gcalService.config.enabled;
+    final hasAnyIntegration =
+        syncService.hasCalendly || gcalService.config.enabled;
 
     return Container(
       color: AppColors.bg,
@@ -298,16 +290,14 @@ class _CalendarPanelState extends State<CalendarPanel> {
     }
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 28, 8, 12),
+      padding: const EdgeInsets.fromLTRB(20, 28, 13, 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border:
-            Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
       ),
       child: Row(
         children: [
-          Icon(Icons.calendar_month_rounded,
-              size: 18, color: AppColors.accent),
+          Icon(Icons.calendar_month_rounded, size: 18, color: AppColors.accent),
           const SizedBox(width: 8),
           Text(
             title,
@@ -335,12 +325,11 @@ class _CalendarPanelState extends State<CalendarPanel> {
                   controller: _searchController,
                   focusNode: _searchFocusNode,
                   onChanged: _onSearchChanged,
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textPrimary),
+                  style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
                   decoration: InputDecoration(
                     hintText: 'Search...',
-                    hintStyle: TextStyle(
-                        fontSize: 13, color: AppColors.textTertiary),
+                    hintStyle:
+                        TextStyle(fontSize: 13, color: AppColors.textTertiary),
                     prefixIcon: Icon(Icons.search_rounded,
                         size: 16, color: AppColors.textTertiary),
                     prefixIconConstraints:
@@ -355,8 +344,7 @@ class _CalendarPanelState extends State<CalendarPanel> {
                     suffixIconConstraints:
                         const BoxConstraints(minWidth: 32, minHeight: 0),
                     border: InputBorder.none,
-                    contentPadding:
-                        const EdgeInsets.symmetric(vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
                   ),
                 ),
               ),
@@ -382,8 +370,8 @@ class _CalendarPanelState extends State<CalendarPanel> {
                 borderRadius: BorderRadius.circular(8),
                 color: AppColors.accent,
               ),
-              child: Icon(Icons.add_rounded,
-                  size: 16, color: AppColors.onAccent),
+              child:
+                  Icon(Icons.add_rounded, size: 16, color: AppColors.onAccent),
             ),
           ),
           const SizedBox(width: 4),
@@ -784,9 +772,11 @@ class _WeekViewState extends State<_WeekView> {
                 color: AppColors.surface,
                 border: Border(
                   right: BorderSide(
-                      color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.6),
+                      width: 0.5),
                   bottom: BorderSide(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5),
                 ),
               ),
             ),
@@ -814,7 +804,8 @@ class _WeekViewState extends State<_WeekView> {
                   decoration: BoxDecoration(
                     border: Border(
                       right: BorderSide(
-                          color: AppColors.border.withValues(alpha: 0.6), width: 0.5),
+                          color: AppColors.border.withValues(alpha: 0.6),
+                          width: 0.5),
                     ),
                   ),
                   child: Column(
@@ -848,7 +839,8 @@ class _WeekViewState extends State<_WeekView> {
                       startHour: _startHour,
                       endHour: _endHour,
                       hourHeight: _hourHeight,
-                      isToday: _isSameDay(weekStart.add(Duration(days: d)), now),
+                      isToday:
+                          _isSameDay(weekStart.add(Duration(days: d)), now),
                       now: now,
                       onEventTap: widget.onEventTap,
                       onAddEvent: widget.onAddEvent,
@@ -911,7 +903,8 @@ class _DayHeaderState extends State<_DayHeader> {
           ? BoxDecoration(
               border: Border(
                 right: BorderSide(
-                    color: AppColors.border.withValues(alpha: 0.35), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.35),
+                    width: 0.5),
               ),
             )
           : null,
@@ -1046,13 +1039,15 @@ class _DayColumn extends StatelessWidget {
           ? BoxDecoration(
               border: Border(
                 right: BorderSide(
-                    color: AppColors.border.withValues(alpha: 0.35), width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.35),
+                    width: 0.5),
               ),
             )
           : null,
       child: SizedBox(
         height: totalHeight,
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
             Positioned.fill(
               child: GestureDetector(
@@ -1079,57 +1074,23 @@ class _DayColumn extends StatelessWidget {
   }
 
   Widget _buildNowLine() {
-    final int minutesFromStart =
-        (now.hour - startHour) * 60 + now.minute;
+    final int minutesFromStart = (now.hour - startHour) * 60 + now.minute;
     final double top = minutesFromStart * hourHeight / 60;
-    if (top < 0 ||
-        top > (endHour - startHour + 1) * hourHeight) {
+    if (top < 0 || top > (endHour - startHour + 1) * hourHeight) {
       return const SizedBox.shrink();
     }
+    const double markerHeight = 14.0;
     return Positioned(
-      top: top - 10,
+      top: top - markerHeight / 2,
       left: 0,
       right: 0,
-      height: 20,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 4,
-            height: 20,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(2),
-              gradient: LinearGradient(
-                transform: const GradientRotation(pi / 4),
-                colors: [AppColors.accentLight, AppColors.accent],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.accent.withValues(alpha: 0.5),
-                  blurRadius: 4,
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Container(
-              height: 2,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(1),
-                gradient: LinearGradient(
-                  transform: const GradientRotation(pi / 4),
-                  colors: [AppColors.accentLight, AppColors.accent],
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.accent.withValues(alpha: 0.35),
-                    blurRadius: 4,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+      height: markerHeight,
+      child: CustomPaint(
+        size: Size(double.infinity, markerHeight),
+        painter: _NowLinePainter(
+          triangleColor: AppColors.hotSignal,
+          lineColor: AppColors.accent,
+        ),
       ),
     );
   }
@@ -1137,15 +1098,15 @@ class _DayColumn extends StatelessWidget {
   Widget _buildEvent(CalendarEvent event) {
     final DateTime localStart = event.startTime.toLocal();
     final DateTime localEnd = event.endTime.toLocal();
-    final int startMin =
-        (localStart.hour - startHour) * 60 + localStart.minute;
+    final int startMin = (localStart.hour - startHour) * 60 + localStart.minute;
     final int endMin = (localEnd.hour - startHour) * 60 + localEnd.minute;
     final double top = startMin * hourHeight / 60;
     final double height =
         ((endMin - startMin).clamp(15, 9999)) * hourHeight / 60;
 
     final sourceColor = AppColors.colorForSource(event.source);
-    final hasContact = event.inviteeName != null && event.inviteeName!.isNotEmpty;
+    final hasContact =
+        event.inviteeName != null && event.inviteeName!.isNotEmpty;
 
     return Positioned(
       top: top.clamp(0, double.infinity),
@@ -1366,9 +1327,7 @@ class _DayViewState extends State<_DayView> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: isToday
-                    ? AppColors.accent
-                    : AppColors.textSecondary,
+                color: isToday ? AppColors.accent : AppColors.textSecondary,
                 letterSpacing: 0.2,
               ),
             ),
@@ -1398,8 +1357,7 @@ class _DayViewState extends State<_DayView> {
                           child: Align(
                             alignment: Alignment.topRight,
                             child: Padding(
-                              padding:
-                                  const EdgeInsets.only(right: 6, top: 0),
+                              padding: const EdgeInsets.only(right: 6, top: 0),
                               child: Text(
                                 _formatHour(h),
                                 style: TextStyle(
@@ -1448,6 +1406,58 @@ class _DayViewState extends State<_DayView> {
 // Month View
 // ---------------------------------------------------------------------------
 
+class _NowLinePainter extends CustomPainter {
+  final Color triangleColor;
+  final Color lineColor;
+
+  _NowLinePainter({required this.triangleColor, required this.lineColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+
+    final midY = size.height / 2;
+    final triangleH = size.height;
+    final triangleW = triangleH * 1.0;
+
+    // Filled triangle on the left.
+    final triPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [triangleColor, lineColor],
+      ).createShader(Rect.fromLTWH(0, 0, triangleW, triangleH))
+      ..style = PaintingStyle.fill;
+
+    final triangle = Path()
+      ..moveTo(0, 0)
+      ..lineTo(triangleW, midY)
+      ..lineTo(0, triangleH)
+      ..close();
+    canvas.drawPath(triangle, triPaint);
+
+    // Glow behind triangle.
+    final glowPaint = Paint()
+      ..color = lineColor.withValues(alpha: 0.5)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawPath(triangle, glowPaint);
+
+    // Gradient line connected to triangle tip, fading to transparent.
+    final lineRect =
+        Rect.fromLTRB(triangleW - 0.5, midY - 1.5, size.width, midY + 1.5);
+    final linePaint = Paint()
+      ..shader = LinearGradient(
+        colors: [lineColor, lineColor.withValues(alpha: 0)],
+      ).createShader(lineRect)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(lineRect, linePaint);
+  }
+
+  @override
+  bool shouldRepaint(_NowLinePainter old) =>
+      old.triangleColor != triangleColor || old.lineColor != lineColor;
+}
+
 class _MonthView extends StatelessWidget {
   final DateTime focusDate;
   final List<CalendarEvent> events;
@@ -1467,13 +1477,11 @@ class _MonthView extends StatelessWidget {
   Widget build(BuildContext context) {
     final firstOfMonth = DateTime(focusDate.year, focusDate.month, 1);
     final startWeekday = firstOfMonth.weekday % 7; // 0 = Sun
-    final daysInMonth =
-        DateTime(focusDate.year, focusDate.month + 1, 0).day;
+    final daysInMonth = DateTime(focusDate.year, focusDate.month + 1, 0).day;
     final now = DateTime.now();
     const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-    final prevMonthDays =
-        DateTime(focusDate.year, focusDate.month, 0).day;
+    final prevMonthDays = DateTime(focusDate.year, focusDate.month, 0).day;
     final totalCells = startWeekday + daysInMonth;
     final rowCount = ((totalCells + 6) ~/ 7);
     final gridCells = rowCount * 7;
@@ -1486,8 +1494,7 @@ class _MonthView extends StatelessWidget {
             decoration: BoxDecoration(
               border: Border(
                 bottom: BorderSide(
-                    color: AppColors.border.withValues(alpha: 0.5),
-                    width: 0.5),
+                    color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
               ),
             ),
             child: Row(
@@ -1528,18 +1535,15 @@ class _MonthView extends StatelessWidget {
 
                 if (index < startWeekday) {
                   dayNum = prevMonthDays - startWeekday + index + 1;
-                  day = DateTime(
-                      focusDate.year, focusDate.month - 1, dayNum);
+                  day = DateTime(focusDate.year, focusDate.month - 1, dayNum);
                   isCurrentMonth = false;
                 } else if (index >= startWeekday + daysInMonth) {
                   dayNum = index - startWeekday - daysInMonth + 1;
-                  day = DateTime(
-                      focusDate.year, focusDate.month + 1, dayNum);
+                  day = DateTime(focusDate.year, focusDate.month + 1, dayNum);
                   isCurrentMonth = false;
                 } else {
                   dayNum = index - startWeekday + 1;
-                  day = DateTime(
-                      focusDate.year, focusDate.month, dayNum);
+                  day = DateTime(focusDate.year, focusDate.month, dayNum);
                   isCurrentMonth = true;
                 }
 
@@ -1553,24 +1557,20 @@ class _MonthView extends StatelessWidget {
                       s.day == day.day;
                 }).toList();
 
-                final col = index % 7;
                 final row = index ~/ 7;
+
+                final borderSide = BorderSide(
+                  color: AppColors.border.withValues(alpha: 0.4),
+                  width: 0.5,
+                );
 
                 return Container(
                   decoration: BoxDecoration(
                     border: Border(
-                      right: col < 6
-                          ? BorderSide(
-                              color:
-                                  AppColors.border.withValues(alpha: 0.25),
-                              width: 0.5)
-                          : BorderSide.none,
-                      bottom: row < rowCount - 1
-                          ? BorderSide(
-                              color:
-                                  AppColors.border.withValues(alpha: 0.25),
-                              width: 0.5)
-                          : BorderSide.none,
+                      top: row == 0 ? borderSide : BorderSide.none,
+                      left: borderSide,
+                      right: borderSide,
+                      bottom: borderSide,
                     ),
                   ),
                   child: _MonthDayCell(
@@ -1624,9 +1624,7 @@ class _MonthDayCellState extends State<_MonthDayCell> {
   static const _maxPills = 5;
 
   String _shortTime(DateTime dt) {
-    final h = dt.hour > 12
-        ? dt.hour - 12
-        : (dt.hour == 0 ? 12 : dt.hour);
+    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final m = dt.minute.toString().padLeft(2, '0');
     final ap = dt.hour >= 12 ? 'p' : 'a';
     return '$h:$m$ap';
@@ -1828,7 +1826,8 @@ Widget _buildField({
         decoration: InputDecoration(
           hintText: hint,
           hintStyle: TextStyle(
-              fontSize: 13, color: AppColors.textTertiary.withValues(alpha: 0.6)),
+              fontSize: 13,
+              color: AppColors.textTertiary.withValues(alpha: 0.6)),
           filled: true,
           fillColor: AppColors.card,
           contentPadding:
@@ -1905,9 +1904,7 @@ class _QuickTimeInputState extends State<_QuickTimeInput> {
   void _submit() {
     final hText = _hourCtrl.text.trim();
     final mText = _minCtrl.text.trim();
-    final h = hText.isEmpty
-        ? widget.current.hourOfPeriod
-        : int.tryParse(hText);
+    final h = hText.isEmpty ? widget.current.hourOfPeriod : int.tryParse(hText);
     final m = mText.isEmpty ? widget.current.minute : int.tryParse(mText);
     if (h == null || m == null || h < 1 || h > 12 || m < 0 || m > 59) {
       return;
@@ -1925,8 +1922,7 @@ class _QuickTimeInputState extends State<_QuickTimeInput> {
             color: AppColors.textTertiary.withValues(alpha: 0.35)),
         filled: true,
         fillColor: AppColors.card,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: BorderSide(
@@ -2145,8 +2141,7 @@ Widget _buildTimeSelector({
               Expanded(
                 child: Text(
                   formatted,
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textPrimary),
+                  style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
                 ),
               ),
               Icon(Icons.schedule_rounded,
@@ -2215,8 +2210,7 @@ Widget _buildDateSelector({
               Expanded(
                 child: Text(
                   formatted,
-                  style: TextStyle(
-                      fontSize: 13, color: AppColors.textPrimary),
+                  style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
                 ),
               ),
               Icon(Icons.calendar_today_rounded,
@@ -2382,8 +2376,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
               color: AppColors.card,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: AppColors.border.withValues(alpha: 0.5),
-                  width: 0.5),
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             ),
             child: ListView.builder(
               padding: EdgeInsets.zero,
@@ -2396,8 +2389,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                 return InkWell(
                   onTap: () => _selectContact(c),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Row(
                       children: [
                         Icon(Icons.person_outline_rounded,
@@ -2464,27 +2457,22 @@ class _NewEventDialogState extends State<_NewEventDialog> {
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(
-            fontSize: 12,
-            color: AppColors.textTertiary.withValues(alpha: 0.5)),
-        prefixIcon:
-            Icon(icon, size: 14, color: AppColors.textTertiary),
+            fontSize: 12, color: AppColors.textTertiary.withValues(alpha: 0.5)),
+        prefixIcon: Icon(icon, size: 14, color: AppColors.textTertiary),
         prefixIconConstraints: const BoxConstraints(minWidth: 32),
         filled: true,
         fillColor: AppColors.card,
         isDense: true,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(7),
           borderSide: BorderSide(
-              color: AppColors.border.withValues(alpha: 0.4),
-              width: 0.5),
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(7),
           borderSide: BorderSide(
-              color: AppColors.border.withValues(alpha: 0.4),
-              width: 0.5),
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(7),
@@ -2503,12 +2491,18 @@ class _NewEventDialogState extends State<_NewEventDialog> {
     final email = _emailCtrl.text.trim();
 
     final start = DateTime(
-      _date.year, _date.month, _date.day,
-      _startTime.hour, _startTime.minute,
+      _date.year,
+      _date.month,
+      _date.day,
+      _startTime.hour,
+      _startTime.minute,
     ).toUtc();
     final end = DateTime(
-      _date.year, _date.month, _date.day,
-      _endTime.hour, _endTime.minute,
+      _date.year,
+      _date.month,
+      _date.day,
+      _endTime.hour,
+      _endTime.minute,
     ).toUtc();
 
     final event = CalendarEvent(
@@ -2517,12 +2511,9 @@ class _NewEventDialogState extends State<_NewEventDialog> {
       endTime: end,
       inviteeName: name.isEmpty ? null : name,
       inviteeEmail: email.isEmpty ? null : email,
-      description: _descCtrl.text.trim().isEmpty
-          ? null
-          : _descCtrl.text.trim(),
-      location: _locationCtrl.text.trim().isEmpty
-          ? null
-          : _locationCtrl.text.trim(),
+      description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+      location:
+          _locationCtrl.text.trim().isEmpty ? null : _locationCtrl.text.trim(),
       jobFunctionId: _selectedJfId,
       status: 'active',
       createdAt: DateTime.now().toUtc(),
@@ -2605,16 +2596,15 @@ class _NewEventDialogState extends State<_NewEventDialog> {
 
         var calendars = await gcal.listCalendars();
         var calendlyCalendar = calendars
-            .where((c) =>
-                (c['name'] ?? '').toLowerCase().contains('calendly'))
+            .where((c) => (c['name'] ?? '').toLowerCase().contains('calendly'))
             .toList();
 
         if (calendlyCalendar.isEmpty) {
           await gcal.createCalendar(name: 'Calendly');
           calendars = await gcal.listCalendars();
           calendlyCalendar = calendars
-              .where((c) =>
-                  (c['name'] ?? '').toLowerCase().contains('calendly'))
+              .where(
+                  (c) => (c['name'] ?? '').toLowerCase().contains('calendly'))
               .toList();
         }
         final calId =
@@ -2631,7 +2621,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
         );
         if (ok) {
           final gcalId = GoogleCalendarService.gcalCompositeId(
-            _titleCtrl.text.trim(), dateStr, startStr);
+              _titleCtrl.text.trim(), dateStr, startStr);
           await CallHistoryDb.updateCalendarEvent(
             event.copyWith(
               id: localId,
@@ -2645,8 +2635,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
     // SMS the contact about the new event
     if (_notifyRecipient && phone.isNotEmpty && mounted) {
       try {
-        final messaging =
-            widget.parentContext.read<MessagingService>();
+        final messaging = widget.parentContext.read<MessagingService>();
         final contactName = name.isNotEmpty ? name : 'there';
         final body = 'Hi $contactName, you have an appointment on '
             '${DateFormat.MMMd().format(_date)} at '
@@ -2661,9 +2650,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
         final remindAt = start.subtract(const Duration(minutes: 15));
         await CallHistoryDb.insertReminder(
           title: _titleCtrl.text.trim(),
-          description: name.isNotEmpty
-              ? 'Meeting with $name'
-              : null,
+          description: name.isNotEmpty ? 'Meeting with $name' : null,
           remindAt: remindAt,
           source: 'calendar',
         );
@@ -2702,8 +2689,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
         child: Row(
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 14,
-                  color: value ? color : AppColors.textTertiary),
+              Icon(icon,
+                  size: 14, color: value ? color : AppColors.textTertiary),
               const SizedBox(width: 6),
             ] else ...[
               Container(
@@ -2774,13 +2761,13 @@ class _NewEventDialogState extends State<_NewEventDialog> {
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5),
                 ),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.event_rounded,
-                      size: 18, color: AppColors.accent),
+                  Icon(Icons.event_rounded, size: 18, color: AppColors.accent),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -2838,12 +2825,11 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                             value: _startTime,
                             context: context,
                             onChanged: (t) => setState(() {
-                                _startTime = t;
-                                final mins = t.hour * 60 + t.minute + 30;
-                                _endTime = TimeOfDay(
-                                    hour: (mins ~/ 60) % 24,
-                                    minute: mins % 60);
-                              }),
+                              _startTime = t;
+                              final mins = t.hour * 60 + t.minute + 30;
+                              _endTime = TimeOfDay(
+                                  hour: (mins ~/ 60) % 24, minute: mins % 60);
+                            }),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -2852,8 +2838,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                             label: 'End',
                             value: _endTime,
                             context: context,
-                            onChanged: (t) =>
-                                setState(() => _endTime = t),
+                            onChanged: (t) => setState(() => _endTime = t),
                           ),
                         ),
                       ],
@@ -2886,8 +2871,7 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                     ),
                     const SizedBox(height: 5),
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
                         color: AppColors.card,
                         borderRadius: BorderRadius.circular(8),
@@ -2901,33 +2885,29 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                         underline: const SizedBox.shrink(),
                         dropdownColor: AppColors.card,
                         style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textPrimary),
+                            fontSize: 13, color: AppColors.textPrimary),
                         icon: Icon(Icons.unfold_more_rounded,
                             size: 16, color: AppColors.textTertiary),
                         hint: Text('None',
                             style: TextStyle(
-                                fontSize: 13,
-                                color: AppColors.textTertiary)),
+                                fontSize: 13, color: AppColors.textTertiary)),
                         items: [
                           DropdownMenuItem<int?>(
                             value: null,
                             child: Text('None',
-                                style: TextStyle(
-                                    color: AppColors.textTertiary)),
+                                style:
+                                    TextStyle(color: AppColors.textTertiary)),
                           ),
                           ...jfService.items.map((jf) {
                             final id = (jf as dynamic).id as int?;
-                            final name =
-                                (jf as dynamic).title as String;
+                            final name = (jf as dynamic).title as String;
                             return DropdownMenuItem<int?>(
                               value: id,
                               child: Text(name),
                             );
                           }),
                         ],
-                        onChanged: (v) =>
-                            setState(() => _selectedJfId = v),
+                        onChanged: (v) => setState(() => _selectedJfId = v),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -2968,7 +2948,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                           child: _syncCheckbox(
                             label: 'Calendly',
                             value: _syncToCalendly,
-                            color: AppColors.colorForSource(EventSource.calendly),
+                            color:
+                                AppColors.colorForSource(EventSource.calendly),
                             onTap: () => setState(
                                 () => _syncToCalendly = !_syncToCalendly),
                           ),
@@ -2981,8 +2962,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                             label: 'Google',
                             value: _syncToGoogle,
                             color: AppColors.colorForSource(EventSource.google),
-                            onTap: () => setState(
-                                () => _syncToGoogle = !_syncToGoogle),
+                            onTap: () =>
+                                setState(() => _syncToGoogle = !_syncToGoogle),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -3012,7 +2993,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
-                                  color: AppColors.border.withValues(alpha: 0.5),
+                                  color:
+                                      AppColors.border.withValues(alpha: 0.5),
                                   width: 0.5),
                             ),
                             child: Center(
@@ -3040,7 +3022,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
                               borderRadius: BorderRadius.circular(8),
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppColors.accent.withValues(alpha: 0.3),
+                                  color:
+                                      AppColors.accent.withValues(alpha: 0.3),
                                   blurRadius: 8,
                                   offset: const Offset(0, 2),
                                 ),
@@ -3256,8 +3239,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
               color: AppColors.card,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: AppColors.border.withValues(alpha: 0.5),
-                  width: 0.5),
+                  color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
             ),
             child: ListView.builder(
               padding: EdgeInsets.zero,
@@ -3270,8 +3252,8 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                 return InkWell(
                   onTap: () => _selectContact(c),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     child: Row(
                       children: [
                         Icon(Icons.person_outline_rounded,
@@ -3338,27 +3320,22 @@ class _EditEventDialogState extends State<_EditEventDialog> {
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(
-            fontSize: 12,
-            color: AppColors.textTertiary.withValues(alpha: 0.5)),
-        prefixIcon:
-            Icon(icon, size: 14, color: AppColors.textTertiary),
+            fontSize: 12, color: AppColors.textTertiary.withValues(alpha: 0.5)),
+        prefixIcon: Icon(icon, size: 14, color: AppColors.textTertiary),
         prefixIconConstraints: const BoxConstraints(minWidth: 32),
         filled: true,
         fillColor: AppColors.card,
         isDense: true,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(7),
           borderSide: BorderSide(
-              color: AppColors.border.withValues(alpha: 0.4),
-              width: 0.5),
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(7),
           borderSide: BorderSide(
-              color: AppColors.border.withValues(alpha: 0.4),
-              width: 0.5),
+              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(7),
@@ -3408,8 +3385,8 @@ class _EditEventDialogState extends State<_EditEventDialog> {
         child: Row(
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 14,
-                  color: value ? color : AppColors.textTertiary),
+              Icon(icon,
+                  size: 14, color: value ? color : AppColors.textTertiary),
               const SizedBox(width: 6),
             ] else ...[
               Container(
@@ -3457,12 +3434,18 @@ class _EditEventDialogState extends State<_EditEventDialog> {
     final evt = widget.event;
 
     final start = DateTime(
-      _date.year, _date.month, _date.day,
-      _startTime.hour, _startTime.minute,
+      _date.year,
+      _date.month,
+      _date.day,
+      _startTime.hour,
+      _startTime.minute,
     ).toUtc();
     final end = DateTime(
-      _date.year, _date.month, _date.day,
-      _endTime.hour, _endTime.minute,
+      _date.year,
+      _date.month,
+      _date.day,
+      _endTime.hour,
+      _endTime.minute,
     ).toUtc();
 
     final updated = evt.copyWith(
@@ -3471,12 +3454,9 @@ class _EditEventDialogState extends State<_EditEventDialog> {
       endTime: end,
       inviteeName: name.isEmpty ? null : name,
       inviteeEmail: email.isEmpty ? null : email,
-      description: _descCtrl.text.trim().isEmpty
-          ? null
-          : _descCtrl.text.trim(),
-      location: _locationCtrl.text.trim().isEmpty
-          ? null
-          : _locationCtrl.text.trim(),
+      description: _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+      location:
+          _locationCtrl.text.trim().isEmpty ? null : _locationCtrl.text.trim(),
       jobFunctionId: _selectedJfId,
     );
 
@@ -3523,11 +3503,9 @@ class _EditEventDialogState extends State<_EditEventDialog> {
               reason: 'Rescheduled via Phonegentic',
             );
           }
-          final eventTypes =
-              await syncSvc.calendlyService!.listEventTypes();
+          final eventTypes = await syncSvc.calendlyService!.listEventTypes();
           if (eventTypes.isNotEmpty && email.isNotEmpty) {
-            final calendlyUri =
-                await syncSvc.calendlyService!.createInvitee(
+            final calendlyUri = await syncSvc.calendlyService!.createInvitee(
               eventTypeUri: eventTypes.first.uri,
               startTime: start,
               inviteeName: name.isEmpty ? 'Guest' : name,
@@ -3542,8 +3520,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
               );
             }
           } else if (eventTypes.isNotEmpty) {
-            final link =
-                await syncSvc.calendlyService!.createSchedulingLink(
+            final link = await syncSvc.calendlyService!.createSchedulingLink(
               eventTypeUri: eventTypes.first.uri,
             );
             if (link != null) {
@@ -3577,21 +3554,19 @@ class _EditEventDialogState extends State<_EditEventDialog> {
 
         var calendars = await gcal.listCalendars();
         var calendlyCalendar = calendars
-            .where((c) =>
-                (c['name'] ?? '').toLowerCase().contains('calendly'))
+            .where((c) => (c['name'] ?? '').toLowerCase().contains('calendly'))
             .toList();
 
         if (calendlyCalendar.isEmpty) {
           await gcal.createCalendar(name: 'Calendly');
           calendars = await gcal.listCalendars();
           calendlyCalendar = calendars
-              .where((c) =>
-                  (c['name'] ?? '').toLowerCase().contains('calendly'))
+              .where(
+                  (c) => (c['name'] ?? '').toLowerCase().contains('calendly'))
               .toList();
         }
-        final calId = calendlyCalendar.isNotEmpty
-            ? calendlyCalendar.first['id']
-            : null;
+        final calId =
+            calendlyCalendar.isNotEmpty ? calendlyCalendar.first['id'] : null;
 
         final ok = await gcal.createEvent(
           title: _titleCtrl.text.trim(),
@@ -3602,7 +3577,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
         );
         if (ok) {
           final gcalId = GoogleCalendarService.gcalCompositeId(
-            _titleCtrl.text.trim(), dateStr, startStr);
+              _titleCtrl.text.trim(), dateStr, startStr);
           await CallHistoryDb.updateCalendarEvent(
             updated.copyWith(googleCalendarEventId: gcalId),
           );
@@ -3613,8 +3588,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
     // ── SMS the contact about the change ──
     if (_notifyRecipient && phone.isNotEmpty && mounted) {
       try {
-        final messaging =
-            widget.parentContext.read<MessagingService>();
+        final messaging = widget.parentContext.read<MessagingService>();
         final contactName = name.isNotEmpty ? name : 'there';
         String body;
         if (_timeChanged) {
@@ -3637,9 +3611,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
         final remindAt = start.subtract(const Duration(minutes: 15));
         await CallHistoryDb.insertReminder(
           title: _titleCtrl.text.trim(),
-          description: name.isNotEmpty
-              ? 'Meeting with $name'
-              : null,
+          description: name.isNotEmpty ? 'Meeting with $name' : null,
           remindAt: remindAt,
           source: 'calendar',
         );
@@ -3699,7 +3671,8 @@ class _EditEventDialogState extends State<_EditEventDialog> {
               decoration: BoxDecoration(
                 border: Border(
                   bottom: BorderSide(
-                      color: AppColors.border.withValues(alpha: 0.5), width: 0.5),
+                      color: AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5),
                 ),
               ),
               child: Row(
@@ -3763,12 +3736,11 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                             value: _startTime,
                             context: context,
                             onChanged: (t) => setState(() {
-                                _startTime = t;
-                                final mins = t.hour * 60 + t.minute + 30;
-                                _endTime = TimeOfDay(
-                                    hour: (mins ~/ 60) % 24,
-                                    minute: mins % 60);
-                              }),
+                              _startTime = t;
+                              final mins = t.hour * 60 + t.minute + 30;
+                              _endTime = TimeOfDay(
+                                  hour: (mins ~/ 60) % 24, minute: mins % 60);
+                            }),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -3777,8 +3749,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                             label: 'End',
                             value: _endTime,
                             context: context,
-                            onChanged: (t) =>
-                                setState(() => _endTime = t),
+                            onChanged: (t) => setState(() => _endTime = t),
                           ),
                         ),
                       ],
@@ -3811,8 +3782,7 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                     ),
                     const SizedBox(height: 5),
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
                         color: AppColors.card,
                         borderRadius: BorderRadius.circular(8),
@@ -3826,33 +3796,29 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                         underline: const SizedBox.shrink(),
                         dropdownColor: AppColors.card,
                         style: TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textPrimary),
+                            fontSize: 13, color: AppColors.textPrimary),
                         icon: Icon(Icons.unfold_more_rounded,
                             size: 16, color: AppColors.textTertiary),
                         hint: Text('None',
                             style: TextStyle(
-                                fontSize: 13,
-                                color: AppColors.textTertiary)),
+                                fontSize: 13, color: AppColors.textTertiary)),
                         items: [
                           DropdownMenuItem<int?>(
                             value: null,
                             child: Text('None',
-                                style: TextStyle(
-                                    color: AppColors.textTertiary)),
+                                style:
+                                    TextStyle(color: AppColors.textTertiary)),
                           ),
                           ...jfService.items.map((jf) {
                             final id = (jf as dynamic).id as int?;
-                            final name =
-                                (jf as dynamic).title as String;
+                            final name = (jf as dynamic).title as String;
                             return DropdownMenuItem<int?>(
                               value: id,
                               child: Text(name),
                             );
                           }),
                         ],
-                        onChanged: (v) =>
-                            setState(() => _selectedJfId = v),
+                        onChanged: (v) => setState(() => _selectedJfId = v),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -3893,8 +3859,8 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                           child: _syncCheckbox(
                             label: 'Calendly',
                             value: _syncToCalendly,
-                            color: AppColors.colorForSource(
-                                EventSource.calendly),
+                            color:
+                                AppColors.colorForSource(EventSource.calendly),
                             onTap: () => setState(
                                 () => _syncToCalendly = !_syncToCalendly),
                           ),
@@ -3906,10 +3872,9 @@ class _EditEventDialogState extends State<_EditEventDialog> {
                           child: _syncCheckbox(
                             label: 'Google',
                             value: _syncToGoogle,
-                            color: AppColors.colorForSource(
-                                EventSource.google),
-                            onTap: () => setState(
-                                () => _syncToGoogle = !_syncToGoogle),
+                            color: AppColors.colorForSource(EventSource.google),
+                            onTap: () =>
+                                setState(() => _syncToGoogle = !_syncToGoogle),
                           ),
                         ),
                         const SizedBox(width: 8),

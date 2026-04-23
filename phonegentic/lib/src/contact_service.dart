@@ -177,10 +177,10 @@ class ContactService extends ChangeNotifier {
     try {
       if (query.trim().isEmpty) {
         _contacts = await CallHistoryDb.getAllContacts();
+        _rebuildPhoneCache();
       } else {
         _contacts = await CallHistoryDb.searchContacts(query);
       }
-      _rebuildPhoneCache();
     } catch (e) {
       debugPrint('[ContactService] search failed: $e');
     }

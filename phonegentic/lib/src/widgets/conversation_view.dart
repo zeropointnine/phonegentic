@@ -163,7 +163,7 @@ class _ConversationViewState extends State<ConversationView> {
         : demo.maskPhone(rawPhone);
     final phone = demo.maskPhone(rawPhone);
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 28, 8, 10),
+      padding: const EdgeInsets.fromLTRB(20, 28, 16, 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
@@ -200,6 +200,7 @@ class _ConversationViewState extends State<ConversationView> {
           ContactIdenticon(
             seed: convo?.contactName ?? rawPhone,
             size: 30,
+            thumbnailPath: convo?.thumbnailPath as String?,
           ),
           const SizedBox(width: 8),
           ConstrainedBox(
@@ -698,10 +699,6 @@ class _MessageBubble extends StatelessWidget {
     final align =
         _isOutbound ? CrossAxisAlignment.end : CrossAxisAlignment.start;
 
-    const double avatarSize = 26;
-    const double avatarGap = 6;
-    const double avatarSlot = avatarSize + avatarGap;
-
     Widget bubbleContent = Column(
       crossAxisAlignment: align,
       children: [
@@ -794,24 +791,17 @@ class _MessageBubble extends StatelessWidget {
       return Align(
         alignment: Alignment.centerRight,
         child: Padding(
-          padding: EdgeInsets.only(top: 3, bottom: 3, left: avatarSlot),
+          padding: const EdgeInsets.only(top: 3, bottom: 3),
           child: bubbleContent,
         ),
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (showTail)
-            ContactIdenticon(seed: contactSeed, size: avatarSize)
-          else
-            SizedBox(width: avatarSize),
-          const SizedBox(width: avatarGap),
-          Expanded(child: bubbleContent),
-        ],
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: bubbleContent,
       ),
     );
   }

@@ -3410,6 +3410,14 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
+    // Post-connect IVR suppression: voicemail menus and IVR prompts picked
+    // up by the mic after settling should not reach the LLM — the agent
+    // either narrates its reasoning (noisy) or hallucinates a response.
+    if (_callPhase.isActive && IvrDetector.isIvr(text)) {
+      debugPrint('[AgentService] IVR suppressed post-settle: "$text"');
+      return;
+    }
+
     // Deduplicate: OpenAI VAD can split the same utterance into multiple
     // items that produce near-identical completed transcriptions.
     final now = DateTime.now();
@@ -3487,13 +3495,12 @@ class AgentService extends ChangeNotifier {
     // speaker doesn't have one yet, update the label.  A threshold of 0.65
     // avoids false positives from ambient audio or dissimilar voices.
     //
-    // For the remote speaker on outbound calls, only apply voiceprint naming
-    // when the dialed number already resolved to a contact (i.e. the contact
-    // lookup set the name first).  Otherwise a false-positive voice match
-    // labels a stranger (e.g. a call-center agent) with a known contact's
-    // name — exactly the "Stan Cell ≠ Delta Airlines" bug.
+    // For the remote speaker, only apply voiceprint naming when the call's
+    // remote identity already resolved to a contact (i.e. the contact lookup
+    // set the name first).  Otherwise a false-positive voice match labels a
+    // stranger with a known contact's name.  This applies to both inbound
+    // and outbound calls.
     final skipVoiceprint = isRemote &&
-        _isOutbound &&
         speaker.name.isEmpty &&
         _remoteIdentity != null &&
         contactService?.lookupByPhone(_remoteIdentity!) == null;
@@ -3510,7 +3517,7 @@ class AgentService extends ChangeNotifier {
       }
     } else if (skipVoiceprint && voiceprintName.isNotEmpty) {
       debugPrint(
-          '[AgentService] Voiceprint skipped for remote on outbound call to unrecognized number: '
+          '[AgentService] Voiceprint skipped for remote caller audio: '
           '"$voiceprintName" (confidence=$confidence)');
     }
 
@@ -7306,10 +7313,6 @@ class AgentService extends ChangeNotifier {
       outbound: _isOutbound,
     );
 
-    _addMsg(ChatMessage.callState(
-      phase.displayLabel,
-      metadata: {'phase': phase.name, 'partyCount': partyCount},
-    ));
     notifyListeners();
 
     if (_active) {

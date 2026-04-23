@@ -15,6 +15,7 @@ class SmsConversation {
   final String remotePhone;
   final String localPhone;
   final String? contactName;
+  final String? thumbnailPath;
   final SmsMessage? lastMessage;
   final int unreadCount;
   final int totalMessages;
@@ -23,6 +24,7 @@ class SmsConversation {
     required this.remotePhone,
     required this.localPhone,
     this.contactName,
+    this.thumbnailPath,
     this.lastMessage,
     this.unreadCount = 0,
     this.totalMessages = 0,
@@ -45,6 +47,7 @@ class SmsConversation {
     String? remotePhone,
     String? localPhone,
     String? contactName,
+    String? thumbnailPath,
     SmsMessage? lastMessage,
     int? unreadCount,
     int? totalMessages,
@@ -53,6 +56,7 @@ class SmsConversation {
       remotePhone: remotePhone ?? this.remotePhone,
       localPhone: localPhone ?? this.localPhone,
       contactName: contactName ?? this.contactName,
+      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
       lastMessage: lastMessage ?? this.lastMessage,
       unreadCount: unreadCount ?? this.unreadCount,
       totalMessages: totalMessages ?? this.totalMessages,

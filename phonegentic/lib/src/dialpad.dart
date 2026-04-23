@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:phonegentic/src/agent_service.dart';
 import 'package:phonegentic/src/call_history_service.dart';
 import 'package:phonegentic/src/test_credentials.dart';
@@ -75,6 +77,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
   Map<String, dynamic>? _selectedContact;
   String? _lastDialedNumber;
 
+  double? _agentPanelWidth;
+  static const _panelWidthPrefKey = 'agent_panel_width';
+
   static const _tapChannel = MethodChannel('com.agentic_ai/audio_tap_control');
   bool _safetyCallModeForced = false;
   Timer? _conferenceTimeout;
@@ -100,6 +105,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     receivedMsg = '';
     _bindEventListeners();
     _loadSettings();
+    _loadPanelWidth();
     HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutoRegister());
   }
@@ -131,6 +137,24 @@ class _MyDialPadWidget extends State<DialPadWidget>
     _textController!.text = _dest ?? '';
     _textController!.addListener(_onDigitsChanged);
     setState(() {});
+  }
+
+  Future<void> _loadPanelWidth() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getDouble(_panelWidthPrefKey);
+    if (saved != null && mounted) {
+      setState(() => _agentPanelWidth = saved);
+    }
+  }
+
+  void _savePanelWidth(double? width) {
+    SharedPreferences.getInstance().then((prefs) {
+      if (width != null) {
+        prefs.setDouble(_panelWidthPrefKey, width);
+      } else {
+        prefs.remove(_panelWidthPrefKey);
+      }
+    });
   }
 
   void _onDigitsChanged() {
@@ -555,7 +579,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
     final messagingService = context.watch<MessagingService>();
     final width = MediaQuery.of(context).size.width;
     final showPanel = width >= 600;
-    final panelWidth = showPanel ? (width * 0.38).clamp(320.0, 440.0) : 0.0;
+    final defaultPanelWidth = (width * 0.38).clamp(320.0, 440.0);
+    if (!showPanel) _agentPanelWidth = null;
+    final panelWidth = showPanel ? (_agentPanelWidth ?? defaultPanelWidth) : 0.0;
 
     return Listener(
       behavior: HitTestBehavior.translucent,
@@ -799,6 +825,26 @@ class _MyDialPadWidget extends State<DialPadWidget>
               right: showPanel ? panelWidth : 0,
               child: const InboundCallFlowEditor(),
             ),
+          if (showPanel)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              right: panelWidth - 3,
+              child: _PanelDivider(
+                onDrag: (dx) {
+                  setState(() {
+                    final current = _agentPanelWidth ?? defaultPanelWidth;
+                    _agentPanelWidth =
+                        (current - dx).clamp(280.0, width * 0.65);
+                  });
+                  _savePanelWidth(_agentPanelWidth);
+                },
+                onDoubleTap: () {
+                  setState(() => _agentPanelWidth = null);
+                  _savePanelWidth(null);
+                },
+              ),
+            ),
         ],
       ),
     ),
@@ -890,7 +936,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
     );
   }
 
-  static const double _collapseThreshold = 700;
+  static const double _collapseThreshold = 820;
 
   Widget _buildTopBar(BuildContext context) {
     return LayoutBuilder(
@@ -898,7 +944,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
         final wide = constraints.maxWidth >= _collapseThreshold;
         return Padding(
           padding:
-              const EdgeInsets.only(left: 90, right: 16, top: 18, bottom: 15),
+              const EdgeInsets.only(left: 90, right: 14, top: 18, bottom: 15),
           child: Row(
             children: [
               const PhonegenticLogo(size: 30),
@@ -2600,6 +2646,49 @@ class _CallButtonState extends State<_CallButton>
                 child: Icon(Icons.phone, size: 30, color: AppColors.crtBlack),
               );
             },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PanelDivider extends StatefulWidget {
+  final ValueChanged<double> onDrag;
+  final VoidCallback onDoubleTap;
+  const _PanelDivider({required this.onDrag, required this.onDoubleTap});
+
+  @override
+  State<_PanelDivider> createState() => _PanelDividerState();
+}
+
+class _PanelDividerState extends State<_PanelDivider> {
+  bool _hovered = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _hovered || _dragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => setState(() => _dragging = true),
+        onHorizontalDragUpdate: (d) => widget.onDrag(d.delta.dx),
+        onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+        onDoubleTap: widget.onDoubleTap,
+        child: SizedBox(
+          width: 7,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: active ? 3 : 1,
+              color: active
+                  ? AppColors.accent.withValues(alpha: 0.7)
+                  : AppColors.border.withValues(alpha: 0.3),
+            ),
           ),
         ),
       ),
