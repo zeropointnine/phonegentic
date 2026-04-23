@@ -4841,6 +4841,11 @@ class AgentService extends ChangeNotifier {
 
     final contextLine = buf.toString();
 
+    // A fresh inbound SMS is a genuine, user-driven event — reset the
+    // loop-breaker so the agent's next reply is not suppressed by stale
+    // self-talk accounting from an earlier call.
+    _consecutiveAgentResponses = 0;
+
     if (_textAgent != null) {
       _textAgent!.sendUserMessage(contextLine);
     } else if (_active) {
@@ -7137,6 +7142,12 @@ class AgentService extends ChangeNotifier {
 
     _addMsg(ChatMessage.user(trimmed));
     notifyListeners();
+
+    // A deliberate host message is ground truth for "the user is present and
+    // talking to the agent", so clear any loop-breaker state that may have
+    // been raised by prior TTS echo or a self-talk burst. Otherwise the next
+    // agent reply will be suppressed by `_consecutiveAgentResponses`.
+    _consecutiveAgentResponses = 0;
 
     if (_active) {
       if (_splitPipeline) {

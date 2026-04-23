@@ -230,6 +230,7 @@ class TextAgentService {
   }
 
   Future<void> _callWithRetry() async {
+    bool repaired = false;
     for (var attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
         await _callLlm().timeout(
@@ -242,9 +243,13 @@ class TextAgentService {
         );
         return;
       } on LlmBadRequestException catch (e) {
-        if (e.hasToolUseError) {
+        if (e.hasToolUseError && !repaired) {
           _dumpMergedHistory(_mergedHistory());
           _repairHistory();
+          repaired = true;
+          debugPrint('[TextAgentService] 400 tool_use error — history '
+              'repaired, retrying once');
+          continue;
         }
         rethrow;
       } on LlmAuthException {
@@ -890,18 +895,69 @@ class TextAgentService {
       }
     }
 
+    _trimHistory();
+  }
+
+  /// Cap history at `_maxHistory` while preserving tool_use↔tool_result
+  /// pairing invariants Claude requires:
+  ///   1. Drop from the oldest end until length ≤ _maxHistory.
+  ///   2. When the head message is an assistant carrying a tool_use, drop it
+  ///      together with the immediately-following user message if that user
+  ///      message contains the matching tool_result. This avoids splitting a
+  ///      pair and orphaning the result at index 0 of the next request.
+  ///   3. Strip any residual leading orphan — assistant-first, or a user
+  ///      message whose tool_result has no matching tool_use anywhere later
+  ///      in the history.
+  void _trimHistory() {
     while (_history.length > _maxHistory) {
-      _history.removeAt(0);
+      final head = _history.first;
+      if (head.role == LlmRole.assistant && head.hasToolUse) {
+        final useIds = {
+          for (final b in head.content)
+            if (b is LlmToolUseBlock) b.id,
+        };
+        _history.removeAt(0);
+        if (_history.isNotEmpty && _history.first.role == LlmRole.user) {
+          final next = _history.first;
+          final matchesPair = next.content
+              .whereType<LlmToolResultBlock>()
+              .any((r) => useIds.contains(r.toolUseId));
+          if (matchesPair) {
+            _history.removeAt(0);
+          }
+        }
+      } else {
+        _history.removeAt(0);
+      }
     }
+
+    final allToolUseIds = <String>{};
+    for (final m in _history) {
+      if (m.role != LlmRole.assistant) continue;
+      for (final b in m.content) {
+        if (b is LlmToolUseBlock) allToolUseIds.add(b.id);
+      }
+    }
+
     while (_history.isNotEmpty) {
       final first = _history.first;
       if (first.role == LlmRole.assistant) {
         _history.removeAt(0);
         continue;
       }
-      if (first.hasToolResult) {
-        _history.removeAt(0);
-        continue;
+      final hasOrphanResult = first.content
+          .whereType<LlmToolResultBlock>()
+          .any((r) => !allToolUseIds.contains(r.toolUseId));
+      if (hasOrphanResult) {
+        final cleaned = first.content
+            .where((b) =>
+                b is! LlmToolResultBlock || allToolUseIds.contains(b.toolUseId))
+            .toList();
+        if (cleaned.isEmpty) {
+          _history.removeAt(0);
+          continue;
+        }
+        _history[0] = LlmMessage(role: first.role, content: cleaned);
       }
       break;
     }
@@ -1007,14 +1063,19 @@ class TextAgentService {
     debugPrint('[TextAgent] === END DUMP ===');
   }
 
-  /// Repair _history directly by stripping tool_use blocks that have no
-  /// matching tool_result anywhere after them. Called on 400 errors to
-  /// break the stuck-error loop.
+  /// Repair _history so every tool_use has a matching tool_result and every
+  /// tool_result has a matching tool_use earlier in history. Called on 400
+  /// errors to break the stuck-error loop.
+  ///
+  ///   Pass 1: Strip tool_use blocks whose matching tool_result is missing.
+  ///   Pass 2: Strip tool_result blocks whose matching tool_use is missing.
+  ///
+  /// Both passes remove blocks; if a message becomes empty it is removed.
   void _repairHistory() {
-    final allResultIds = <String>{};
+    var resultIds = <String>{};
     for (final m in _history) {
       for (final b in m.content) {
-        if (b is LlmToolResultBlock) allResultIds.add(b.toolUseId);
+        if (b is LlmToolResultBlock) resultIds.add(b.toolUseId);
       }
     }
 
@@ -1023,7 +1084,7 @@ class TextAgentService {
       if (m.role != LlmRole.assistant || !m.hasToolUse) continue;
 
       final cleaned = m.content
-          .where((b) => b is! LlmToolUseBlock || allResultIds.contains(b.id))
+          .where((b) => b is! LlmToolUseBlock || resultIds.contains(b.id))
           .toList();
 
       if (cleaned.isEmpty) {
@@ -1034,6 +1095,33 @@ class TextAgentService {
         debugPrint('[TextAgent] _repairHistory: stripped dangling tool_use at $i');
       }
     }
+
+    final useIds = <String>{};
+    for (final m in _history) {
+      if (m.role != LlmRole.assistant) continue;
+      for (final b in m.content) {
+        if (b is LlmToolUseBlock) useIds.add(b.id);
+      }
+    }
+
+    for (var i = _history.length - 1; i >= 0; i--) {
+      final m = _history[i];
+      if (m.role != LlmRole.user || !m.hasToolResult) continue;
+
+      final cleaned = m.content
+          .where((b) =>
+              b is! LlmToolResultBlock || useIds.contains(b.toolUseId))
+          .toList();
+
+      if (cleaned.isEmpty) {
+        _history.removeAt(i);
+        debugPrint('[TextAgent] _repairHistory: removed empty user msg at $i');
+      } else if (cleaned.length != m.content.length) {
+        _history[i] = LlmMessage(role: m.role, content: cleaned);
+        debugPrint('[TextAgent] _repairHistory: stripped orphan tool_result at $i');
+      }
+    }
+
     _pendingToolUseIds.clear();
   }
 

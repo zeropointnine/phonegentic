@@ -105,3 +105,57 @@ if (out.isNotEmpty && out.last['role'] == role) {
 ## File Changed
 
 - `phonegentic/lib/src/text_agent_service.dart`
+
+---
+
+## Phase 2 — Recurrence During Idle SMS Pile-up
+
+### Problem
+
+Same 400 error returned repeatedly after the agent sat idle with a pile-up of
+queued inbound-SMS events. The merged-history dump showed:
+
+```
+[0]  user: [tool_result(toolu_012bxR1...), text(235)]   ← orphan result
+...
+[46] user: [tool_result(...), text(265), text(269), text(242), text(306),
+            text(251), text(258), text(259), text(265)]  ← merged pile-up
+```
+
+Two gaps in the Phase 1 fix surfaced:
+
+1. **`_repairHistory` only stripped dangling `tool_use`** — it never handled
+   the *orphan `tool_result`* case (Phase-1 post-trim cleanup runs only at the
+   *end* of `_callLlm`, so when a 400 aborted mid-call the unhealthy state
+   persisted into the retry).
+2. **`_callWithRetry` rethrew after repair** — the repair succeeded but the
+   same bad request got reported to the user; no retry was performed with the
+   repaired history.
+3. **Post-response trim was not pair-aware** — `removeAt(0)` could drop an
+   assistant-`tool_use` while leaving its paired user-`tool_result` in place.
+   The cleanup loop dropped the leading orphan but in some interleavings
+   (multiple pairs near the front) still produced unbalanced states.
+4. **Loop-breaker counter never reset for non-voice input** — SMS and typed
+   messages did not reset `_consecutiveAgentResponses`, so after a voice-driven
+   loop the agent silently suppressed responses to legitimate host/SMS input.
+
+### Fix
+
+1. `_repairHistory` now strips **both** dangling `tool_use` *and* orphan
+   `tool_result` blocks (any `tool_result` whose matching `tool_use` is not
+   present in an earlier assistant message).
+2. `_callWithRetry` retries the request once after a successful repair on a
+   `tool_use` 400, instead of immediately rethrowing.
+3. `_trimHistory` drops **pairs atomically**: when an assistant-`tool_use` is
+   dropped, the immediately-following user-`tool_result` is dropped with it.
+4. `TextAgentService.sendUserMessage` resets the loop-breaker flag the
+   `AgentService` owns by exposing a reset hook; `AgentService.sendUserMessage`
+   and `_onInboundSms` both reset `_consecutiveAgentResponses` on a genuine
+   inbound text.
+
+## Additional Files Changed
+
+- `phonegentic/lib/src/text_agent_service.dart` — pair-aware trim, orphan
+  `tool_result` repair, retry-after-repair
+- `phonegentic/lib/src/agent_service.dart` — reset consecutive counter on SMS
+  and typed host messages
