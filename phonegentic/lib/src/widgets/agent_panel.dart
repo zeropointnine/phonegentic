@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -6,7 +7,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -57,18 +60,169 @@ class _AgentPanelState extends State<AgentPanel> {
   String? _slashFilter;
   int _slashIndex = 0;
 
+  // ── Command-history state ────────────────────────────────────────────────
+  //
+  // Terminal-style up-arrow recall of previously-sent inputs. Oldest entry
+  // first, newest last. `_historyIdx == null` means we're editing a fresh
+  // draft; otherwise it's the index into `_cmdHistory` currently shown.
+  // `_historyDraft` stores the draft the user had typed before they
+  // started navigating, so Escape (or ArrowDown past the tail) can restore
+  // it verbatim.
+  static const String _cmdHistoryKey = 'agent_command_history';
+  static const int _cmdHistoryMax = 50;
+  final List<String> _cmdHistory = [];
+  int? _historyIdx;
+  String? _historyDraft;
+  bool _historyApplying = false;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onInputChangedForSlash);
+    _controller.addListener(_onInputChangedForHistory);
+    _loadCommandHistory();
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onInputChangedForSlash);
+    _controller.removeListener(_onInputChangedForHistory);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Command history
+  // ---------------------------------------------------------------------------
+
+  Future<void> _loadCommandHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cmdHistoryKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final loaded = decoded
+          .whereType<String>()
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
+      if (!mounted) return;
+      _cmdHistory
+        ..clear()
+        ..addAll(loaded.take(_cmdHistoryMax));
+    } catch (e) {
+      debugPrint('[AgentPanel] history load failed: $e');
+    }
+  }
+
+  Future<void> _persistCommandHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cmdHistoryKey, jsonEncode(_cmdHistory));
+    } catch (e) {
+      debugPrint('[AgentPanel] history persist failed: $e');
+    }
+  }
+
+  /// Push [entry] onto the history tail. If the exact same string already
+  /// exists we remove the stale copy first so the newest position wins —
+  /// this keeps the list from filling up with reruns of the same command
+  /// and matches how bash HISTCONTROL=ignoredups behaves.
+  void _pushHistory(String entry) {
+    final trimmed = entry.trim();
+    if (trimmed.isEmpty) return;
+    _cmdHistory.removeWhere((e) => e == trimmed);
+    _cmdHistory.add(trimmed);
+    while (_cmdHistory.length > _cmdHistoryMax) {
+      _cmdHistory.removeAt(0);
+    }
+    _persistCommandHistory();
+  }
+
+  void _onInputChangedForHistory() {
+    // If the user types anything (or clears the field manually) while
+    // mid-navigation, exit history mode so further arrow keys behave
+    // normally. `_historyApplying` gates the listener while _we_ mutate
+    // the controller from `_historyArrow`.
+    if (_historyApplying) return;
+    if (_historyIdx != null) {
+      setState(() {
+        _historyIdx = null;
+        _historyDraft = null;
+      });
+    }
+  }
+
+  /// Called by `_InputBarState._handleKeyEvent` on ArrowUp / ArrowDown.
+  /// Returns `true` when the event was consumed so the key doesn't also
+  /// move the caret inside the TextField.
+  bool _historyArrow(int delta) {
+    if (_cmdHistory.isEmpty) return false;
+
+    // Only claim up-arrow when the input is empty OR we're already
+    // navigating; otherwise leave it alone so multi-line caret movement
+    // still works.
+    final currentText = _controller.text;
+    if (delta < 0 && currentText.isNotEmpty && _historyIdx == null) {
+      return false;
+    }
+    if (delta > 0 && _historyIdx == null) {
+      // Down-arrow with no active navigation is just a caret move.
+      return false;
+    }
+
+    // First step: save the live draft so Escape / tail-down can restore it.
+    if (_historyIdx == null) {
+      _historyDraft = currentText;
+      _historyIdx = _cmdHistory.length;
+    }
+
+    final next = (_historyIdx! + delta).clamp(0, _cmdHistory.length);
+    if (next == _historyIdx) {
+      // Hit the boundary — swallow the key so it doesn't move the caret
+      // to an unexpected spot.
+      return true;
+    }
+
+    _historyApplying = true;
+    try {
+      final String value;
+      if (next >= _cmdHistory.length) {
+        value = _historyDraft ?? '';
+        _historyIdx = null;
+        _historyDraft = null;
+      } else {
+        value = _cmdHistory[next];
+        _historyIdx = next;
+      }
+      _controller.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+    } finally {
+      _historyApplying = false;
+    }
+    setState(() {});
+    return true;
+  }
+
+  bool _historyEscape() {
+    if (_historyIdx == null) return false;
+    _historyApplying = true;
+    try {
+      final draft = _historyDraft ?? '';
+      _controller.value = TextEditingValue(
+        text: draft,
+        selection: TextSelection.collapsed(offset: draft.length),
+      );
+      _historyIdx = null;
+      _historyDraft = null;
+    } finally {
+      _historyApplying = false;
+    }
+    setState(() {});
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -235,6 +389,9 @@ class _AgentPanelState extends State<AgentPanel> {
   void _send(AgentService agent) {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    _pushHistory(text);
+    _historyIdx = null;
+    _historyDraft = null;
     _controller.clear();
 
     if (text.toLowerCase() == '/ready') {
@@ -250,6 +407,35 @@ class _AgentPanelState extends State<AgentPanel> {
       return;
     }
     if (lower == '/note') {
+      return;
+    }
+
+    // /search — contact-scoped recap card (calls + messages + calendar).
+    if (lower.startsWith('/search ') || lower.startsWith('/search\n')) {
+      final body = text.substring(7).trim();
+      if (body.isNotEmpty) agent.startContactSearch(body);
+      return;
+    }
+    if (lower == '/search') {
+      return;
+    }
+
+    // /call — dial a contact or number directly. Accepts either a phone
+    // number (digits/+/-/()) or a contact name; see
+    // `AgentService.placeCallByInput` for resolution rules.
+    if (lower.startsWith('/call ') || lower.startsWith('/call\n')) {
+      final body = text.substring(5).trim();
+      if (body.isNotEmpty) agent.placeCallByInput(body);
+      return;
+    }
+    if (lower == '/call') {
+      return;
+    }
+
+    // /recap — one-shot global recap: most recent calls, SMS, notes,
+    // reminders → agent speaks a short brief aloud.
+    if (lower == '/recap') {
+      agent.startRecap();
       return;
     }
 
@@ -278,6 +464,9 @@ class _AgentPanelState extends State<AgentPanel> {
   void _sendWhisperOneShot(AgentService agent) {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    _pushHistory(text);
+    _historyIdx = null;
+    _historyDraft = null;
     _controller.clear();
     agent.sendWhisperMessage(text);
   }
@@ -384,6 +573,8 @@ class _AgentPanelState extends State<AgentPanel> {
                       onSlashArrow: _slashArrow,
                       onSlashSelect: () => _slashSelect(agent),
                       onSlashEscape: _slashEscape,
+                      onHistoryArrow: _historyArrow,
+                      onHistoryEscape: _historyEscape,
                     ),
                   ],
                 ),
@@ -1089,8 +1280,10 @@ class _UpcomingReminderBanner extends StatefulWidget {
       _UpcomingReminderBannerState();
 }
 
-class _UpcomingReminderBannerState extends State<_UpcomingReminderBanner> {
+class _UpcomingReminderBannerState extends State<_UpcomingReminderBanner>
+    with SingleTickerProviderStateMixin {
   Timer? _ticker;
+  late final AnimationController _pulse;
 
   @override
   void initState() {
@@ -1098,11 +1291,16 @@ class _UpcomingReminderBannerState extends State<_UpcomingReminderBanner> {
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
+    _pulse.dispose();
     super.dispose();
   }
 
@@ -1114,14 +1312,20 @@ class _UpcomingReminderBannerState extends State<_UpcomingReminderBanner> {
 
     final now = DateTime.now();
     final nearest = reminders.first;
-    final title = nearest['title'] as String? ?? 'Reminder';
+    final title = (nearest['title'] as String?) ?? 'Reminder';
+    final description = (nearest['description'] as String?)?.trim() ?? '';
+    final reminderId = nearest['id'] as int?;
     final remindAt = DateTime.parse(nearest['remind_at'] as String).toLocal();
+    final createdAtRaw = nearest['created_at'] as String?;
+    final createdAt = createdAtRaw != null
+        ? DateTime.tryParse(createdAtRaw)?.toLocal()
+        : null;
     final diff = remindAt.difference(now);
-
     if (diff.isNegative) return const SizedBox.shrink();
 
+    final secsTotal = diff.inSeconds;
     final mins = diff.inMinutes;
-    final secs = diff.inSeconds % 60;
+    final secs = secsTotal % 60;
     final isImminent = mins < 2;
 
     final timeText = mins >= 60
@@ -1130,64 +1334,206 @@ class _UpcomingReminderBannerState extends State<_UpcomingReminderBanner> {
             ? '${mins}m ${secs.toString().padLeft(2, '0')}s'
             : '${secs}s';
 
-    final bgColor = isImminent
-        ? AppColors.accent.withValues(alpha: 0.08)
-        : AppColors.surface;
-    final highlightColor =
-        isImminent ? AppColors.accent : AppColors.textTertiary;
+    // Progress fraction along the (created_at → remind_at) span.
+    double progress = 0;
+    if (createdAt != null) {
+      final span = remindAt.difference(createdAt).inSeconds;
+      if (span > 0) {
+        final elapsed = now.difference(createdAt).inSeconds;
+        progress = (elapsed / span).clamp(0.0, 1.0);
+      }
+    } else {
+      // Fallback: ease progress based on how close we are to fire.
+      // Anchor span at 10 minutes so short reminders fill quickly.
+      const anchor = 600; // seconds
+      progress = (1 - (secsTotal / anchor)).clamp(0.0, 1.0);
+    }
 
-    return Container(
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(
-          bottom: BorderSide(
-              color: AppColors.border.withValues(alpha: 0.4), width: 0.5),
+    final accent = AppColors.orange;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: isImminent ? 0.08 : 0.05),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: accent.withValues(alpha: isImminent ? 0.42 : 0.28),
+            width: 0.5,
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.notifications_active_rounded,
-              size: 12, color: highlightColor),
-          const SizedBox(width: 8),
-          Text(
-            'In $timeText',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              fontFamily: AppColors.timerFontFamily,
-              fontFamilyFallback: AppColors.timerFontFamilyFallback,
-              color: highlightColor,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text('–',
-              style: TextStyle(fontSize: 11, color: AppColors.textTertiary)),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              title,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AnimatedBuilder(
+                animation: _pulse,
+                builder: (context, _) {
+                  final pulseAlpha = isImminent
+                      ? 0.55 + 0.45 * _pulse.value
+                      : 1.0;
+                  return Container(
+                    width: 3,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: pulseAlpha),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(10),
+                        bottomLeft: Radius.circular(10),
+                      ),
+                    ),
+                  );
+                },
               ),
-            ),
-          ),
-          if (reminders.length > 1) ...[
-            const SizedBox(width: 6),
-            Text(
-              '+${reminders.length - 1} more',
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textTertiary,
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.notifications_active_rounded,
+                            size: 12,
+                            color: accent,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'UPCOMING',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.1,
+                              color: accent,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 3,
+                            height: 3,
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.4),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'in $timeText',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: AppColors.timerFontFamily,
+                              fontFamilyFallback:
+                                  AppColors.timerFontFamilyFallback,
+                              color: AppColors.textPrimary
+                                  .withValues(alpha: 0.95),
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          if (reminders.length > 1) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: accent.withValues(alpha: 0.3),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Text(
+                                '+${reminders.length - 1}',
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: accent,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          if (reminderId != null)
+                            HoverButton(
+                              onTap: () async {
+                                await CallHistoryDb.updateReminderStatus(
+                                    reminderId, 'dismissed');
+                                if (!mounted) return;
+                                await context
+                                    .read<ManagerPresenceService>()
+                                    .onReminderCreatedOrChanged();
+                              },
+                              tooltip: 'Dismiss',
+                              borderRadius: BorderRadius.circular(4),
+                              child: Padding(
+                                padding: const EdgeInsets.all(2),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 13,
+                                  color: AppColors.textTertiary
+                                      .withValues(alpha: 0.75),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      if (description.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: AppColors.textTertiary
+                                .withValues(alpha: 0.85),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: Container(
+                          height: 2,
+                          color: AppColors.border.withValues(alpha: 0.35),
+                          child: FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: progress,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    accent.withValues(alpha: 0.55),
+                                    accent,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ],
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2561,6 +2907,8 @@ class _MessageBubble extends StatelessWidget {
       } else {
         child = _NoteBubble(message: message);
       }
+    } else if (message.type == MessageType.searchGuide) {
+      child = _SearchGuideBubble(message: message);
     } else if (message.type == MessageType.attachment) {
       child = _AttachmentBubble(message: message);
     } else if (message.type == MessageType.reminder) {
@@ -3697,6 +4045,1318 @@ class _NoteCandidateRow extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Search-guide bubble (/search command)
+// ---------------------------------------------------------------------------
+
+/// Inline recap card produced by `/search <name>`. Renders as a compact
+/// themed panel with:
+///
+///   1. a header row (search icon + SEARCH label + query + timestamp + ×),
+///   2. one row of contact chips when multiple contacts matched,
+///   3. three check-toggle chips (Calls / Messages / Calendar) that feed
+///      into `AgentService.executeSearchGuide`, and
+///   4. a trailing action button ("Search" → "Searching…" → a compact
+///      results summary once the work finishes).
+///
+/// Visually parallels `_PendingNoteBubble` (left accent bar, full-width
+/// rounded panel) so it reads as "first-class inline action" rather
+/// than a chat turn.
+class _SearchGuideBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _SearchGuideBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accent;
+    final meta = message.metadata ?? const {};
+    final query = (meta['query'] as String?) ?? message.text;
+    final stage = (meta['stage'] as String?) ?? 'pending';
+
+    final rawContacts = (meta['contacts'] as List?) ?? const [];
+    final contacts = rawContacts
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+
+    // Phase 2: multi-select. Support legacy selected_index for old bubbles
+    // that were persisted under the single-select schema.
+    final rawSel = meta['selected_indices'];
+    Set<int> selectedIndices;
+    if (rawSel is List) {
+      selectedIndices = rawSel.whereType<int>().toSet();
+    } else {
+      final legacy = meta['selected_index'] as int?;
+      selectedIndices = legacy != null ? {legacy} : {0};
+    }
+    // Clamp to valid range.
+    selectedIndices = selectedIndices
+        .where((i) => i >= 0 && i < contacts.length)
+        .toSet();
+    if (selectedIndices.isEmpty && contacts.isNotEmpty) {
+      selectedIndices = {0};
+    }
+
+    final includeCalls = (meta['include_calls'] as bool?) ?? true;
+    final includeMessages = (meta['include_messages'] as bool?) ?? true;
+    final includeCalendar = (meta['include_calendar'] as bool?) ?? true;
+    final includeNotes = (meta['include_notes'] as bool?) ?? true;
+
+    final resultSummary = meta['result_summary'] as String?;
+
+    final callRows = ((meta['call_rows'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+    final messageRows = ((meta['message_rows'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+    final noteRows = ((meta['note_rows'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+    final calendarRows = ((meta['calendar_rows'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: Container(
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(10),
+          border:
+              Border.all(color: accent.withValues(alpha: 0.30), width: 0.5),
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 3,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(10),
+                    bottomLeft: Radius.circular(10),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SearchGuideHeader(
+                        query: query,
+                        stage: stage,
+                        timestamp: message.timestamp,
+                        accent: accent,
+                        onClose: () => context
+                            .read<AgentService>()
+                            .dismissSearchGuide(message),
+                      ),
+                      if (contacts.length > 1) ...[
+                        const SizedBox(height: 8),
+                        _SearchContactChipRow(
+                          contacts: contacts,
+                          selectedIndices: selectedIndices,
+                          accent: accent,
+                          disabled: stage != 'pending',
+                          onToggle: (i) => context
+                              .read<AgentService>()
+                              .toggleSearchContact(message, i),
+                        ),
+                      ] else if (contacts.length == 1) ...[
+                        const SizedBox(height: 6),
+                        _SearchContactLine(
+                          contact: contacts.first,
+                          accent: accent,
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          _SearchOptionChip(
+                            label: 'Calls',
+                            icon: Icons.call_outlined,
+                            checked: includeCalls,
+                            accent: accent,
+                            disabled: stage != 'pending',
+                            onTap: () => context
+                                .read<AgentService>()
+                                .toggleSearchOption(message, 'include_calls'),
+                          ),
+                          _SearchOptionChip(
+                            label: 'Messages',
+                            icon: Icons.chat_bubble_outline,
+                            checked: includeMessages,
+                            accent: accent,
+                            disabled: stage != 'pending',
+                            onTap: () => context
+                                .read<AgentService>()
+                                .toggleSearchOption(
+                                    message, 'include_messages'),
+                          ),
+                          _SearchOptionChip(
+                            label: 'Calendar',
+                            icon: Icons.calendar_today_outlined,
+                            checked: includeCalendar,
+                            accent: accent,
+                            disabled: stage != 'pending',
+                            onTap: () => context
+                                .read<AgentService>()
+                                .toggleSearchOption(
+                                    message, 'include_calendar'),
+                          ),
+                          _SearchOptionChip(
+                            label: 'Notes',
+                            icon: Icons.sticky_note_2_outlined,
+                            checked: includeNotes,
+                            accent: accent,
+                            disabled: stage != 'pending',
+                            onTap: () => context
+                                .read<AgentService>()
+                                .toggleSearchOption(message, 'include_notes'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      if (stage == 'done') ...[
+                        _SearchGuideResultList(
+                          accent: accent,
+                          includeCalls: includeCalls,
+                          includeMessages: includeMessages,
+                          includeCalendar: includeCalendar,
+                          includeNotes: includeNotes,
+                          callRows: callRows,
+                          messageRows: messageRows,
+                          noteRows: noteRows,
+                          calendarRows: calendarRows,
+                        ),
+                        if (resultSummary != null) ...[
+                          const SizedBox(height: 10),
+                          _SearchGuideResultFooter(
+                            summary: resultSummary,
+                            accent: accent,
+                          ),
+                        ],
+                      ] else
+                        _SearchGuideActionButton(
+                          stage: stage,
+                          accent: accent,
+                          enabled: contacts.isNotEmpty &&
+                              selectedIndices.isNotEmpty &&
+                              (includeCalls ||
+                                  includeMessages ||
+                                  includeCalendar ||
+                                  includeNotes),
+                          onTap: () => context
+                              .read<AgentService>()
+                              .executeSearchGuide(message),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchGuideHeader extends StatelessWidget {
+  final String query;
+  final String stage;
+  final DateTime timestamp;
+  final Color accent;
+  final VoidCallback onClose;
+
+  const _SearchGuideHeader({
+    required this.query,
+    required this.stage,
+    required this.timestamp,
+    required this.accent,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = stage == 'done' ? 'SEARCH · DONE' : 'SEARCH';
+    return Row(
+      children: [
+        Icon(Icons.search_rounded, size: 14, color: accent),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.1,
+            color: accent,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          width: 3,
+          height: 3,
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.4),
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            query,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: AppColors.textPrimary.withValues(alpha: 0.85),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          _formatTime(timestamp),
+          style: TextStyle(
+            fontSize: 10,
+            color: AppColors.textTertiary.withValues(alpha: 0.75),
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const Spacer(),
+        HoverButton(
+          onTap: onClose,
+          tooltip: 'Dismiss',
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.all(2),
+            child: Icon(
+              Icons.close_rounded,
+              size: 13,
+              color: AppColors.textTertiary.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Horizontal chip row for the `/search` guide. Shares a scroll
+/// controller with a right-edge fade so overflow is obvious even
+/// without a scrollbar (the row is only 26px tall, so showing a
+/// scrollbar would feel clunky).
+///
+/// The fade is driven by the scroll position: fully visible on the
+/// right when there's more content off-screen, and also appears on
+/// the left once the user has scrolled past the start.
+class _SearchContactChipRow extends StatefulWidget {
+  final List<Map<String, dynamic>> contacts;
+  final Set<int> selectedIndices;
+  final Color accent;
+  final bool disabled;
+  final ValueChanged<int> onToggle;
+
+  const _SearchContactChipRow({
+    required this.contacts,
+    required this.selectedIndices,
+    required this.accent,
+    required this.disabled,
+    required this.onToggle,
+  });
+
+  @override
+  State<_SearchContactChipRow> createState() => _SearchContactChipRowState();
+}
+
+class _SearchContactChipRowState extends State<_SearchContactChipRow> {
+  final ScrollController _controller = ScrollController();
+  bool _hasLeft = false;
+  bool _hasRight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_updateEdges);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateEdges());
+  }
+
+  @override
+  void didUpdateWidget(covariant _SearchContactChipRow old) {
+    super.didUpdateWidget(old);
+    // Chip counts / labels may have changed; recalc after layout.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateEdges());
+  }
+
+  void _updateEdges() {
+    if (!_controller.hasClients) return;
+    final pos = _controller.position;
+    final left = pos.pixels > 0.5;
+    final right = pos.pixels < pos.maxScrollExtent - 0.5;
+    if (left != _hasLeft || right != _hasRight) {
+      setState(() {
+        _hasLeft = left;
+        _hasRight = right;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_updateEdges);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 26,
+      // ShaderMask in `dstIn` mode multiplies the child's alpha by the
+      // gradient alpha, so an opaque-in-the-middle / transparent-at-the-
+      // edges gradient becomes an edge fade over whatever's inside.
+      child: ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (rect) {
+          const fadeWidth = 18.0;
+          final w = rect.width;
+          if (w <= fadeWidth * 2) {
+            return const LinearGradient(
+              colors: [Colors.white, Colors.white],
+            ).createShader(rect);
+          }
+          final leftStop = _hasLeft ? fadeWidth / w : 0.0;
+          final rightStop = _hasRight ? 1.0 - fadeWidth / w : 1.0;
+          return LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [
+              _hasLeft ? Colors.transparent : Colors.white,
+              Colors.white,
+              Colors.white,
+              _hasRight ? Colors.transparent : Colors.white,
+            ],
+            stops: [0.0, leftStop, rightStop, 1.0],
+          ).createShader(rect);
+        },
+        child: ListView.separated(
+          controller: _controller,
+          scrollDirection: Axis.horizontal,
+          itemCount: widget.contacts.length,
+          clipBehavior: Clip.hardEdge,
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          padding: const EdgeInsets.only(right: 8),
+          separatorBuilder: (_, __) => const SizedBox(width: 6),
+          itemBuilder: (context, i) => _SearchContactChip(
+            contact: widget.contacts[i],
+            selected: widget.selectedIndices.contains(i),
+            accent: widget.accent,
+            disabled: widget.disabled,
+            onTap: () => widget.onToggle(i),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchContactChip extends StatelessWidget {
+  final Map<String, dynamic> contact;
+  final bool selected;
+  final Color accent;
+  final bool disabled;
+  final VoidCallback onTap;
+
+  const _SearchContactChip({
+    required this.contact,
+    required this.selected,
+    required this.accent,
+    required this.onTap,
+    this.disabled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (contact['name'] as String?)?.trim().isNotEmpty == true
+        ? contact['name'] as String
+        : (contact['phone'] as String? ?? 'Unknown');
+
+    final fg = disabled
+        ? AppColors.textTertiary.withValues(alpha: 0.55)
+        : (selected ? accent : AppColors.textSecondary);
+
+    return HoverButton(
+      onTap: disabled ? null : onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected
+              ? accent.withValues(alpha: 0.18)
+              : AppColors.card.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? accent.withValues(alpha: 0.55)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              selected
+                  ? Icons.check_rounded
+                  : Icons.person_outline_rounded,
+              size: 12,
+              color: fg,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              name,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected
+                    ? AppColors.textPrimary
+                    : AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchContactLine extends StatelessWidget {
+  final Map<String, dynamic> contact;
+  final Color accent;
+  const _SearchContactLine({required this.contact, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (contact['name'] as String?)?.trim().isNotEmpty == true
+        ? contact['name'] as String
+        : (contact['phone'] as String? ?? 'Unknown');
+    final phone = contact['phone'] as String? ?? '';
+    return Row(
+      children: [
+        Icon(Icons.person_rounded, size: 12, color: accent),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            phone.isNotEmpty && phone != name ? '$name · $phone' : name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary.withValues(alpha: 0.9),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SearchOptionChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool checked;
+  final Color accent;
+  final bool disabled;
+  final VoidCallback onTap;
+
+  const _SearchOptionChip({
+    required this.label,
+    required this.icon,
+    required this.checked,
+    required this.accent,
+    required this.onTap,
+    this.disabled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = checked
+        ? accent.withValues(alpha: 0.15)
+        : AppColors.card.withValues(alpha: 0.5);
+    final borderColor = checked
+        ? accent.withValues(alpha: 0.5)
+        : AppColors.border.withValues(alpha: 0.5);
+    final fg = disabled
+        ? AppColors.textTertiary.withValues(alpha: 0.5)
+        : (checked ? accent : AppColors.textSecondary);
+
+    return HoverButton(
+      onTap: disabled ? null : onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor, width: 0.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              checked
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank_rounded,
+              size: 13,
+              color: fg,
+            ),
+            const SizedBox(width: 5),
+            Icon(icon, size: 12, color: fg),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: checked ? FontWeight.w700 : FontWeight.w500,
+                color: fg,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchGuideActionButton extends StatelessWidget {
+  final String stage;
+  final Color accent;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _SearchGuideActionButton({
+    required this.stage,
+    required this.accent,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final running = stage == 'running';
+    final active = enabled && !running;
+    final bg = active
+        ? accent
+        : accent.withValues(alpha: 0.20);
+    final fg = active
+        ? AppColors.onAccent
+        : AppColors.textTertiary.withValues(alpha: 0.8);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: HoverButton(
+        onTap: active ? onTap : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: active
+                  ? accent
+                  : accent.withValues(alpha: 0.35),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (running)
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(fg),
+                  ),
+                )
+              else
+                Icon(Icons.search_rounded, size: 13, color: fg),
+              const SizedBox(width: 6),
+              Text(
+                running ? 'Searching…' : 'Search',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchGuideResultFooter extends StatelessWidget {
+  final String summary;
+  final Color accent;
+  const _SearchGuideResultFooter({
+    required this.summary,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          Icons.check_circle_rounded,
+          size: 13,
+          color: accent.withValues(alpha: 0.85),
+        ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            summary,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary.withValues(alpha: 0.85),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// /search — inline result list + row widgets
+// ---------------------------------------------------------------------------
+
+const int _kSearchResultRowLimit = 5;
+
+class _SearchGuideResultList extends StatelessWidget {
+  final Color accent;
+  final bool includeCalls;
+  final bool includeMessages;
+  final bool includeCalendar;
+  final bool includeNotes;
+  final List<Map<String, dynamic>> callRows;
+  final List<Map<String, dynamic>> messageRows;
+  final List<Map<String, dynamic>> noteRows;
+  final List<Map<String, dynamic>> calendarRows;
+
+  const _SearchGuideResultList({
+    required this.accent,
+    required this.includeCalls,
+    required this.includeMessages,
+    required this.includeCalendar,
+    required this.includeNotes,
+    required this.callRows,
+    required this.messageRows,
+    required this.noteRows,
+    required this.calendarRows,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = <Widget>[];
+
+    if (includeCalls && callRows.isNotEmpty) {
+      sections.add(_buildSection(
+        icon: Icons.call_outlined,
+        label: 'Calls',
+        total: callRows.length,
+        rows: callRows
+            .take(_kSearchResultRowLimit)
+            .map((r) => _SearchResultCallRow(row: r, accent: accent))
+            .toList(),
+        extra: callRows.length - _kSearchResultRowLimit,
+      ));
+    }
+    if (includeMessages && messageRows.isNotEmpty) {
+      sections.add(_buildSection(
+        icon: Icons.chat_bubble_outline,
+        label: 'Messages',
+        total: messageRows.length,
+        rows: messageRows
+            .take(_kSearchResultRowLimit)
+            .map((r) => _SearchResultMessageRow(row: r, accent: accent))
+            .toList(),
+        extra: messageRows.length - _kSearchResultRowLimit,
+      ));
+    }
+    if (includeNotes && noteRows.isNotEmpty) {
+      sections.add(_buildSection(
+        icon: Icons.sticky_note_2_outlined,
+        label: 'Notes',
+        total: noteRows.length,
+        rows: noteRows
+            .take(_kSearchResultRowLimit)
+            .map((r) => _SearchResultNoteRow(row: r, accent: accent))
+            .toList(),
+        extra: noteRows.length - _kSearchResultRowLimit,
+      ));
+    }
+    if (includeCalendar && calendarRows.isNotEmpty) {
+      sections.add(_buildSection(
+        icon: Icons.calendar_today_outlined,
+        label: 'Calendar',
+        total: calendarRows.length,
+        rows: calendarRows
+            .take(_kSearchResultRowLimit)
+            .map((r) => _SearchResultCalendarRow(row: r, accent: accent))
+            .toList(),
+        extra: calendarRows.length - _kSearchResultRowLimit,
+      ));
+    }
+
+    if (sections.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.card.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.4),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline_rounded,
+                size: 13,
+                color: AppColors.textTertiary.withValues(alpha: 0.7)),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                'No results for the selected contacts.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < sections.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          sections[i],
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSection({
+    required IconData icon,
+    required String label,
+    required int total,
+    required List<Widget> rows,
+    required int extra,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 5),
+          child: Row(
+            children: [
+              Icon(icon,
+                  size: 11, color: accent.withValues(alpha: 0.85)),
+              const SizedBox(width: 5),
+              Text(
+                label.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.0,
+                  color: accent.withValues(alpha: 0.85),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '$total',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textTertiary.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) const SizedBox(height: 4),
+          rows[i],
+        ],
+        if (extra > 0)
+          Padding(
+            padding: const EdgeInsets.only(left: 4, top: 4),
+            child: Text(
+              '… and $extra more',
+              style: TextStyle(
+                fontSize: 10.5,
+                fontStyle: FontStyle.italic,
+                color: AppColors.textTertiary.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared row shell: left icon column + body + trailing metadata.
+// ---------------------------------------------------------------------------
+
+class _SearchResultRowShell extends StatelessWidget {
+  final Widget leading;
+  final Widget body;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  const _SearchResultRowShell({
+    required this.leading,
+    required this.body,
+    this.trailing,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.card.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: AppColors.border.withValues(alpha: 0.35),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(width: 22, child: Center(child: leading)),
+            const SizedBox(width: 8),
+            Expanded(child: body),
+            if (trailing != null) ...[
+              const SizedBox(width: 8),
+              trailing!,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _searchRowRelative(String? iso) {
+  if (iso == null || iso.isEmpty) return '';
+  final dt = DateTime.tryParse(iso);
+  if (dt == null) return '';
+  final local = dt.toLocal();
+  final diff = DateTime.now().difference(local);
+  if (diff.inMinutes < 1) return 'now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+  if (diff.inHours < 24) return '${diff.inHours}h';
+  if (diff.inDays < 7) return '${diff.inDays}d';
+  return '${local.month}/${local.day}';
+}
+
+class _SearchResultCallRow extends StatelessWidget {
+  final Map<String, dynamic> row;
+  final Color accent;
+  const _SearchResultCallRow({required this.row, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    final dir = (row['direction'] as String?) ?? '';
+    final status = (row['status'] as String?) ?? '';
+    final duration = (row['duration_seconds'] ?? 0) as int;
+    final isMissed = status == 'missed' ||
+        (dir == 'inbound' && duration == 0 && status != 'answered');
+    final name = (row['contact_name'] as String?)?.trim().isNotEmpty == true
+        ? row['contact_name'] as String
+        : (row['remote_display_name'] as String?)?.trim().isNotEmpty == true
+            ? row['remote_display_name'] as String
+            : (row['remote_identity'] as String? ?? 'Unknown');
+
+    final dirIcon = isMissed
+        ? Icons.phone_missed_rounded
+        : (dir == 'outbound'
+            ? Icons.call_made_rounded
+            : Icons.call_received_rounded);
+    final dirColor = isMissed
+        ? AppColors.orange
+        : (dir == 'outbound'
+            ? accent
+            : AppColors.textSecondary);
+
+    final durStr = duration > 0
+        ? (duration >= 60
+            ? '${duration ~/ 60}m ${duration % 60}s'
+            : '${duration}s')
+        : (isMissed ? 'missed' : '');
+
+    final time = _searchRowRelative(row['started_at'] as String?);
+    final recordingPath =
+        (row['recording_path'] as String?)?.trim() ?? '';
+    final hasRecording = recordingPath.isNotEmpty;
+
+    return _SearchResultRowShell(
+      leading: Icon(dirIcon, size: 13, color: dirColor),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary.withValues(alpha: 0.9),
+                  ),
+                ),
+              ),
+              if (hasRecording) ...[
+                const SizedBox(width: 5),
+                Tooltip(
+                  message: 'Call was recorded — tap to play',
+                  child: SvgPicture.asset(
+                    'assets/tape_reel.svg',
+                    width: 12,
+                    height: 12,
+                    colorFilter: ColorFilter.mode(
+                      accent.withValues(alpha: 0.9),
+                      BlendMode.srcIn,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (durStr.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Text(
+                durStr,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textTertiary.withValues(alpha: 0.75),
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+        ],
+      ),
+      trailing: time.isEmpty
+          ? null
+          : Text(
+              time,
+              style: TextStyle(
+                fontSize: 10,
+                color: AppColors.textTertiary.withValues(alpha: 0.7),
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+      onTap: () {
+        final rawId = row['id'];
+        final id = rawId is int
+            ? rawId
+            : (rawId is num ? rawId.toInt() : null);
+        debugPrint('[SearchRecap] call-row tap id=$rawId (${rawId.runtimeType}) '
+            '→ ${id ?? "invalid"}');
+        if (id == null) return;
+        try {
+          Provider.of<CallHistoryService>(context, listen: false).focusCall(
+            id,
+            phoneNumber: row['remote_identity'] as String?,
+            preloadedRecord: row,
+          );
+        } catch (e) {
+          debugPrint('[SearchRecap] call-row focusCall failed: $e');
+        }
+      },
+    );
+  }
+}
+
+class _SearchResultMessageRow extends StatelessWidget {
+  final Map<String, dynamic> row;
+  final Color accent;
+  const _SearchResultMessageRow({required this.row, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    final dir = (row['direction'] as String?) ?? '';
+    final isOutbound = dir == 'outbound';
+    final body = (row['body'] as String? ?? '').trim();
+    final time = _searchRowRelative(row['created_at'] as String?);
+    final remotePhone = (row['remote_phone'] as String? ??
+            row['remote_identity'] as String? ??
+            row['phone_number'] as String? ??
+            '')
+        .trim();
+
+    // Inline mini bubble — rounded rect tinted per direction.
+    final bubbleColor = isOutbound
+        ? accent.withValues(alpha: 0.18)
+        : AppColors.card.withValues(alpha: 0.9);
+    final textColor = isOutbound
+        ? AppColors.textPrimary
+        : AppColors.textPrimary.withValues(alpha: 0.9);
+
+    return _SearchResultRowShell(
+      leading: Icon(
+        isOutbound
+            ? Icons.arrow_upward_rounded
+            : Icons.arrow_downward_rounded,
+        size: 13,
+        color: isOutbound ? accent : AppColors.textSecondary,
+      ),
+      body: Align(
+        alignment:
+            isOutbound ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+          decoration: BoxDecoration(
+            color: bubbleColor,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(10),
+              topRight: const Radius.circular(10),
+              bottomLeft: Radius.circular(isOutbound ? 10 : 3),
+              bottomRight: Radius.circular(isOutbound ? 3 : 10),
+            ),
+            border: Border.all(
+              color: isOutbound
+                  ? accent.withValues(alpha: 0.35)
+                  : AppColors.border.withValues(alpha: 0.4),
+              width: 0.5,
+            ),
+          ),
+          child: Text(
+            body.isEmpty ? '(empty)' : body,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.35,
+              color: textColor,
+            ),
+          ),
+        ),
+      ),
+      trailing: time.isEmpty
+          ? null
+          : Text(
+              time,
+              style: TextStyle(
+                fontSize: 10,
+                color: AppColors.textTertiary.withValues(alpha: 0.7),
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+      onTap: remotePhone.isEmpty
+          ? null
+          : () {
+              try {
+                Provider.of<MessagingService>(context, listen: false)
+                    .openToConversation(remotePhone);
+              } catch (_) {}
+            },
+    );
+  }
+}
+
+class _SearchResultNoteRow extends StatelessWidget {
+  final Map<String, dynamic> row;
+  final Color accent;
+  const _SearchResultNoteRow({required this.row, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = (row['text'] as String? ?? '').trim();
+    final contactName =
+        (row['contact_name'] as String?)?.trim().isNotEmpty == true
+            ? row['contact_name'] as String
+            : (row['remote_display_name'] as String?)?.trim().isNotEmpty ==
+                    true
+                ? row['remote_display_name'] as String
+                : (row['remote_identity'] as String? ?? 'contact');
+    final rel = _searchRowRelative(row['timestamp'] as String?);
+
+    return _SearchResultRowShell(
+      leading: Icon(
+        Icons.sticky_note_2_outlined,
+        size: 13,
+        color: AppColors.orange.withValues(alpha: 0.85),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            text.isEmpty ? '(empty note)' : text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.35,
+              fontStyle: FontStyle.italic,
+              color: AppColors.textPrimary.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            rel.isNotEmpty
+                ? 'from call with $contactName · $rel'
+                : 'from call with $contactName',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10,
+              color: AppColors.textTertiary.withValues(alpha: 0.75),
+            ),
+          ),
+        ],
+      ),
+      onTap: () {
+        final callId = row['call_record_id'];
+        final tid = row['transcript_id'];
+        if (callId is int) {
+          try {
+            Provider.of<CallHistoryService>(context, listen: false).focusCall(
+              callId,
+              phoneNumber: row['remote_identity'] as String?,
+              transcriptId: tid is int ? tid : null,
+            );
+          } catch (_) {}
+        }
+      },
+    );
+  }
+}
+
+class _SearchResultCalendarRow extends StatelessWidget {
+  final Map<String, dynamic> row;
+  final Color accent;
+  const _SearchResultCalendarRow({required this.row, required this.accent});
+
+  /// Build a Google Calendar day-view URL for the given YYYY-MM-DD.
+  /// Falls back to today's calendar root if the date can't be parsed.
+  static String _calendarUrlFor(String ymd) {
+    final dt = DateTime.tryParse(ymd);
+    if (dt == null) return 'https://calendar.google.com/calendar/u/0/r/day';
+    return 'https://calendar.google.com/calendar/u/0/r/day/'
+        '${dt.year}/${dt.month}/${dt.day}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = (row['title'] as String? ?? '').trim();
+    final startTime = (row['startTime'] as String? ?? '').trim();
+    final location = (row['location'] as String? ?? '').trim();
+    final day = (row['day'] as String? ?? '').trim();
+    final date = (row['date'] as String? ?? '').trim();
+
+    final dayLabel = day.isEmpty
+        ? ''
+        : '${day[0].toUpperCase()}${day.substring(1)}';
+
+    return _SearchResultRowShell(
+      leading: Icon(
+        Icons.event_outlined,
+        size: 13,
+        color: accent.withValues(alpha: 0.85),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title.isEmpty ? '(untitled event)' : title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary.withValues(alpha: 0.9),
+            ),
+          ),
+          if (dayLabel.isNotEmpty ||
+              startTime.isNotEmpty ||
+              location.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Text(
+                [
+                  if (dayLabel.isNotEmpty) dayLabel,
+                  if (startTime.isNotEmpty) startTime,
+                  if (location.isNotEmpty) location,
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textTertiary.withValues(alpha: 0.75),
+                ),
+              ),
+            ),
+        ],
+      ),
+      trailing: Icon(
+        Icons.open_in_new_rounded,
+        size: 11,
+        color: accent.withValues(alpha: 0.6),
+      ),
+      onTap: () {
+        final url = _calendarUrlFor(date);
+        try {
+          Provider.of<AgentService>(context, listen: false)
+              .openUrlInBrowser(url);
+        } catch (_) {}
+      },
+    );
+  }
+}
+
 class _AttachmentBubble extends StatelessWidget {
   final ChatMessage message;
   const _AttachmentBubble({required this.message});
@@ -3966,6 +5626,13 @@ class _InputBar extends StatefulWidget {
   final VoidCallback? onSlashSelect;
   final VoidCallback? onSlashEscape;
 
+  // Command-history delegation. When the slash menu is NOT open and the
+  // user presses ArrowUp / ArrowDown, the parent decides whether to
+  // consume the key (history mode) or let it fall through to the text
+  // field for normal caret movement. Return `true` to consume.
+  final bool Function(int delta)? onHistoryArrow;
+  final bool Function()? onHistoryEscape;
+
   const _InputBar({
     required this.controller,
     required this.onSend,
@@ -3979,6 +5646,8 @@ class _InputBar extends StatefulWidget {
     this.onSlashArrow,
     this.onSlashSelect,
     this.onSlashEscape,
+    this.onHistoryArrow,
+    this.onHistoryEscape,
   });
 
   @override
@@ -4031,6 +5700,26 @@ class _InputBarState extends State<_InputBar> {
       if (event.logicalKey == LogicalKeyboardKey.escape) {
         widget.onSlashEscape?.call();
         return KeyEventResult.handled;
+      }
+    }
+
+    // Command-history recall — only consulted when the slash menu isn't
+    // capturing keys. The parent decides whether to consume: ArrowUp on
+    // a non-empty draft (not yet navigating) falls through to caret
+    // movement; ArrowUp on an empty field starts recall.
+    if (event is KeyDownEvent && !widget.slashMenuActive) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        if (widget.onHistoryArrow?.call(-1) == true) {
+          return KeyEventResult.handled;
+        }
+      } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        if (widget.onHistoryArrow?.call(1) == true) {
+          return KeyEventResult.handled;
+        }
+      } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+        if (widget.onHistoryEscape?.call() == true) {
+          return KeyEventResult.handled;
+        }
       }
     }
 
@@ -4594,6 +6283,31 @@ final List<_SlashCommand> _kSlashCommands = [
     colorFn: () => AppColors.burntAmber,
     takesBody: true,
     aliases: ['/w'],
+  ),
+  _SlashCommand(
+    trigger: '/search',
+    label: 'Search a contact',
+    description:
+        'Pull up recent calls, messages, and calendar entries for someone.',
+    icon: Icons.search_rounded,
+    colorFn: () => AppColors.accent,
+    takesBody: true,
+  ),
+  _SlashCommand(
+    trigger: '/call',
+    label: 'Call someone',
+    description: 'Dial a contact name or phone number.',
+    icon: Icons.call_rounded,
+    colorFn: () => AppColors.green,
+    takesBody: true,
+  ),
+  _SlashCommand(
+    trigger: '/recap',
+    label: 'Recap',
+    description:
+        'Brief agent on recent calls, messages, notes, and reminders.',
+    icon: Icons.history_rounded,
+    colorFn: () => AppColors.accent,
   ),
   _SlashCommand(
     trigger: '/ready',

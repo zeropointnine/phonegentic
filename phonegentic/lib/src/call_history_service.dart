@@ -606,16 +606,37 @@ class CallHistoryService extends ChangeNotifier {
   /// When [transcriptId] is provided (the note's specific row id), the
   /// expanded tile will scroll that transcript line into view and flash
   /// a brief highlight.
+  ///
+  /// When [preloadedRecord] is provided (e.g. the `/search` recap
+  /// already has the full call row in hand), it's prepended to
+  /// `_searchResults` so the expanded tile renders immediately without
+  /// waiting for a `naturalSearch` round-trip — and without depending on
+  /// `naturalSearch` actually matching the row (phone-number formats
+  /// like `sip:+15551234@host` can slip past it).
   Future<void> focusCall(
     int callId, {
     String? phoneNumber,
     int? transcriptId,
+    Map<String, dynamic>? preloadedRecord,
   }) async {
     debugPrint('[focusCall] call=$callId tid=$transcriptId phone=$phoneNumber '
+        'preloaded=${preloadedRecord != null} '
         'resultsCached=${_searchResults.length}');
     _isOpen = true;
     _expandedCallId = callId;
     _pendingScrollTranscriptId = transcriptId;
+
+    // If a preloaded record was handed in, splice it into the results
+    // list (or promote the existing copy) so the tile is guaranteed to
+    // render regardless of what the panel's current `_searchResults`
+    // contains.
+    if (preloadedRecord != null && preloadedRecord['id'] == callId) {
+      final existing = _searchResults.indexWhere((r) => r['id'] == callId);
+      if (existing < 0) {
+        _searchResults.insert(0, Map<String, dynamic>.from(preloadedRecord));
+      }
+    }
+
     notifyListeners();
 
     if (_searchResults.any((r) => r['id'] == callId)) {

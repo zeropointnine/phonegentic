@@ -2,7 +2,19 @@ import 'dart:convert';
 
 enum ChatRole { user, agent, host, remoteParty, system }
 
-enum MessageType { text, transcript, action, status, callState, whisper, attachment, sms, reminder, note }
+enum MessageType {
+  text,
+  transcript,
+  action,
+  status,
+  callState,
+  whisper,
+  attachment,
+  sms,
+  reminder,
+  note,
+  searchGuide,
+}
 
 class MessageAction {
   final String label;
@@ -108,6 +120,32 @@ class ChatMessage {
       : id = id ?? _uid(),
         role = ChatRole.user,
         type = MessageType.note,
+        timestamp = DateTime.now(),
+        speakerName = null,
+        isStreaming = false,
+        actions = const [];
+
+  /// An interactive "search guide" card created by the `/search` command.
+  /// The bubble shows matching contacts + checkbox toggles for calls,
+  /// messages, and calendar entries. Metadata shape:
+  ///
+  ///   {
+  ///     'query':           String,          // original search string
+  ///     'contacts':        List<Map>,       // [{name, phone, ...}, …]
+  ///     'selected_index':  int,             // which contact is picked
+  ///     'include_calls':    bool,
+  ///     'include_messages': bool,
+  ///     'include_calendar': bool,
+  ///     'stage':           'pending' | 'running' | 'done',
+  ///     'result_summary':  String?,         // set when stage == 'done'
+  ///   }
+  ChatMessage.searchGuide(
+    this.text, {
+    String? id,
+    this.metadata,
+  })  : id = id ?? _uid(),
+        role = ChatRole.user,
+        type = MessageType.searchGuide,
         timestamp = DateTime.now(),
         speakerName = null,
         isStreaming = false,

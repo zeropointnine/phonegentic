@@ -662,6 +662,57 @@ class CallHistoryDb {
     );
   }
 
+  /// Notes (`call_transcripts.role = 'note'`) written during calls with any
+  /// of the given [contactIds] or [phones].
+  ///
+  /// Used by the `/search` recap card to surface annotations attached to a
+  /// contact's call history. Returns transcript rows joined against their
+  /// originating `call_records` so the UI can render a "from call with X
+  /// on DATE" footer without a second lookup. Results are sorted
+  /// newest-first by transcript timestamp.
+  static Future<List<Map<String, dynamic>>> getNotesForContacts({
+    List<int> contactIds = const [],
+    List<String> phones = const [],
+    int limit = 10,
+  }) async {
+    if (contactIds.isEmpty && phones.isEmpty) return const [];
+    final db = await database;
+
+    final where = <String>[];
+    final args = <dynamic>[];
+
+    if (contactIds.isNotEmpty) {
+      final placeholders = List.filled(contactIds.length, '?').join(', ');
+      where.add('cr.contact_id IN ($placeholders)');
+      args.addAll(contactIds);
+    }
+    if (phones.isNotEmpty) {
+      final placeholders = List.filled(phones.length, '?').join(', ');
+      where.add('cr.remote_identity IN ($placeholders)');
+      args.addAll(phones);
+    }
+
+    final whereClause = where.join(' OR ');
+    return db.rawQuery('''
+      SELECT
+        ct.id AS transcript_id,
+        ct.call_record_id AS call_record_id,
+        ct.text AS text,
+        ct.timestamp AS timestamp,
+        cr.remote_identity AS remote_identity,
+        cr.remote_display_name AS remote_display_name,
+        cr.direction AS direction,
+        cr.started_at AS started_at,
+        c.display_name AS contact_name
+      FROM call_transcripts ct
+      JOIN call_records cr ON cr.id = ct.call_record_id
+      LEFT JOIN contacts c ON c.id = cr.contact_id
+      WHERE ct.role = 'note' AND ($whereClause)
+      ORDER BY ct.timestamp DESC
+      LIMIT ?
+    ''', [...args, limit]);
+  }
+
   /// Returns the set of call record IDs (from [callIds]) that have at least
   /// one transcript with role = 'host'.  Used to distinguish calls where the
   /// host was actually on the line from agent-only calls.
@@ -986,6 +1037,33 @@ class CallHistoryDb {
       whereArgs: ['%$query%', '%$query%', '%$query%'],
       orderBy: 'display_name ASC',
     );
+  }
+
+  /// Same filter as [searchContacts] but returns rows ordered by their
+  /// most-recent call (`MAX(call_records.started_at)`) descending, with
+  /// never-called contacts placed last (alphabetical among themselves).
+  ///
+  /// Used by the `/search` guide so the chip row puts the contact the
+  /// manager most recently interacted with first — usually the one they
+  /// actually care about.
+  static Future<List<Map<String, dynamic>>> searchContactsByRecency(
+      String query) async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT c.*,
+             MAX(cr.started_at) AS last_call_at
+      FROM contacts c
+      LEFT JOIN call_records cr
+        ON cr.contact_id = c.id
+        OR cr.remote_identity = c.phone_number
+      WHERE c.display_name LIKE ?
+         OR c.phone_number LIKE ?
+         OR c.email LIKE ?
+      GROUP BY c.id
+      ORDER BY CASE WHEN last_call_at IS NULL THEN 1 ELSE 0 END,
+               last_call_at DESC,
+               c.display_name ASC
+    ''', ['%$query%', '%$query%', '%$query%']);
   }
 
   static Future<List<Map<String, dynamic>>> getAllContacts() async {
@@ -1895,6 +1973,73 @@ class CallHistoryDb {
       ],
       orderBy: 'remind_at ASC',
     );
+  }
+
+  /// Pending reminders due anywhere in `[now − lookback, now + window]`.
+  /// Used by the `/recap` skill so the agent can mention both overdue
+  /// reminders the manager hasn't seen yet and the next few things
+  /// coming up. Ordered by `remind_at ASC` so overdue items come first,
+  /// then the next upcoming ones.
+  static Future<List<Map<String, dynamic>>> getRecentAndUpcomingReminders({
+    Duration lookback = const Duration(hours: 6),
+    Duration window = const Duration(hours: 24),
+    int limit = 5,
+  }) async {
+    final db = await database;
+    final now = DateTime.now().toUtc();
+    final from = now.subtract(lookback);
+    final to = now.add(window);
+    return db.query(
+      'agent_reminders',
+      where: "status = 'pending' AND remind_at >= ? AND remind_at <= ?",
+      whereArgs: [from.toIso8601String(), to.toIso8601String()],
+      orderBy: 'remind_at ASC',
+      limit: limit,
+    );
+  }
+
+  /// Most recent SMS messages across every conversation, newest first.
+  /// Returns the raw `sms_messages` rows joined with the remote
+  /// contact's display name when one exists — so the `/recap` skill
+  /// doesn't need a second query to label each line.
+  static Future<List<Map<String, dynamic>>> getRecentSmsMessages({
+    int limit = 10,
+  }) async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT sm.*, c.display_name AS contact_name
+      FROM sms_messages sm
+      LEFT JOIN contacts c ON c.phone_number = sm.remote_phone
+      WHERE sm.is_deleted = 0
+      ORDER BY sm.created_at DESC
+      LIMIT ?
+    ''', [limit]);
+  }
+
+  /// Most recent notes (`call_transcripts.role = 'note'`) across every
+  /// call. Joined with the originating call record + contact so the
+  /// recap UI / agent brief can cite "note from call with X".
+  static Future<List<Map<String, dynamic>>> getRecentNotes({
+    int limit = 5,
+  }) async {
+    final db = await database;
+    return db.rawQuery('''
+      SELECT
+        ct.id AS transcript_id,
+        ct.call_record_id AS call_record_id,
+        ct.text AS text,
+        ct.timestamp AS timestamp,
+        cr.remote_identity AS remote_identity,
+        cr.remote_display_name AS remote_display_name,
+        cr.started_at AS started_at,
+        c.display_name AS contact_name
+      FROM call_transcripts ct
+      JOIN call_records cr ON cr.id = ct.call_record_id
+      LEFT JOIN contacts c ON c.id = cr.contact_id
+      WHERE ct.role = 'note'
+      ORDER BY ct.timestamp DESC
+      LIMIT ?
+    ''', [limit]);
   }
 
   static Future<Map<String, dynamic>?> getReminderById(int id) async {

@@ -5911,6 +5911,91 @@ class AgentService extends ChangeNotifier {
     return describeLocale(_bootContext.defaultCountryCode);
   }
 
+  /// Public entrypoint for the `/call <query>` slash command.
+  ///
+  /// [input] may be a raw phone number (any format — digits, hyphens,
+  /// parens, leading `+`) or a contact name. Contact names resolve via
+  /// `CallHistoryDb.searchContacts` — the first match's phone is used.
+  /// A system bubble is posted with the outcome so the manager gets
+  /// feedback regardless of whether the call succeeds.
+  Future<void> placeCallByInput(String input) async {
+    final query = input.trim();
+    if (query.isEmpty) return;
+    if (sipHelper == null) {
+      _addMsg(ChatMessage.system('Cannot place call — SIP helper not available.'));
+      notifyListeners();
+      return;
+    }
+
+    String? number;
+    String? contactName;
+
+    // Heuristic: if the body is mostly digits (optionally with +, -, (), spaces)
+    // treat it as a phone number. Require >= 4 digits to count as a number
+    // to avoid false positives like short names made of digits.
+    final digits = query.replaceAll(RegExp(r'[^\d]'), '');
+    final looksNumeric =
+        digits.length >= 4 && RegExp(r'^[\d+\-\s().]+$').hasMatch(query);
+
+    if (looksNumeric) {
+      number = query.replaceAll(RegExp(r'[\s\-\(\)\.]'), '').trim();
+    } else {
+      try {
+        final matches = await CallHistoryDb.searchContacts(query);
+        if (matches.isEmpty) {
+          _addMsg(ChatMessage.system('No contacts found for "$query".'));
+          notifyListeners();
+          return;
+        }
+        final row = matches.first;
+        number = (row['phone_number'] as String?)?.trim();
+        contactName = (row['display_name'] as String?)?.trim();
+        if (number == null || number.isEmpty) {
+          _addMsg(ChatMessage.system(
+              'Contact "${contactName ?? query}" has no phone number on file.'));
+          notifyListeners();
+          return;
+        }
+      } catch (e) {
+        _addMsg(ChatMessage.system('Contact lookup failed: $e'));
+        notifyListeners();
+        return;
+      }
+    }
+
+    final e164 = ensureE164(number);
+    try {
+      final mediaConstraints = <String, dynamic>{
+        'audio': true,
+        'video': false,
+      };
+      final stream =
+          await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      final success =
+          await sipHelper!.call(e164, voiceOnly: true, mediaStream: stream);
+      if (!success) {
+        _addMsg(ChatMessage.system(
+            'Failed to call $e164 — SIP not connected. Register first.'));
+        notifyListeners();
+        return;
+      }
+      _callDialPending = true;
+      _pendingIdleCall = null;
+      _idleCallConfirmed = false;
+      final displayNum = (demoModeService?.enabled ?? false)
+          ? demoModeService!.maskPhone(e164)
+          : e164;
+      final who = (contactName != null && contactName.isNotEmpty)
+          ? '$contactName ($displayNum)'
+          : displayNum;
+      _addMsg(ChatMessage.system('Dialing $who…'));
+      notifyListeners();
+    } catch (e) {
+      _addMsg(ChatMessage.system('Failed to place call: $e'));
+      notifyListeners();
+    }
+  }
+
   Future<String> _handleMakeCall(Map<String, dynamic> args) async {
     if (sipHelper == null) return 'SIP helper not available.';
     var number = args['number'] as String?;
@@ -7315,6 +7400,33 @@ class AgentService extends ChangeNotifier {
   ///   * The LLM is further instructed (via the tool description) to only
   ///     invoke this when the MANAGER asks; URLs that surface in SMS or
   ///     call transcripts must not be auto-opened.
+  /// Open [url] in the default system browser. Public entrypoint for UI
+  /// elements (e.g. the `/search` calendar row) that want to reuse the
+  /// same plumbing the agent's `open_url` tool uses. Unlike the tool
+  /// variant, this does NOT post a chat bubble — the caller already
+  /// provided the affordance.
+  Future<void> openUrlInBrowser(String url) async {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return;
+    Uri uri;
+    try {
+      uri = Uri.parse(trimmed);
+    } on FormatException {
+      debugPrint('[AgentService] openUrlInBrowser: invalid URL "$url"');
+      return;
+    }
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') {
+      debugPrint('[AgentService] openUrlInBrowser: rejected scheme "$scheme"');
+      return;
+    }
+    try {
+      await Process.run('open', [uri.toString()]);
+    } catch (e) {
+      debugPrint('[AgentService] openUrlInBrowser failed: $e');
+    }
+  }
+
   Future<String> _handleOpenUrl(Map<String, dynamic> args) async {
     final raw = (args['url'] as String?)?.trim();
     if (raw == null || raw.isEmpty) {
@@ -7360,6 +7472,41 @@ class AgentService extends ChangeNotifier {
       'aloud to the other party: "By the way, this call is now being recorded." '
       'Say only this announcement, nothing else.',
     );
+  }
+
+  /// Force the manager-facing agent to speak [directive] right now,
+  /// bypassing the dual-dispatch logic in `sendSystemEvent`.
+  ///
+  /// Routing:
+  ///   * split pipeline (text agent → TTS): pushes directive as a host
+  ///     message, which triggers `_respond()` and streams a spoken reply
+  ///     (provided TTS is not muted).
+  ///   * whisper-only (Realtime voice): sends a system directive and
+  ///     triggers `response.create` so the agent speaks the directive.
+  ///
+  /// If neither pipeline is live we log and bail — the UI card is still
+  /// there for the manager to read. This is intentionally best-effort:
+  /// a silent agent is better than a thrown exception mid-`/search`.
+  void announceToManager(String directive) {
+    final trimmed = directive.trim();
+    if (trimmed.isEmpty) return;
+
+    if (_splitPipeline && _textAgent != null) {
+      debugPrint(
+          '[AgentService] announceToManager → text agent (splitPipeline, '
+          'active=$_active, ttsMuted=$_ttsMuted)');
+      _textAgent!.sendUserMessage(trimmed);
+      return;
+    }
+
+    if (_active) {
+      debugPrint('[AgentService] announceToManager → whisper directive');
+      _whisper.sendSystemDirective(trimmed);
+      return;
+    }
+
+    debugPrint('[AgentService] announceToManager SKIPPED — no live pipeline '
+        '(active=$_active, splitPipeline=$_splitPipeline)');
   }
 
   void sendUserMessage(String text) {
@@ -7548,9 +7695,23 @@ class AgentService extends ChangeNotifier {
 
   /// Send a system-level context update that the model can see and act on.
   /// Also adds it to the local chat as a system message.
-  void sendSystemEvent(String text, {bool requireResponse = false}) {
-    _addMsg(ChatMessage.system(text));
-    notifyListeners();
+  /// Surface a system-level event to the agent pipeline.
+  ///
+  /// By default the event is also echoed into the chat UI as a system
+  /// bubble so the manager sees it happen. For events whose payload is
+  /// already rendered elsewhere in the UI (e.g. the `/search` recap —
+  /// its data is shown inline in the search-guide bubble), pass
+  /// `silent: true` to skip the chat echo while still dispatching to
+  /// the LLM(s).
+  void sendSystemEvent(
+    String text, {
+    bool requireResponse = false,
+    bool silent = false,
+  }) {
+    if (!silent) {
+      _addMsg(ChatMessage.system(text));
+      notifyListeners();
+    }
 
     if (_active) {
       if (requireResponse) {
@@ -7878,6 +8039,681 @@ class AgentService extends ChangeNotifier {
       });
     }
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // /recap — one-shot global recap (calls + messages + notes + reminders)
+  // ---------------------------------------------------------------------------
+
+  /// Entry point for the `/recap` slash command.
+  ///
+  /// Pulls four slices of recent activity in parallel — last 5 calls,
+  /// last 10 SMS messages, last 5 notes, and pending reminders within
+  /// ±6h/+24h — folds them into a single natural-language directive,
+  /// and dispatches that directive to whichever pipeline is currently
+  /// speaking via [announceToManager]. A small system bubble
+  /// ("Recap dispatched…") is posted so the action has a visible
+  /// receipt even when TTS is muted.
+  Future<void> startRecap() async {
+    _addMsg(ChatMessage.system(
+        'Recap dispatched — agent will brief you aloud.'));
+    notifyListeners();
+
+    List<Map<String, dynamic>> calls = const [];
+    List<Map<String, dynamic>> sms = const [];
+    List<Map<String, dynamic>> notes = const [];
+    List<Map<String, dynamic>> reminders = const [];
+    try {
+      final r = await Future.wait([
+        CallHistoryDb.getRecentCalls(limit: 5),
+        CallHistoryDb.getRecentSmsMessages(limit: 10),
+        CallHistoryDb.getRecentNotes(limit: 5),
+        CallHistoryDb.getRecentAndUpcomingReminders(limit: 5),
+      ]);
+      calls = r[0];
+      sms = r[1];
+      notes = r[2];
+      reminders = r[3];
+    } catch (e) {
+      debugPrint('[AgentService] startRecap queries failed: $e');
+    }
+
+    String displayContactFromCall(Map<String, dynamic> c) {
+      return (c['contact_name'] as String?)?.trim().isNotEmpty == true
+          ? c['contact_name'] as String
+          : (c['remote_display_name'] as String?)?.trim().isNotEmpty == true
+              ? c['remote_display_name'] as String
+              : (c['remote_identity'] as String? ?? 'Unknown');
+    }
+
+    final now = DateTime.now();
+    String relative(String? iso) {
+      if (iso == null || iso.isEmpty) return '';
+      final dt = DateTime.tryParse(iso)?.toLocal();
+      if (dt == null) return '';
+      final diff = now.difference(dt);
+      if (diff.isNegative) {
+        final ahead = -diff.inMinutes;
+        if (ahead < 60) return 'in ${ahead}m';
+        if (ahead < 60 * 24) return 'in ${ahead ~/ 60}h';
+        return 'in ${ahead ~/ (60 * 24)}d';
+      }
+      if (diff.inMinutes < 1) return 'just now';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      return '${diff.inDays}d ago';
+    }
+
+    final buf = StringBuffer();
+    buf.writeln(
+        'The manager just asked for a /recap. Give a short, warm spoken '
+        'briefing (3–5 sentences, ~20 seconds) covering recent activity. '
+        'Touch on each category that has content — skip empty ones. '
+        'Call out anything that needs follow-up (unanswered inbound '
+        'texts, overdue reminders, missed calls) and end with a brief '
+        'offer like "want me to dig into any of these?".');
+    buf.writeln();
+
+    buf.writeln('## Recent calls (${calls.length})');
+    if (calls.isEmpty) {
+      buf.writeln('- none');
+    } else {
+      for (final c in calls) {
+        final dir = c['direction'] as String? ?? '';
+        final status = c['status'] as String? ?? '';
+        final dur = (c['duration_seconds'] ?? 0) as int;
+        final rel = relative(c['started_at'] as String?);
+        final who = displayContactFromCall(c);
+        final durStr = dur > 0
+            ? (dur >= 60 ? '${dur ~/ 60}m ${dur % 60}s' : '${dur}s')
+            : (status == 'missed' ? 'missed' : status);
+        buf.writeln('- $rel · $dir · $who · $durStr');
+      }
+    }
+    buf.writeln();
+
+    buf.writeln('## Recent SMS (${sms.length})');
+    if (sms.isEmpty) {
+      buf.writeln('- none');
+    } else {
+      for (final m in sms) {
+        final dir = m['direction'] as String? ?? '';
+        final body = (m['body'] as String? ?? '').replaceAll('\n', ' ').trim();
+        final snippet = body.length > 80 ? '${body.substring(0, 80)}…' : body;
+        final rel = relative(m['created_at'] as String?);
+        final who = (m['contact_name'] as String?)?.trim().isNotEmpty == true
+            ? m['contact_name'] as String
+            : (m['remote_phone'] as String? ?? 'Unknown');
+        final arrow = dir == 'inbound' ? '←' : '→';
+        buf.writeln('- $rel · $arrow $who: $snippet');
+      }
+    }
+    buf.writeln();
+
+    buf.writeln('## Recent notes (${notes.length})');
+    if (notes.isEmpty) {
+      buf.writeln('- none');
+    } else {
+      for (final n in notes) {
+        final text = (n['text'] as String? ?? '').replaceAll('\n', ' ').trim();
+        final snippet = text.length > 100
+            ? '${text.substring(0, 100)}…'
+            : text;
+        final who = (n['contact_name'] as String?)?.trim().isNotEmpty == true
+            ? n['contact_name'] as String
+            : (n['remote_display_name'] as String?)?.trim().isNotEmpty == true
+                ? n['remote_display_name'] as String
+                : (n['remote_identity'] as String? ?? 'Unknown');
+        final rel = relative(n['timestamp'] as String?);
+        buf.writeln('- $rel · from call with $who: $snippet');
+      }
+    }
+    buf.writeln();
+
+    buf.writeln('## Reminders (${reminders.length})');
+    if (reminders.isEmpty) {
+      buf.writeln('- none');
+    } else {
+      for (final r in reminders) {
+        final title = (r['title'] as String?)?.trim().isNotEmpty == true
+            ? r['title'] as String
+            : 'Untitled';
+        final rel = relative(r['remind_at'] as String?);
+        final overdue = (() {
+          final dt = DateTime.tryParse(r['remind_at'] as String? ?? '');
+          return dt != null && dt.isBefore(DateTime.now().toUtc());
+        })();
+        buf.writeln('- ${overdue ? "OVERDUE" : "upcoming"} $rel · $title');
+      }
+    }
+
+    announceToManager(buf.toString());
+  }
+
+  // ---------------------------------------------------------------------------
+  // /search — contact-scoped recap bubble (Phase 2: multi-select + rows)
+  // ---------------------------------------------------------------------------
+
+  /// Entry point for the `/search <name>` slash command.
+  ///
+  /// Resolves the query against the contacts table and, if any match,
+  /// drops an interactive search-guide bubble into the panel with ALL
+  /// matching contacts pre-selected. Zero matches produce a plain
+  /// system message instead so the manager gets immediate feedback
+  /// without a dangling empty card.
+  Future<void> startContactSearch(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return;
+
+    List<Map<String, dynamic>> matches = const [];
+    try {
+      // Recency-ranked so the most recently called contact shows up
+      // first in the chip row — manager usually cares about them most.
+      final rows = await CallHistoryDb.searchContactsByRecency(q);
+      matches = rows.take(8).map((r) {
+        return <String, dynamic>{
+          'id': r['id'],
+          'name': (r['display_name'] as String?)?.trim().isNotEmpty == true
+              ? r['display_name']
+              : (r['phone_number'] as String? ?? 'Unknown'),
+          'phone': r['phone_number'] as String? ?? '',
+          'email': r['email'] as String?,
+          'last_call_at': r['last_call_at'] as String?,
+        };
+      }).toList();
+    } catch (e) {
+      debugPrint('[AgentService] startContactSearch lookup failed: $e');
+    }
+
+    if (matches.isEmpty) {
+      _addMsg(ChatMessage.system('No contacts found for "$q".'));
+      notifyListeners();
+      return;
+    }
+
+    _addMsg(ChatMessage.searchGuide(
+      q,
+      metadata: {
+        'query': q,
+        'contacts': matches,
+        // Multi-select: pre-select every matched contact.
+        'selected_indices': List<int>.generate(matches.length, (i) => i),
+        'include_calls': true,
+        'include_messages': true,
+        'include_calendar': true,
+        'include_notes': true,
+        'stage': 'pending',
+      },
+    ));
+    notifyListeners();
+  }
+
+  /// Toggle a contact's membership in the search-guide's selected set.
+  /// At least one contact must remain selected — attempting to
+  /// deselect the last one is a no-op.
+  void toggleSearchContact(ChatMessage msg, int index) {
+    final idx = _messages.indexWhere((m) => m.id == msg.id);
+    if (idx < 0) return;
+    final meta = Map<String, dynamic>.from(msg.metadata ?? {});
+    final contacts = (meta['contacts'] as List?) ?? const [];
+    if (index < 0 || index >= contacts.length) return;
+
+    final raw = (meta['selected_indices'] as List?) ?? const [];
+    final current = raw.whereType<int>().toSet();
+    if (current.contains(index)) {
+      if (current.length <= 1) return; // keep at least one selected
+      current.remove(index);
+    } else {
+      current.add(index);
+    }
+    final next = current.toList()..sort();
+    meta['selected_indices'] = next;
+    _replaceSearchGuideMetadata(msg, meta);
+  }
+
+  /// Flip one of the search-guide toggle chips.
+  /// [key] is `'include_calls'`, `'include_messages'`,
+  /// `'include_calendar'`, or `'include_notes'`.
+  void toggleSearchOption(ChatMessage msg, String key) {
+    const allowed = {
+      'include_calls',
+      'include_messages',
+      'include_calendar',
+      'include_notes',
+    };
+    if (!allowed.contains(key)) return;
+    final meta = Map<String, dynamic>.from(msg.metadata ?? {});
+    meta[key] = !(meta[key] as bool? ?? true);
+    _replaceSearchGuideMetadata(msg, meta);
+  }
+
+  /// Remove a pending or completed search-guide bubble.
+  void dismissSearchGuide(ChatMessage msg) {
+    removeMessage(msg);
+  }
+
+  /// Execute the checked lookups across every selected contact, stash
+  /// the structured results on the bubble's metadata (so the UI can
+  /// render per-section row lists), and post a consolidated recap to
+  /// the agent via `sendSystemEvent`.
+  ///
+  /// All sections run in parallel. Individual failures are swallowed
+  /// and reported as "unavailable" in the summary rather than
+  /// aborting the whole recap.
+  Future<void> executeSearchGuide(ChatMessage msg) async {
+    final meta = Map<String, dynamic>.from(msg.metadata ?? {});
+    final stage = meta['stage'] as String? ?? 'pending';
+    if (stage == 'running') return;
+
+    final contacts = ((meta['contacts'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => m.cast<String, dynamic>())
+        .toList();
+    if (contacts.isEmpty) return;
+
+    final rawSel = (meta['selected_indices'] as List?) ?? const [];
+    final selIndices = rawSel
+        .whereType<int>()
+        .where((i) => i >= 0 && i < contacts.length)
+        .toSet()
+        .toList()
+      ..sort();
+    final selectedContacts = selIndices.isEmpty
+        ? [contacts.first]
+        : [for (final i in selIndices) contacts[i]];
+
+    final wantCalls = meta['include_calls'] as bool? ?? true;
+    final wantMessages = meta['include_messages'] as bool? ?? true;
+    final wantCalendar = meta['include_calendar'] as bool? ?? true;
+    final wantNotes = meta['include_notes'] as bool? ?? true;
+
+    meta['stage'] = 'running';
+    _replaceSearchGuideMetadata(msg, meta);
+
+    Future<_SearchSection> callsF = wantCalls
+        ? _searchGuideCalls(selectedContacts)
+        : Future.value(_SearchSection.empty('Calls'));
+    Future<_SearchSection> msgsF = wantMessages
+        ? _searchGuideMessages(selectedContacts)
+        : Future.value(_SearchSection.empty('Messages'));
+    Future<_SearchSection> calsF = wantCalendar
+        ? _searchGuideCalendar(selectedContacts)
+        : Future.value(_SearchSection.empty('Calendar'));
+    Future<_SearchSection> notesF = wantNotes
+        ? _searchGuideNotes(selectedContacts)
+        : Future.value(_SearchSection.empty('Notes'));
+
+    late _SearchSection callsSec;
+    late _SearchSection msgsSec;
+    late _SearchSection calsSec;
+    late _SearchSection notesSec;
+    try {
+      final r = await Future.wait([callsF, msgsF, calsF, notesF]);
+      callsSec = r[0];
+      msgsSec = r[1];
+      calsSec = r[2];
+      notesSec = r[3];
+    } catch (e) {
+      debugPrint('[AgentService] executeSearchGuide failed: $e');
+      callsSec = _SearchSection.empty('Calls');
+      msgsSec = _SearchSection.empty('Messages');
+      calsSec = _SearchSection.empty('Calendar');
+      notesSec = _SearchSection.empty('Notes');
+    }
+
+    // Only sections the user asked for contribute to the UI counts.
+    final activeSections = <_SearchSection>[
+      if (wantCalls) callsSec,
+      if (wantMessages) msgsSec,
+      if (wantCalendar) calsSec,
+      if (wantNotes) notesSec,
+    ];
+    final countsLine = activeSections
+        .map((s) => '${s.count} ${s.label.toLowerCase()}')
+        .join(' · ');
+
+    // Build the recap payload. Two parts:
+    //   1. `who` — display string for the contact(s) we searched.
+    //   2. `payload` — machine-ish structured dump of every section body.
+    //      Kept as context so the agent has the raw facts to cite from.
+    final who = selectedContacts.length == 1
+        ? () {
+            final c = selectedContacts.first;
+            final name = c['name'] as String? ?? '';
+            final phone = c['phone'] as String? ?? '';
+            return (phone.isNotEmpty && phone != name)
+                ? '$name ($phone)'
+                : name;
+          }()
+        : selectedContacts.map((c) => c['name']).join(', ');
+
+    final payload = StringBuffer();
+    for (final s in activeSections) {
+      payload.writeln('## ${s.label}');
+      payload.write(s.body);
+      payload.writeln();
+    }
+
+    meta['stage'] = 'done';
+    meta['result_summary'] =
+        countsLine.isEmpty ? 'No sections selected.' : countsLine;
+    // Structured rows for the inline UI list. Store only what's enabled
+    // so the UI's row rendering mirrors the toggles.
+    meta['call_rows'] = wantCalls ? callsSec.rows : const [];
+    meta['message_rows'] = wantMessages ? msgsSec.rows : const [];
+    meta['calendar_rows'] = wantCalendar ? calsSec.rows : const [];
+    meta['note_rows'] = wantNotes ? notesSec.rows : const [];
+    _replaceSearchGuideMetadata(msg, meta);
+
+    // Build a single, imperative "speak this aloud" directive that folds
+    // in the structured data. Using `announceToManager` rather than
+    // `sendSystemEvent` so the agent is explicitly told to SPEAK (not
+    // just receive context). The search-guide card already shows every
+    // row visually, so the directive emphasises a short warm summary
+    // rather than reading the raw rows back verbatim.
+    final directive = StringBuffer()
+      ..writeln(
+          'The manager just ran /search for $who. The full list is already '
+          'on screen in a card, so do NOT read it back row by row.')
+      ..writeln()
+      ..writeln(
+          'Give a short, warm spoken recap (1–3 sentences, ~15 seconds): '
+          'name who you looked up, mention the counts '
+          '(${countsLine.isEmpty ? "no sections" : countsLine}), and call '
+          'out anything noteworthy (e.g. an unanswered message, an '
+          'upcoming calendar event, a recent call worth following up on). '
+          'End with a brief offer like "want me to dig into any of these?"')
+      ..writeln()
+      ..writeln('Here is what was found:')
+      ..writeln()
+      ..write(payload.toString());
+
+    announceToManager(directive.toString());
+  }
+
+  Future<_SearchSection> _searchGuideCalls(
+      List<Map<String, dynamic>> contacts) async {
+    try {
+      // Fan out across every selected contact, then merge + dedupe by id.
+      final seen = <int>{};
+      final merged = <Map<String, dynamic>>[];
+      for (final c in contacts) {
+        final name = c['name'] as String? ?? '';
+        final phone = c['phone'] as String? ?? '';
+        final key = name.isNotEmpty ? name : phone;
+        if (key.isEmpty) continue;
+        final rows = await CallHistoryDb.searchCalls(
+          contactName: key,
+          limit: 10,
+        );
+        for (final r in rows) {
+          final id = r['id'] as int?;
+          if (id == null || seen.contains(id)) continue;
+          seen.add(id);
+          merged.add(r);
+        }
+      }
+      merged.sort((a, b) => ((b['started_at'] as String?) ?? '')
+          .compareTo((a['started_at'] as String?) ?? ''));
+
+      if (merged.isEmpty) {
+        return _SearchSection(
+            label: 'Calls', count: 0, body: 'No recent calls.\n', rows: const []);
+      }
+
+      final rows = merged.take(8).toList();
+      final buf = StringBuffer();
+      for (final r in merged.take(5)) {
+        final started = r['started_at'] as String? ?? '';
+        final dur = (r['duration_seconds'] ?? 0) as int;
+        final dir = r['direction'] as String? ?? '';
+        final status = r['status'] as String? ?? '';
+        final rel = _relativeAgoOrDate(started);
+        final durStr = dur > 0
+            ? (dur >= 60 ? '${dur ~/ 60}m ${dur % 60}s' : '${dur}s')
+            : (status == 'missed' ? 'missed' : '');
+        buf.writeln(
+            '- $rel · $dir${durStr.isEmpty ? '' : ' · $durStr'}');
+      }
+      return _SearchSection(
+          label: 'Calls', count: merged.length, body: buf.toString(), rows: rows);
+    } catch (e) {
+      debugPrint('[AgentService] _searchGuideCalls failed: $e');
+      return _SearchSection(
+          label: 'Calls',
+          count: 0,
+          body: 'Call history unavailable.\n',
+          rows: const []);
+    }
+  }
+
+  Future<_SearchSection> _searchGuideMessages(
+      List<Map<String, dynamic>> contacts) async {
+    try {
+      final seen = <int>{};
+      final merged = <Map<String, dynamic>>[];
+      for (final c in contacts) {
+        final phone = c['phone'] as String? ?? '';
+        if (phone.isEmpty) continue;
+        final rows = await CallHistoryDb.getSmsMessagesForConversation(
+          phone,
+          limit: 10,
+        );
+        for (final r in rows) {
+          final id = r['id'] as int?;
+          if (id == null || seen.contains(id)) continue;
+          seen.add(id);
+          merged.add(r);
+        }
+      }
+      merged.sort((a, b) => ((b['created_at'] as String?) ?? '')
+          .compareTo((a['created_at'] as String?) ?? ''));
+
+      if (merged.isEmpty) {
+        return _SearchSection(
+            label: 'Messages',
+            count: 0,
+            body: 'No messages.\n',
+            rows: const []);
+      }
+      final rows = merged.take(8).toList();
+      final buf = StringBuffer();
+      for (final r in merged.take(5)) {
+        final dir = r['direction'] as String? ?? '';
+        final created = r['created_at'] as String? ?? '';
+        final body = (r['body'] as String? ?? '').trim();
+        final preview =
+            body.length > 80 ? '${body.substring(0, 80)}...' : body;
+        buf.writeln(
+            '- ${_relativeAgoOrDate(created)} · $dir: "$preview"');
+      }
+      return _SearchSection(
+          label: 'Messages',
+          count: merged.length,
+          body: buf.toString(),
+          rows: rows);
+    } catch (e) {
+      debugPrint('[AgentService] _searchGuideMessages failed: $e');
+      return _SearchSection(
+          label: 'Messages',
+          count: 0,
+          body: 'Messaging unavailable.\n',
+          rows: const []);
+    }
+  }
+
+  Future<_SearchSection> _searchGuideCalendar(
+      List<Map<String, dynamic>> contacts) async {
+    if (googleCalendarService == null ||
+        !googleCalendarService!.config.enabled) {
+      return _SearchSection(
+          label: 'Calendar',
+          count: 0,
+          body: 'Calendar not enabled.\n',
+          rows: const []);
+    }
+    final needles = [
+      for (final c in contacts)
+        if ((c['name'] as String?)?.isNotEmpty == true)
+          (c['name'] as String).toLowerCase()
+    ];
+    if (needles.isEmpty) {
+      return _SearchSection(
+          label: 'Calendar',
+          count: 0,
+          body: 'No contact name to match against events.\n',
+          rows: const []);
+    }
+    try {
+      final now = DateTime.now();
+      String ymd(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      final dates = [now, now.add(const Duration(days: 1))];
+      final allEvents =
+          await Future.wait(dates.map((d) => googleCalendarService!
+              .readEvents(ymd(d))
+              .timeout(const Duration(seconds: 10), onTimeout: () => [])));
+
+      final rows = <Map<String, dynamic>>[];
+      for (var i = 0; i < allEvents.length; i++) {
+        for (final e in allEvents[i]) {
+          final hay = '${e.title} ${e.location}'.toLowerCase();
+          if (needles.any((n) => hay.contains(n))) {
+            rows.add({
+              'title': e.title,
+              'startTime': e.startTime,
+              'location': e.location,
+              'day': (dates[i].day == now.day) ? 'today' : 'tomorrow',
+              // Raw YYYY-MM-DD so the UI can deep-link into
+              // Google Calendar's day view when the row is tapped.
+              'date': ymd(dates[i]),
+            });
+          }
+        }
+      }
+
+      if (rows.isEmpty) {
+        return _SearchSection(
+            label: 'Calendar',
+            count: 0,
+            body: 'No matching events today or tomorrow.\n',
+            rows: const []);
+      }
+
+      final buf = StringBuffer();
+      for (final r in rows.take(5)) {
+        buf.write('- ${r['day']}');
+        final st = r['startTime'] as String? ?? '';
+        if (st.isNotEmpty) buf.write(' · $st');
+        buf.write(' · ${r['title']}');
+        final loc = r['location'] as String? ?? '';
+        if (loc.isNotEmpty) buf.write(' @ $loc');
+        buf.writeln();
+      }
+      return _SearchSection(
+          label: 'Calendar',
+          count: rows.length,
+          body: buf.toString(),
+          rows: rows);
+    } catch (e) {
+      debugPrint('[AgentService] _searchGuideCalendar failed: $e');
+      return _SearchSection(
+          label: 'Calendar',
+          count: 0,
+          body: 'Calendar unavailable.\n',
+          rows: const []);
+    }
+  }
+
+  Future<_SearchSection> _searchGuideNotes(
+      List<Map<String, dynamic>> contacts) async {
+    try {
+      final ids = <int>[];
+      final phones = <String>[];
+      for (final c in contacts) {
+        final id = c['id'];
+        if (id is int) ids.add(id);
+        final p = c['phone'] as String? ?? '';
+        if (p.isNotEmpty) phones.add(p);
+      }
+      if (ids.isEmpty && phones.isEmpty) {
+        return _SearchSection(
+            label: 'Notes',
+            count: 0,
+            body: 'No contact identifiers to match against notes.\n',
+            rows: const []);
+      }
+      final rows = await CallHistoryDb.getNotesForContacts(
+        contactIds: ids,
+        phones: phones,
+        limit: 10,
+      );
+      if (rows.isEmpty) {
+        return _SearchSection(
+            label: 'Notes',
+            count: 0,
+            body: 'No notes attached to this contact.\n',
+            rows: const []);
+      }
+      final buf = StringBuffer();
+      for (final r in rows.take(5)) {
+        final txt = (r['text'] as String? ?? '').trim();
+        final preview =
+            txt.length > 100 ? '${txt.substring(0, 100)}...' : txt;
+        final rel = _relativeAgoOrDate(r['timestamp'] as String? ?? '');
+        buf.writeln('- $rel · "$preview"');
+      }
+      return _SearchSection(
+          label: 'Notes',
+          count: rows.length,
+          body: buf.toString(),
+          rows: rows);
+    } catch (e) {
+      debugPrint('[AgentService] _searchGuideNotes failed: $e');
+      return _SearchSection(
+          label: 'Notes',
+          count: 0,
+          body: 'Notes unavailable.\n',
+          rows: const []);
+    }
+  }
+
+  /// Shared helper: replace the metadata on an existing search-guide
+  /// message in place and persist the change. Preserves message id so
+  /// the Flutter `ValueKey` stays stable and the bubble doesn't rebuild
+  /// from scratch.
+  void _replaceSearchGuideMetadata(
+      ChatMessage msg, Map<String, dynamic> meta) {
+    final idx = _messages.indexWhere((m) => m.id == msg.id);
+    if (idx < 0) return;
+    final replaced = ChatMessage(
+      id: msg.id,
+      role: msg.role,
+      type: msg.type,
+      text: msg.text,
+      timestamp: msg.timestamp,
+      metadata: meta,
+    );
+    _messages[idx] = replaced;
+    if (_persistEnabled) {
+      CallHistoryDb.updateSessionMessageMetadata(msg.id, meta)
+          .catchError((e) {
+        debugPrint('[AgentService] Failed to persist search-guide meta: $e');
+      });
+    }
+    notifyListeners();
+  }
+
+  static String _relativeAgoOrDate(String iso) {
+    if (iso.isEmpty) return '';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '';
+    final diff = DateTime.now().difference(dt.toLocal());
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${dt.month}/${dt.day}';
   }
 
   void sendFileAttachment({required String fileName, required String content}) {
@@ -9107,4 +9943,30 @@ class AgentService extends ChangeNotifier {
     _whisper.dispose();
     super.dispose();
   }
+}
+
+/// One logical slice of a `/search` recap (Calls / Messages / Calendar).
+///
+/// Each `_searchGuide*` helper returns a `_SearchSection`; they're all
+/// assembled in `executeSearchGuide` into the system brief that the
+/// agent receives. `count` is used for the UI "3 calls · 12 messages"
+/// footer; `body` is the LLM-facing detail (already formatted with
+/// newlines).
+class _SearchSection {
+  final String label;
+  final int count;
+  final String body;
+  final List<Map<String, dynamic>> rows;
+  const _SearchSection({
+    required this.label,
+    required this.count,
+    required this.body,
+    required this.rows,
+  });
+  factory _SearchSection.empty(String label) => _SearchSection(
+        label: label,
+        count: 0,
+        body: '',
+        rows: const [],
+      );
 }
