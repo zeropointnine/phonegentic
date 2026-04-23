@@ -11,6 +11,7 @@ import 'messaging_provider.dart';
 import 'models/sms_conversation.dart';
 import 'models/sms_message.dart';
 import 'phone_numbers.dart';
+import 'reaction_reply_parser.dart';
 import 'telnyx_messaging_provider.dart';
 import 'twilio_messaging_provider.dart';
 import 'webhook_listener.dart';
@@ -287,6 +288,12 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
 
   void close() {
     _isOpen = false;
+    // Reset the thread selection so the next time the panel is opened we
+    // land on the conversation list instead of the last-viewed thread
+    // (matches iOS Messages behaviour when dismissing from inside a thread).
+    _selectedRemotePhone = null;
+    _activeMessages = [];
+    _readTimer?.cancel();
     notifyListeners();
   }
 
@@ -331,6 +338,9 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     required String to,
     required String text,
     List<String>? mediaUrls,
+    String? reflectsProviderId,
+    String? replyToProviderId,
+    int? replyToLocalId,
   }) async {
     _lastError = null;
     if (_provider == null) {
@@ -365,9 +375,16 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
       createdAt: DateTime.now(),
       mediaUrls: mediaUrls ?? const [],
       isRead: true,
+      reflectsProviderId: reflectsProviderId,
+      replyToProviderId: replyToProviderId,
+      replyToLocalId: replyToLocalId,
     );
-    _activeMessages.add(optimistic);
-    notifyListeners();
+    // Reaction echoes aren't rendered as standalone bubbles — don't push
+    // them into the active list.
+    if (reflectsProviderId == null) {
+      _activeMessages.add(optimistic);
+      notifyListeners();
+    }
 
     try {
       final sent = await _provider!.sendMessage(
@@ -380,11 +397,18 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
 
       // Telnyx returns "queued" for a freshly accepted message; promote to
       // "sent" so the UI reflects that the API accepted it.
-      final withStatus = sent.status == SmsStatus.queued
-          ? sent.copyWith(status: SmsStatus.sent, isRead: true)
-          : sent.copyWith(isRead: true);
+      final withStatus = (sent.status == SmsStatus.queued
+              ? sent.copyWith(status: SmsStatus.sent, isRead: true)
+              : sent.copyWith(isRead: true))
+          .copyWith(
+        reflectsProviderId: reflectsProviderId,
+        replyToProviderId: replyToProviderId,
+        replyToLocalId: replyToLocalId,
+      );
 
-      _activeMessages.remove(optimistic);
+      if (reflectsProviderId == null) {
+        _activeMessages.remove(optimistic);
+      }
       await _persistMessage(withStatus);
       await _refreshConversations();
       await _loadMessages(_selectedRemotePhone ?? normalizedTo);
@@ -399,7 +423,9 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
       return withStatus;
     } catch (e) {
       debugPrint('[MessagingService] Send error: $e');
-      _activeMessages.remove(optimistic);
+      if (reflectsProviderId == null) {
+        _activeMessages.remove(optimistic);
+      }
       _lastError = 'Send failed: ${_friendlyError(e)}';
       notifyListeners();
       return null;
@@ -497,6 +523,100 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
         to: _selectedRemotePhone!, text: text, mediaUrls: mediaUrls);
   }
 
+  /// Reply to a specific [target] message: prepend the iOS-style `→ "…"`
+  /// quote on the wire, and record the reply-link locally so our UI renders
+  /// the threaded quote chrome above the new bubble.
+  Future<SmsMessage?> replyToMessage({
+    required SmsMessage target,
+    required String body,
+    List<String>? mediaUrls,
+  }) async {
+    if (_selectedRemotePhone == null) return null;
+    final wire = ReactionReplyParser.buildReplyWire(
+      target: target,
+      userText: body,
+    );
+    return sendMessage(
+      to: _selectedRemotePhone!,
+      text: wire,
+      mediaUrls: mediaUrls,
+      replyToProviderId: target.providerId,
+      replyToLocalId: target.localId,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reactions (local metadata + plain-text tapback fallback on the wire)
+  // ---------------------------------------------------------------------------
+
+  Future<void> addReaction(SmsMessage target, String emoji) async {
+    if (target.localId == null) return;
+    // Merge locally
+    final updated = Map<String, List<SmsReactor>>.from(target.reactions);
+    final list = List<SmsReactor>.from(updated[emoji] ?? const []);
+    // Dedupe: if the user already reacted with this emoji, no-op.
+    if (list.any((r) => r.actor == 'me')) return;
+    list.add(SmsReactor(actor: 'me', at: DateTime.now()));
+    updated[emoji] = list;
+    await _writeReactions(target.localId!, updated, null);
+
+    // Optimistic UI update
+    _replaceActiveMessage(target.localId!, (m) => m.copyWith(reactions: updated));
+    notifyListeners();
+
+    // Fire the plain-text tapback as a reflection SMS (not rendered as bubble)
+    final wire = ReactionReplyParser.buildTapbackWire(
+      emoji: emoji,
+      target: target,
+    );
+    await sendMessage(
+      to: target.remotePhone,
+      text: wire.wireText,
+      reflectsProviderId: target.providerId,
+    );
+  }
+
+  Future<void> removeReaction(SmsMessage target, String emoji) async {
+    if (target.localId == null) return;
+    final updated = Map<String, List<SmsReactor>>.from(target.reactions);
+    final list = List<SmsReactor>.from(updated[emoji] ?? const []);
+    list.removeWhere((r) => r.actor == 'me');
+    if (list.isEmpty) {
+      updated.remove(emoji);
+    } else {
+      updated[emoji] = list;
+    }
+    await _writeReactions(target.localId!, updated, null);
+    _replaceActiveMessage(target.localId!, (m) => m.copyWith(reactions: updated));
+    notifyListeners();
+  }
+
+  Future<void> _writeReactions(
+    int localId,
+    Map<String, List<SmsReactor>> reactions,
+    String? reflectsProviderId,
+  ) async {
+    final tmp = SmsMessage(
+      from: '',
+      to: '',
+      text: '',
+      direction: SmsDirection.outbound,
+      createdAt: DateTime.now(),
+      reactions: reactions,
+      reflectsProviderId: reflectsProviderId,
+    );
+    final dbMap = tmp.toDbMap();
+    await CallHistoryDb.updateSmsReactions(
+        localId, dbMap['reactions_json'] as String?);
+  }
+
+  void _replaceActiveMessage(int localId, SmsMessage Function(SmsMessage) xf) {
+    final idx = _activeMessages.indexWhere((m) => m.localId == localId);
+    if (idx >= 0) {
+      _activeMessages[idx] = xf(_activeMessages[idx]);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Delete (local soft-delete)
   // ---------------------------------------------------------------------------
@@ -504,6 +624,38 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> deleteMessage(int localId) async {
     await CallHistoryDb.softDeleteSmsMessage(localId);
     _activeMessages.removeWhere((m) => m.localId == localId);
+    await _refreshConversations();
+    notifyListeners();
+  }
+
+  Future<void> deleteMany(List<int> localIds) async {
+    if (localIds.isEmpty) return;
+    await CallHistoryDb.bulkSoftDeleteSms(localIds);
+    _activeMessages.removeWhere((m) => localIds.contains(m.localId));
+    await _refreshConversations();
+    notifyListeners();
+  }
+
+  /// Soft-delete every message currently in the thread for [remotePhone]
+  /// and write a tombstone so older Telnyx backfill cannot resurrect the
+  /// thread on resync. New inbound messages after the tombstone will still
+  /// bring the thread back (iOS behavior).
+  Future<void> deleteThread(String remotePhone) async {
+    final normalized = ensureE164(remotePhone);
+    final existing =
+        await CallHistoryDb.getSmsMessagesForConversation(normalized, limit: 10000);
+    final ids = existing
+        .map((r) => r['id'] as int?)
+        .whereType<int>()
+        .toList(growable: false);
+    if (ids.isNotEmpty) {
+      await CallHistoryDb.bulkSoftDeleteSms(ids);
+    }
+    await CallHistoryDb.upsertThreadTombstone(normalized);
+    if (_selectedRemotePhone == normalized) {
+      _activeMessages = [];
+      _selectedRemotePhone = null;
+    }
     await _refreshConversations();
     notifyListeners();
   }
@@ -538,7 +690,51 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _onIncomingMessage(SmsMessage msg) async {
     final shouldMarkRead =
         _windowFocused && _isOpen && _selectedRemotePhone == msg.remotePhone;
-    final toStore = shouldMarkRead ? msg.copyWith(isRead: true) : msg;
+    SmsMessage toStore = shouldMarkRead ? msg.copyWith(isRead: true) : msg;
+
+    // Before persisting, look at the body and see whether it's a tapback or
+    // reply-quote from the remote side. If so, apply the metadata to the
+    // target message and mark this row as a reaction echo so our UI can
+    // suppress the raw fallback bubble.
+    if (msg.direction == SmsDirection.inbound && msg.text.isNotEmpty) {
+      final historyRows = await CallHistoryDb.getSmsMessagesForConversation(
+        msg.remotePhone,
+        limit: 50,
+      );
+      final history = historyRows.map(SmsMessage.fromDbMap).toList();
+      final parsed = ReactionReplyParser.parseInbound(
+        body: msg.text,
+        history: history,
+      );
+
+      if (parsed is ReactionInbound) {
+        final target = parsed.target;
+        if (target.localId != null) {
+          // Dedupe: if our own outbound echo already applied this reaction
+          // (actor='me'), don't double-add. Otherwise merge under actor='them'.
+          final existing =
+              Map<String, List<SmsReactor>>.from(target.reactions);
+          final list =
+              List<SmsReactor>.from(existing[parsed.emoji] ?? const []);
+          final alreadyThem = list.any((r) => r.actor == 'them');
+          if (!alreadyThem) {
+            list.add(SmsReactor(actor: 'them', at: DateTime.now()));
+            existing[parsed.emoji] = list;
+            await _writeReactions(target.localId!, existing, null);
+          }
+        }
+        toStore = toStore.copyWith(
+          reflectsProviderId: target.providerId ?? '__local',
+        );
+      } else if (parsed is ReplyInbound) {
+        toStore = toStore.copyWith(
+          text: parsed.stripped.isEmpty ? msg.text : parsed.stripped,
+          replyToProviderId: parsed.target.providerId,
+          replyToLocalId: parsed.target.localId,
+        );
+      }
+    }
+
     await _persistMessage(toStore);
     await _refreshConversations();
     if (_selectedRemotePhone == msg.remotePhone) {
@@ -571,7 +767,10 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
     final rows =
         await CallHistoryDb.getSmsMessagesForConversation(remotePhone);
     debugPrint('[MessagingService] Loaded ${rows.length} messages for $remotePhone');
-    _activeMessages = rows.map((r) => SmsMessage.fromDbMap(r)).toList()
+    _activeMessages = rows
+        .map((r) => SmsMessage.fromDbMap(r))
+        .where((m) => !m.isReactionEcho)
+        .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
@@ -585,8 +784,7 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
       final total = (r['total_messages'] as int?) ?? 0;
 
       final lastRow = await CallHistoryDb.getLastSmsForConversation(remotePhone);
-      final lastMsg =
-          lastRow != null ? SmsMessage.fromDbMap(lastRow) : null;
+      final lastMsg = lastRow != null ? SmsMessage.fromDbMap(lastRow) : null;
 
       String? contactName;
       String? thumbnailPath;

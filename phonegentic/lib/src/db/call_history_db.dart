@@ -35,7 +35,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 21,
+        version: 22,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -136,6 +136,7 @@ class CallHistoryDb {
     await _createTransferRulesTable(db);
     await _createSessionMessagesTable(db);
     await _createPocketTtsVoicesTable(db);
+    await _createSmsThreadDeletesTable(db);
   }
 
   static Future<void> _onUpgrade(
@@ -275,6 +276,16 @@ class CallHistoryDb {
         'ALTER TABLE call_records ADD COLUMN job_function_id INTEGER '
         'REFERENCES job_functions(id)',
       );
+    }
+
+    if (oldVersion < 22) {
+      await db
+          .execute('ALTER TABLE sms_messages ADD COLUMN reactions_json TEXT');
+      await db.execute(
+          'ALTER TABLE sms_messages ADD COLUMN reply_to_provider_id TEXT');
+      await db.execute(
+          'ALTER TABLE sms_messages ADD COLUMN reply_to_local_id INTEGER');
+      await _createSmsThreadDeletesTable(db);
     }
   }
 
@@ -1480,6 +1491,9 @@ class CallHistoryDb {
         is_read INTEGER NOT NULL DEFAULT 0,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         error_reason TEXT,
+        reactions_json TEXT,
+        reply_to_provider_id TEXT,
+        reply_to_local_id INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT
       )
@@ -1492,6 +1506,15 @@ class CallHistoryDb {
         'CREATE INDEX IF NOT EXISTS idx_sms_read ON sms_messages(is_read)');
     await db.execute(
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_provider ON sms_messages(provider_id, provider_type)');
+  }
+
+  static Future<void> _createSmsThreadDeletesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sms_thread_deletes (
+        remote_phone TEXT PRIMARY KEY,
+        deleted_at TEXT NOT NULL
+      )
+    ''');
   }
 
   static Future<int> insertSmsMessage(Map<String, dynamic> map) async {
@@ -1515,18 +1538,30 @@ class CallHistoryDb {
     return rows.isEmpty ? null : rows.first;
   }
 
+  static Future<Map<String, dynamic>?> getSmsMessageById(int localId) async {
+    final db = await database;
+    final rows = await db.query('sms_messages',
+        where: 'id = ?', whereArgs: [localId], limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
   static Future<List<Map<String, dynamic>>> getSmsMessagesForConversation(
       String remotePhone,
       {int limit = 100,
       int offset = 0}) async {
     final db = await database;
-    return db.query(
-      'sms_messages',
-      where: 'remote_phone = ? AND is_deleted = 0',
-      whereArgs: [remotePhone],
-      orderBy: 'created_at DESC',
-      limit: limit,
-      offset: offset,
+    return db.rawQuery(
+      '''
+      SELECT m.*
+      FROM sms_messages m
+      LEFT JOIN sms_thread_deletes d ON d.remote_phone = m.remote_phone
+      WHERE m.remote_phone = ?
+        AND m.is_deleted = 0
+        AND m.created_at > COALESCE(d.deleted_at, '')
+      ORDER BY m.created_at DESC
+      LIMIT ? OFFSET ?
+      ''',
+      [remotePhone, limit, offset],
     );
   }
 
@@ -1535,14 +1570,16 @@ class CallHistoryDb {
     final db = await database;
     return db.rawQuery('''
       SELECT
-        remote_phone,
-        local_phone,
-        MAX(created_at) AS last_message_at,
-        SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) AS unread_count,
+        m.remote_phone AS remote_phone,
+        m.local_phone AS local_phone,
+        MAX(m.created_at) AS last_message_at,
+        SUM(CASE WHEN m.is_read = 0 AND m.direction = 'inbound' THEN 1 ELSE 0 END) AS unread_count,
         COUNT(*) AS total_messages
-      FROM sms_messages
-      WHERE is_deleted = 0
-      GROUP BY remote_phone
+      FROM sms_messages m
+      LEFT JOIN sms_thread_deletes d ON d.remote_phone = m.remote_phone
+      WHERE m.is_deleted = 0
+        AND m.created_at > COALESCE(d.deleted_at, '')
+      GROUP BY m.remote_phone
       ORDER BY last_message_at DESC
     ''');
   }
@@ -1550,12 +1587,18 @@ class CallHistoryDb {
   static Future<Map<String, dynamic>?> getLastSmsForConversation(
       String remotePhone) async {
     final db = await database;
-    final rows = await db.query(
-      'sms_messages',
-      where: 'remote_phone = ? AND is_deleted = 0',
-      whereArgs: [remotePhone],
-      orderBy: 'created_at DESC',
-      limit: 1,
+    final rows = await db.rawQuery(
+      '''
+      SELECT m.*
+      FROM sms_messages m
+      LEFT JOIN sms_thread_deletes d ON d.remote_phone = m.remote_phone
+      WHERE m.remote_phone = ?
+        AND m.is_deleted = 0
+        AND m.created_at > COALESCE(d.deleted_at, '')
+      ORDER BY m.created_at DESC
+      LIMIT 1
+      ''',
+      [remotePhone],
     );
     return rows.isEmpty ? null : rows.first;
   }
@@ -1582,9 +1625,15 @@ class CallHistoryDb {
 
   static Future<int> getUnreadSmsCount() async {
     final db = await database;
-    final result = await db.rawQuery(
-      "SELECT COUNT(*) AS cnt FROM sms_messages WHERE is_read = 0 AND direction = 'inbound' AND is_deleted = 0",
-    );
+    final result = await db.rawQuery('''
+      SELECT COUNT(*) AS cnt
+      FROM sms_messages m
+      LEFT JOIN sms_thread_deletes d ON d.remote_phone = m.remote_phone
+      WHERE m.is_read = 0
+        AND m.direction = 'inbound'
+        AND m.is_deleted = 0
+        AND m.created_at > COALESCE(d.deleted_at, '')
+    ''');
     return (result.first['cnt'] as int?) ?? 0;
   }
 
@@ -1593,13 +1642,95 @@ class CallHistoryDb {
       {int limit = 50}) async {
     final db = await database;
     final pattern = '%$query%';
-    return db.query(
-      'sms_messages',
-      where: '(body LIKE ? OR remote_phone LIKE ?) AND is_deleted = 0',
-      whereArgs: [pattern, pattern],
-      orderBy: 'created_at DESC',
-      limit: limit,
+    return db.rawQuery(
+      '''
+      SELECT m.*
+      FROM sms_messages m
+      LEFT JOIN sms_thread_deletes d ON d.remote_phone = m.remote_phone
+      WHERE (m.body LIKE ? OR m.remote_phone LIKE ?)
+        AND m.is_deleted = 0
+        AND m.created_at > COALESCE(d.deleted_at, '')
+      ORDER BY m.created_at DESC
+      LIMIT ?
+      ''',
+      [pattern, pattern, limit],
     );
+  }
+
+  static Future<void> updateSmsReactions(int id, String? jsonStr) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {
+        'reactions_json': jsonStr,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<void> updateSmsReplyTo(
+    int id, {
+    String? providerId,
+    int? localId,
+  }) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {
+        'reply_to_provider_id': providerId,
+        'reply_to_local_id': localId,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<void> bulkSoftDeleteSms(List<int> ids) async {
+    if (ids.isEmpty) return;
+    final db = await database;
+    final placeholders = List.filled(ids.length, '?').join(',');
+    await db.update(
+      'sms_messages',
+      {'is_deleted': 1, 'updated_at': DateTime.now().toIso8601String()},
+      where: 'id IN ($placeholders)',
+      whereArgs: ids,
+    );
+  }
+
+  static Future<void> upsertThreadTombstone(String remotePhone,
+      {DateTime? at}) async {
+    final db = await database;
+    final ts = (at ?? DateTime.now()).toIso8601String();
+    await db.insert(
+      'sms_thread_deletes',
+      {'remote_phone': remotePhone, 'deleted_at': ts},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<void> clearThreadTombstone(String remotePhone) async {
+    final db = await database;
+    await db.delete(
+      'sms_thread_deletes',
+      where: 'remote_phone = ?',
+      whereArgs: [remotePhone],
+    );
+  }
+
+  static Future<DateTime?> getThreadTombstone(String remotePhone) async {
+    final db = await database;
+    final rows = await db.query(
+      'sms_thread_deletes',
+      where: 'remote_phone = ?',
+      whereArgs: [remotePhone],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final at = rows.first['deleted_at'] as String?;
+    return at == null ? null : DateTime.tryParse(at);
   }
 
   // ---------------------------------------------------------------------------

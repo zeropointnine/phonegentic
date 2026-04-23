@@ -4781,6 +4781,9 @@ class AgentService extends ChangeNotifier {
       direction: 'inbound',
       remotePhone: msg.from,
       contactName: contactName,
+      smsProviderId: msg.providerId,
+      smsProviderType: msg.providerType,
+      smsLocalId: msg.localId,
     ));
     notifyListeners();
 
@@ -5007,6 +5010,9 @@ class AgentService extends ChangeNotifier {
         direction: 'outbound',
         remotePhone: to,
         contactName: contactName,
+        smsProviderId: msg.providerId,
+        smsProviderType: msg.providerType,
+        smsLocalId: msg.localId,
       ));
       notifyListeners();
       return _smsSentResult(displayTo, contactName);
@@ -5090,6 +5096,9 @@ class AgentService extends ChangeNotifier {
         direction: 'outbound',
         remotePhone: selected,
         contactName: contactName,
+        smsProviderId: msg.providerId,
+        smsProviderType: msg.providerType,
+        smsLocalId: msg.localId,
       ));
       notifyListeners();
       return _smsReplyResult(displayTo, contactName);

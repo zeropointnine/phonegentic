@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../contact_service.dart';
+import '../db/call_history_db.dart';
+import '../messaging/messaging_service.dart';
+import '../messaging/models/sms_message.dart';
 import '../models/chat_message.dart';
 import '../phone_formatter.dart';
 import '../theme_provider.dart';
@@ -24,6 +27,10 @@ class SmsThreadBubble extends StatefulWidget {
 class _SmsThreadBubbleState extends State<SmsThreadBubble> {
   bool _expanded = false;
 
+  Map<String, List<SmsReactor>> _reactions = const {};
+  MessagingService? _msgSvc;
+  VoidCallback? _msgListener;
+
   bool get _isInbound =>
       widget.message.metadata?['sms_direction'] == 'inbound';
 
@@ -33,8 +40,81 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
   String? get _contactName =>
       widget.message.metadata?['sms_contact_name'] as String?;
 
+  String? get _smsProviderId =>
+      widget.message.metadata?['sms_provider_id'] as String?;
+
+  String? get _smsProviderType =>
+      widget.message.metadata?['sms_provider_type'] as String?;
+
+  int? get _smsLocalId => widget.message.metadata?['sms_local_id'] as int?;
+
   Map<String, dynamic>? get _contact =>
       context.watch<ContactService>().lookupByPhone(_remotePhone);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    MessagingService? svc;
+    try {
+      svc = Provider.of<MessagingService>(context, listen: false);
+    } catch (_) {
+      svc = null;
+    }
+    if (svc != _msgSvc) {
+      if (_msgSvc != null && _msgListener != null) {
+        _msgSvc!.removeListener(_msgListener!);
+      }
+      _msgSvc = svc;
+      if (_msgSvc != null) {
+        _msgListener = _refreshReactions;
+        _msgSvc!.addListener(_msgListener!);
+      }
+      _refreshReactions();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_msgSvc != null && _msgListener != null) {
+      _msgSvc!.removeListener(_msgListener!);
+    }
+    super.dispose();
+  }
+
+  Future<void> _refreshReactions() async {
+    final providerId = _smsProviderId;
+    final providerType = _smsProviderType;
+    final localId = _smsLocalId;
+    Map<String, dynamic>? row;
+    if (providerId != null &&
+        providerId.isNotEmpty &&
+        providerType != null &&
+        providerType.isNotEmpty) {
+      row = await CallHistoryDb.getSmsMessageByProviderId(
+          providerId, providerType);
+    }
+    if (row == null && localId != null) {
+      row = await CallHistoryDb.getSmsMessageById(localId);
+    }
+    if (!mounted) return;
+    if (row == null) {
+      if (_reactions.isNotEmpty) {
+        setState(() => _reactions = const {});
+      }
+      return;
+    }
+    final sms = SmsMessage.fromDbMap(row);
+    final next = sms.reactions;
+    if (_reactionSignature(next) != _reactionSignature(_reactions)) {
+      setState(() => _reactions = next);
+    }
+  }
+
+  static String _reactionSignature(Map<String, List<SmsReactor>> r) {
+    if (r.isEmpty) return '';
+    final keys = r.keys.toList()..sort();
+    return keys.map((k) => '$k:${r[k]!.length}').join('|');
+  }
 
   String get _displayName {
     final contact = _contact;
@@ -72,6 +152,64 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
     final displayName = _displayName;
     final messageText = _messageText;
 
+    final bubble = GestureDetector(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: CustomPaint(
+          painter: _SpeechBubblePainter(
+            borderColor: borderColor,
+            fillColor: bubbleColor,
+            tailOnLeft: isInbound,
+            cornerRadius: 14,
+            tailWidth: 8,
+            tailHeight: 6,
+          ),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              isInbound ? 14 : 12,
+              10,
+              isInbound ? 12 : 14,
+              14,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildHeader(displayName, isInbound, accent),
+                const SizedBox(height: 8),
+                _buildBody(messageText, isInbound),
+                if (_expanded) ...[
+                  const SizedBox(height: 6),
+                  _buildExpandedMeta(),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final decorated = _reactions.isEmpty
+        ? bubble
+        : Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: bubble,
+              ),
+              // iOS tapbacks sit on the tail-opposite edge: top-left for
+              // outbound, top-right for inbound.
+              Positioned(
+                top: -2,
+                left: isInbound ? null : 4,
+                right: isInbound ? 4 : null,
+                child: _AgentPanelReactionRow(reactions: _reactions),
+              ),
+            ],
+          );
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -83,46 +221,7 @@ class _SmsThreadBubbleState extends State<SmsThreadBubble> {
           Flexible(
             child: Column(
               crossAxisAlignment: tailAlignment,
-              children: [
-                GestureDetector(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: CustomPaint(
-                      painter: _SpeechBubblePainter(
-                        borderColor: borderColor,
-                        fillColor: bubbleColor,
-                        tailOnLeft: isInbound,
-                        cornerRadius: 14,
-                        tailWidth: 8,
-                        tailHeight: 6,
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          isInbound ? 14 : 12,
-                          10,
-                          isInbound ? 12 : 14,
-                          14,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _buildHeader(
-                                displayName, isInbound, accent),
-                            const SizedBox(height: 8),
-                            _buildBody(messageText, isInbound),
-                            if (_expanded) ...[
-                              const SizedBox(height: 6),
-                              _buildExpandedMeta(),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              children: [decorated],
             ),
           ),
           if (isInbound) const SizedBox(width: 36),
@@ -357,4 +456,69 @@ class _SpeechBubblePainter extends CustomPainter {
       old.borderColor != borderColor ||
       old.fillColor != fillColor ||
       old.tailOnLeft != tailOnLeft;
+}
+
+// ---------------------------------------------------------------------------
+// Reaction badge row (agent panel — read-only)
+// ---------------------------------------------------------------------------
+
+/// Compact emoji chip row shown above the agent-panel SMS bubble. Mirrors the
+/// layout used in `conversation_view.dart` but is display-only (tapping does
+/// nothing here — the full messaging panel handles reaction toggling).
+class _AgentPanelReactionRow extends StatelessWidget {
+  final Map<String, List<SmsReactor>> reactions;
+
+  const _AgentPanelReactionRow({required this.reactions});
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = reactions.entries.toList();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final e in entries)
+          Padding(
+            padding: const EdgeInsets.only(left: 2),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Color.alphaBlend(
+                    AppColors.border.withValues(alpha: 0.6),
+                    AppColors.surface,
+                  ),
+                  width: 0.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(e.key, style: const TextStyle(fontSize: 11)),
+                  if (e.value.length > 1) ...[
+                    const SizedBox(width: 2),
+                    Text(
+                      '${e.value.length}',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }

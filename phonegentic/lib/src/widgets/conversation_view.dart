@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -16,6 +17,7 @@ import '../messaging/phone_numbers.dart';
 import '../theme_provider.dart';
 import 'dialpad_contact_preview.dart';
 import 'emoji_picker.dart';
+import 'message_context_overlay.dart';
 
 class ConversationView extends StatefulWidget {
   const ConversationView({super.key});
@@ -33,6 +35,24 @@ class _ConversationViewState extends State<ConversationView> {
   String _searchQuery = '';
   List<String> _attachmentUrls = [];
 
+  /// When non-null, the compose bar is in "reply mode" and shows a quote chip.
+  SmsMessage? _replyTarget;
+
+  /// Multi-select mode — tapping a bubble toggles selection instead of
+  /// opening the context overlay. Populated by local ids.
+  bool _selectMode = false;
+  final Set<int> _selectedIds = {};
+
+  /// Bubble keys by local id so the context overlay can measure source rects
+  /// and the reply-quote tap can scroll-and-flash the target.
+  final Map<int, GlobalKey> _bubbleKeys = {};
+  int? _flashLocalId;
+
+  /// Wraps the conversation view's outer container so the context overlay
+  /// can scope its backdrop blur to just this panel instead of the whole
+  /// app window.
+  final GlobalKey _panelKey = GlobalKey();
+
   @override
   void dispose() {
     _composeCtrl.dispose();
@@ -42,16 +62,153 @@ class _ConversationViewState extends State<ConversationView> {
     super.dispose();
   }
 
+  GlobalKey _keyFor(int localId) =>
+      _bubbleKeys.putIfAbsent(localId, () => GlobalKey());
+
   void _send(MessagingService messaging) {
     final text = _composeCtrl.text.trim();
     if (text.isEmpty && _attachmentUrls.isEmpty) return;
     _composeCtrl.clear();
-    messaging.reply(
-      text,
-      mediaUrls: _attachmentUrls.isNotEmpty ? _attachmentUrls : null,
-    );
-    setState(() => _attachmentUrls = []);
+    final mediaUrls = _attachmentUrls.isNotEmpty ? _attachmentUrls : null;
+    final target = _replyTarget;
+    if (target != null) {
+      messaging.replyToMessage(
+        target: target,
+        body: text,
+        mediaUrls: mediaUrls,
+      );
+    } else {
+      messaging.reply(text, mediaUrls: mediaUrls);
+    }
+    setState(() {
+      _attachmentUrls = [];
+      _replyTarget = null;
+    });
     _composeFocus.requestFocus();
+  }
+
+  void _enterSelectMode(int? initialId) {
+    setState(() {
+      _selectMode = true;
+      _selectedIds.clear();
+      if (initialId != null) _selectedIds.add(initialId);
+    });
+  }
+
+  void _cancelSelectMode() {
+    setState(() {
+      _selectMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _toggleSelected(int id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _confirmDeleteSelected(MessagingService messaging) async {
+    if (_selectedIds.isEmpty) return;
+    final count = _selectedIds.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text(
+          count == 1 ? 'Delete message?' : 'Delete $count messages?',
+          style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+        ),
+        content: Text(
+          'This will remove ${count == 1 ? 'it' : 'them'} from this device. '
+          'Already-delivered messages cannot be recalled from the carrier.',
+          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              count == 1 ? 'Delete' : 'Delete $count',
+              style: TextStyle(color: AppColors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await messaging.deleteMany(_selectedIds.toList(growable: false));
+      _cancelSelectMode();
+    }
+  }
+
+  Future<void> _openContextOverlay({
+    required SmsMessage msg,
+    required GlobalKey key,
+    required MessagingService messaging,
+  }) async {
+    final isOutbound = msg.direction == SmsDirection.outbound;
+    await MessageContextOverlay.show(
+      context: context,
+      sourceKey: key,
+      panelKey: _panelKey,
+      message: msg,
+      isOutbound: isOutbound,
+      onReaction: (emoji) async {
+        // Toggle: if the user already reacted with this emoji, remove it.
+        final mine =
+            msg.reactions[emoji]?.any((r) => r.actor == 'me') ?? false;
+        if (mine) {
+          await messaging.removeReaction(msg, emoji);
+        } else {
+          await messaging.addReaction(msg, emoji);
+        }
+      },
+      onAction: (action) {
+        switch (action) {
+          case MessageContextAction.reply:
+            setState(() {
+              _replyTarget = msg;
+            });
+            _composeFocus.requestFocus();
+            break;
+          case MessageContextAction.copy:
+            MessageContextActions.copy(msg);
+            break;
+          case MessageContextAction.delete:
+            // "Delete" now opens multi-select mode pre-seeded with this
+            // message — the bubbles slide over to reveal their checkboxes
+            // and the user confirms from the header "Delete (n)" button.
+            _enterSelectMode(msg.localId);
+            break;
+        }
+      },
+    );
+  }
+
+  Future<void> _scrollToTarget(int localId) async {
+    final key = _bubbleKeys[localId];
+    if (key == null) return;
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    await Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      alignment: 0.3,
+    );
+    setState(() => _flashLocalId = localId);
+    await Future.delayed(const Duration(milliseconds: 1400));
+    if (!mounted) return;
+    setState(() => _flashLocalId = null);
   }
 
   bool _isDragging = false;
@@ -98,6 +255,7 @@ class _ConversationViewState extends State<ConversationView> {
           onDragExited: (_) => setState(() => _isDragging = false),
           onDragDone: _onDropDone,
           child: Container(
+            key: _panelKey,
             decoration: BoxDecoration(
               color: AppColors.bg,
               border: _isDragging
@@ -108,7 +266,9 @@ class _ConversationViewState extends State<ConversationView> {
             child: SafeArea(
               child: Column(
                 children: [
-                  _buildConvoHeader(messaging, convo),
+                  _selectMode
+                      ? _buildSelectModeHeader(messaging)
+                      : _buildConvoHeader(messaging, convo),
                   Expanded(
                     child: Stack(
                       children: [
@@ -139,8 +299,11 @@ class _ConversationViewState extends State<ConversationView> {
                     ),
                   ),
                   if (messaging.lastError != null) _buildErrorBanner(messaging),
-                  _buildComposeBar(messaging),
-                  if (_showEmoji) _buildEmojiPicker(),
+                  if (!_selectMode) ...[
+                    if (_replyTarget != null) _buildReplyChip(),
+                    _buildComposeBar(messaging),
+                    if (_showEmoji) _buildEmojiPicker(),
+                  ],
                 ],
               ),
             ),
@@ -311,6 +474,123 @@ class _ConversationViewState extends State<ConversationView> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Select-mode header (shown in place of the normal convo header while the
+  // user is multi-selecting messages to delete).
+  // ---------------------------------------------------------------------------
+
+  Widget _buildSelectModeHeader(MessagingService messaging) {
+    final count = _selectedIds.length;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 28, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          HoverButton(
+            onTap: _cancelSelectMode,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            borderRadius: BorderRadius.circular(8),
+            child: Text(
+              'Cancel',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                count == 0
+                    ? 'Select Messages'
+                    : (count == 1 ? '1 selected' : '$count selected'),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ),
+          HoverButton(
+            onTap: count == 0
+                ? null
+                : () => _confirmDeleteSelected(messaging),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            borderRadius: BorderRadius.circular(8),
+            child: Text(
+              count == 0 ? 'Delete' : 'Delete ($count)',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: count == 0
+                    ? AppColors.textTertiary
+                    : AppColors.red,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Quoted-target chip shown above the compose bar while replying.
+  Widget _buildReplyChip() {
+    final target = _replyTarget;
+    if (target == null) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(10, 2, 10, 2),
+      padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border(
+          left: BorderSide(color: AppColors.accent, width: 2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.reply_rounded, size: 15, color: AppColors.accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Replying to ${target.direction == SmsDirection.outbound ? 'yourself' : 'them'}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  target.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          HoverButton(
+            onTap: () => setState(() => _replyTarget = null),
+            borderRadius: BorderRadius.circular(10),
+            padding: const EdgeInsets.all(4),
+            child: Icon(Icons.close_rounded,
+                size: 14, color: AppColors.textTertiary),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _dialRemote(String rawPhone) async {
     if (rawPhone.isEmpty) return;
     context.read<MessagingService>().close();
@@ -353,6 +633,15 @@ class _ConversationViewState extends State<ConversationView> {
   }
 
   Widget _buildMessageList(List<SmsMessage> messages, dynamic convo) {
+    final messaging = context.read<MessagingService>();
+    // Build a quick lookup to resolve replyTo pointers.
+    final byLocalId = <int, SmsMessage>{};
+    final byProviderId = <String, SmsMessage>{};
+    for (final m in messages) {
+      if (m.localId != null) byLocalId[m.localId!] = m;
+      if (m.providerId != null) byProviderId[m.providerId!] = m;
+    }
+
     return ListView.builder(
       controller: _scrollCtrl,
       reverse: true,
@@ -363,24 +652,64 @@ class _ConversationViewState extends State<ConversationView> {
         final msg = messages[msgIdx];
         final showDate = msgIdx == 0 ||
             _shouldShowDate(messages[msgIdx - 1].createdAt, msg.createdAt);
+        final bubbleKey =
+            msg.localId != null ? _keyFor(msg.localId!) : GlobalKey();
+        // Resolve reply parent for the quote chip
+        SmsMessage? replyParent;
+        if (msg.replyToLocalId != null) {
+          replyParent = byLocalId[msg.replyToLocalId!];
+        }
+        replyParent ??= msg.replyToProviderId != null
+            ? byProviderId[msg.replyToProviderId!]
+            : null;
+
+        final selected =
+            msg.localId != null && _selectedIds.contains(msg.localId!);
+        final flashing = msg.localId == _flashLocalId;
+
         return Column(
           children: [
             if (showDate) _buildDateSeparator(msg.createdAt),
             _MessageBubble(
+              key: ValueKey('msg-${msg.localId ?? msg.providerId ?? msg.createdAt.millisecondsSinceEpoch}'),
+              bubbleKey: bubbleKey,
               message: msg,
               contactSeed: convo?.contactName as String? ??
                   convo?.remotePhone as String? ??
                   '?',
               showTail: msgIdx == messages.length - 1 ||
                   messages[msgIdx + 1].direction != msg.direction,
+              replyParent: replyParent,
+              selectMode: _selectMode,
+              selected: selected,
+              flashing: flashing,
               onDelete: msg.localId != null
-                  ? () => context
-                      .read<MessagingService>()
-                      .deleteMessage(msg.localId!)
+                  ? () => messaging.deleteMessage(msg.localId!)
                   : null,
               onResend: msg.status == SmsStatus.failed
-                  ? () => context.read<MessagingService>().resendMessage(msg)
+                  ? () => messaging.resendMessage(msg)
                   : null,
+              onOpenMenu: () => _openContextOverlay(
+                msg: msg,
+                key: bubbleKey,
+                messaging: messaging,
+              ),
+              onToggleSelect: msg.localId != null
+                  ? () => _toggleSelected(msg.localId!)
+                  : null,
+              onTapReplyQuote: replyParent?.localId != null
+                  ? () => _scrollToTarget(replyParent!.localId!)
+                  : null,
+              onToggleReaction: (emoji) async {
+                final mine = msg.reactions[emoji]
+                        ?.any((r) => r.actor == 'me') ??
+                    false;
+                if (mine) {
+                  await messaging.removeReaction(msg, emoji);
+                } else {
+                  await messaging.addReaction(msg, emoji);
+                }
+              },
             ),
           ],
         );
@@ -673,22 +1002,52 @@ class _ConversationViewState extends State<ConversationView> {
 // Message Bubble (iMessage / macOS 26 style)
 // =============================================================================
 
+/// Width of the leading slot that holds the round selection checkbox in
+/// multi-select mode. When select mode is off, the slot collapses to 0 so
+/// the bubble sits exactly where it did before entering select mode. The
+/// slot animates smoothly between the two states to produce the iOS-style
+/// "slide to reveal checkbox" effect.
+const double _kSelectCheckSlot = 34;
+
 class _MessageBubble extends StatelessWidget {
+  final GlobalKey bubbleKey;
   final SmsMessage message;
   final String contactSeed;
   final bool showTail;
+  final SmsMessage? replyParent;
+  final bool selectMode;
+  final bool selected;
+  final bool flashing;
   final VoidCallback? onDelete;
   final VoidCallback? onResend;
+  final VoidCallback? onOpenMenu;
+  final VoidCallback? onToggleSelect;
+  final VoidCallback? onTapReplyQuote;
+  final ValueChanged<String>? onToggleReaction;
 
   const _MessageBubble({
+    super.key,
+    required this.bubbleKey,
     required this.message,
     required this.contactSeed,
     this.showTail = false,
+    this.replyParent,
+    this.selectMode = false,
+    this.selected = false,
+    this.flashing = false,
     this.onDelete,
     this.onResend,
+    this.onOpenMenu,
+    this.onToggleSelect,
+    this.onTapReplyQuote,
+    this.onToggleReaction,
   });
 
   bool get _isOutbound => message.direction == SmsDirection.outbound;
+
+  bool get _useMobileGesture =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
 
   @override
   Widget build(BuildContext context) {
@@ -738,40 +1097,13 @@ class _MessageBubble extends StatelessWidget {
                   .toList(),
             ),
           ),
+        if (replyParent != null)
+          _buildReplyQuote(context, replyParent!),
         if (message.text.isNotEmpty)
-          GestureDetector(
-            onLongPress: () => _showContextMenu(context),
-            child: Container(
-              constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.65),
-              margin: EdgeInsets.only(
-                right: _isOutbound ? 0 : 60,
-              ),
-              child: CustomPaint(
-                painter: _SpeechBubblePainter(
-                  borderColor: _isOutbound
-                      ? AppColors.accent.withValues(alpha: 0.35)
-                      : AppColors.accent.withValues(alpha: 0.25),
-                  fillColor: bubbleColor,
-                  tailOnLeft: !_isOutbound,
-                  showTail: showTail,
-                  cornerRadius: 18,
-                  tailWidth: 8,
-                  tailHeight: 6,
-                ),
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(14, 10, 14, showTail ? 16 : 10),
-                  child: Text(
-                    message.text,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: textColor,
-                      height: 1.35,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          _buildBubbleWithReactionBadges(
+            context: context,
+            bubbleColor: bubbleColor,
+            textColor: textColor,
           ),
         if (_isOutbound && showTail)
           message.status == SmsStatus.failed
@@ -787,21 +1119,195 @@ class _MessageBubble extends StatelessWidget {
       ],
     );
 
-    if (_isOutbound) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 3, bottom: 3),
-          child: bubbleContent,
+    Widget aligned = Align(
+      alignment: _isOutbound ? Alignment.centerRight : Alignment.centerLeft,
+      child: Padding(
+        padding: EdgeInsets.only(
+          top: _isOutbound ? 3 : 3,
+          bottom: _isOutbound ? 3 : 3,
+        ),
+        child: bubbleContent,
+      ),
+    );
+
+    // Flash highlight when this bubble is the target of a reply-quote tap.
+    if (flashing) {
+      aligned = AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        decoration: BoxDecoration(
+          color: AppColors.accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: aligned,
+      );
+    }
+
+    // The leading check slot animates its width between 0 (hidden) and
+    // [_kSelectCheckSlot] (revealed). The bubble shifts to the right as the
+    // slot grows, mirroring the iOS Messages "slide to reveal checkbox"
+    // behaviour. Tap gestures on the row toggle selection in select mode;
+    // outside select mode we route the entry gesture (right-click / long-press)
+    // on the bubble itself so the non-select hit target is unchanged.
+    final bubbleRow = Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        ClipRect(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: selectMode ? _kSelectCheckSlot : 0,
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 2, right: 8),
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 180),
+                opacity: selectMode ? 1 : 0,
+                child: _SelectionCheck(selected: selected),
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: aligned),
+      ],
+    );
+
+    if (selectMode) {
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onToggleSelect,
+          child: bubbleRow,
         ),
       );
     }
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: bubbleContent,
+    return GestureDetector(
+      behavior: HitTestBehavior.deferToChild,
+      onSecondaryTapDown: onOpenMenu == null ? null : (_) => onOpenMenu!(),
+      onLongPress:
+          _useMobileGesture && onOpenMenu != null ? onOpenMenu : null,
+      child: bubbleRow,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bubble composition helpers
+  // ---------------------------------------------------------------------------
+
+  Widget _buildBubbleWithReactionBadges({
+    required BuildContext context,
+    required Color bubbleColor,
+    required Color textColor,
+  }) {
+    final bubble = RepaintBoundary(
+      key: bubbleKey,
+      child: Container(
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.65),
+        margin: EdgeInsets.only(
+          right: _isOutbound ? 0 : 60,
+        ),
+        child: CustomPaint(
+          painter: _SpeechBubblePainter(
+            borderColor: _isOutbound
+                ? AppColors.accent.withValues(alpha: 0.35)
+                : AppColors.accent.withValues(alpha: 0.25),
+            fillColor: bubbleColor,
+            tailOnLeft: !_isOutbound,
+            showTail: showTail,
+            cornerRadius: 18,
+            tailWidth: 8,
+            tailHeight: 6,
+          ),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(14, 10, 14, showTail ? 16 : 10),
+            child: Text(
+              message.text,
+              style: TextStyle(
+                fontSize: 14,
+                color: textColor,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (message.reactions.isEmpty) {
+      return bubble;
+    }
+
+    // Float reaction chips at the top-left (outbound) / top-right (inbound)
+    // corner of the bubble. Wrap in a Stack so the chips escape the bubble
+    // clip path.
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: bubble,
+        ),
+        Positioned(
+          // Nudge the tapback chip up 2px and out 2px towards the bubble's
+          // outer (tail-opposite) edge: further left for outbound, further
+          // right for inbound.
+          top: -4,
+          left: _isOutbound ? 2 : null,
+          right: _isOutbound ? null : 2,
+          child: _ReactionChipRow(
+            reactions: message.reactions,
+            mineAlreadySet: message.reactions.entries
+                .where((e) => e.value.any((r) => r.actor == 'me'))
+                .map((e) => e.key)
+                .toSet(),
+            onToggle: onToggleReaction,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReplyQuote(BuildContext context, SmsMessage parent) {
+    final bg = AppColors.card.withValues(alpha: 0.7);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: _isOutbound ? 60 : 12,
+        right: _isOutbound ? 12 : 60,
+        bottom: 4,
+      ),
+      child: MouseRegion(
+        cursor: onTapReplyQuote != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        child: GestureDetector(
+          onTap: onTapReplyQuote,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border(
+                left: BorderSide(
+                  color: AppColors.accent.withValues(alpha: 0.7),
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Text(
+              parent.text.isEmpty ? '[media]' : parent.text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.3,
+                color: AppColors.textSecondary,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -907,36 +1413,142 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  void _showContextMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+}
+
+/// Round checkbox shown in multi-select mode. 22px, matches the screenshot.
+class _SelectionCheck extends StatelessWidget {
+  final bool selected;
+
+  const _SelectionCheck({required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      width: 22,
+      height: 22,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: selected ? AppColors.accent : Colors.transparent,
+        border: Border.all(
+          color: selected
+              ? AppColors.accent
+              : AppColors.textTertiary.withValues(alpha: 0.7),
+          width: 1.4,
+        ),
       ),
-      builder: (_) => SafeArea(
-        child: Column(
+      alignment: Alignment.center,
+      child: selected
+          ? Icon(Icons.check_rounded, size: 14, color: AppColors.onAccent)
+          : null,
+    );
+  }
+}
+
+/// Renders a small row of reaction chips above the bubble. Each chip shows
+/// the emoji and, when more than one reactor, a count; tapping toggles the
+/// local user's reaction.
+class _ReactionChipRow extends StatelessWidget {
+  final Map<String, List<SmsReactor>> reactions;
+  final Set<String> mineAlreadySet;
+  final ValueChanged<String>? onToggle;
+
+  const _ReactionChipRow({
+    required this.reactions,
+    required this.mineAlreadySet,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: reactions.entries
+          .map((e) => Padding(
+                padding: const EdgeInsets.only(left: 2),
+                child: _ReactionChip(
+                  emoji: e.key,
+                  count: e.value.length,
+                  mine: mineAlreadySet.contains(e.key),
+                  onTap: onToggle == null
+                      ? null
+                      : () => onToggle!(e.key),
+                ),
+              ))
+          .toList(),
+    );
+  }
+}
+
+class _ReactionChip extends StatelessWidget {
+  final String emoji;
+  final int count;
+  final bool mine;
+  final VoidCallback? onTap;
+
+  const _ReactionChip({
+    required this.emoji,
+    required this.count,
+    required this.mine,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Chip must be fully opaque — it sits on the bubble edge and should
+    // visually punch out the bubble outline behind it. Blend the "mine"
+    // accent tint into the opaque [surface] base so it stays tinted but not
+    // see-through.
+    final chipColor = mine
+        ? Color.alphaBlend(
+            AppColors.accent.withValues(alpha: 0.22),
+            AppColors.surface,
+          )
+        : AppColors.surface;
+    final chipBorder = mine
+        ? Color.alphaBlend(
+            AppColors.accent.withValues(alpha: 0.6),
+            AppColors.surface,
+          )
+        : Color.alphaBlend(
+            AppColors.border.withValues(alpha: 0.6),
+            AppColors.surface,
+          );
+    return HoverButton(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: chipColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: chipBorder,
+            width: 0.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.15),
+              blurRadius: 3,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.copy_rounded, size: 20),
-              title: const Text('Copy', style: TextStyle(fontSize: 14)),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: message.text));
-                Navigator.pop(context);
-              },
-            ),
-            if (onDelete != null)
-              ListTile(
-                leading: Icon(Icons.delete_outline_rounded,
-                    size: 20, color: AppColors.red),
-                title: Text('Delete',
-                    style: TextStyle(fontSize: 14, color: AppColors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  onDelete!();
-                },
+            Text(emoji, style: const TextStyle(fontSize: 13)),
+            if (count > 1) ...[
+              const SizedBox(width: 3),
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
               ),
+            ],
           ],
         ),
       ),

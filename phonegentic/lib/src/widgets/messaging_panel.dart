@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -278,7 +279,7 @@ class _MessagingPanelState extends State<MessagingPanel> {
         ? demo.maskDisplayName(convo.contactName!)
         : demo.maskPhone(convo.remotePhone);
 
-    return InkWell(
+    final tileBody = InkWell(
       onTap: () => messaging.selectConversation(convo.remotePhone),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -368,6 +369,93 @@ class _MessagingPanelState extends State<MessagingPanel> {
         ),
       ),
     );
+
+    return _SwipeableConversationTile(
+      onDelete: () => _confirmDeleteThread(messaging, convo),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: (details) =>
+            _showThreadContextMenu(messaging, convo, details.globalPosition),
+        child: tileBody,
+      ),
+    );
+  }
+
+  Future<void> _showThreadContextMenu(
+    MessagingService messaging,
+    SmsConversation convo,
+    Offset position,
+  ) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<_ThreadMenuAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(40, 40),
+        Offset.zero & overlay.size,
+      ),
+      color: AppColors.surface,
+      items: <PopupMenuEntry<_ThreadMenuAction>>[
+        PopupMenuItem<_ThreadMenuAction>(
+          value: _ThreadMenuAction.delete,
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline_rounded,
+                  size: 16, color: AppColors.red),
+              const SizedBox(width: 10),
+              Text(
+                'Delete conversation',
+                style: TextStyle(fontSize: 13, color: AppColors.red),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (selected == _ThreadMenuAction.delete) {
+      await _confirmDeleteThread(messaging, convo);
+    }
+  }
+
+  Future<void> _confirmDeleteThread(
+    MessagingService messaging,
+    SmsConversation convo,
+  ) async {
+    final name = convo.contactName ?? convo.remotePhone;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text(
+          'Delete conversation?',
+          style: TextStyle(fontSize: 15, color: AppColors.textPrimary),
+        ),
+        content: Text(
+          'All messages with $name will be removed from this device. '
+          'The other party will still have their copy.',
+          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Delete',
+                style: TextStyle(
+                  color: AppColors.red,
+                  fontWeight: FontWeight.w600,
+                )),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await messaging.deleteThread(convo.remotePhone);
+    }
   }
 
   String _formatTime(DateTime? dt) {
@@ -379,5 +467,137 @@ class _MessagingPanelState extends State<MessagingPanel> {
     if (diff.inHours < 24) return '${diff.inHours}h';
     if (diff.inDays < 7) return '${diff.inDays}d';
     return '${dt.month}/${dt.day}';
+  }
+}
+
+enum _ThreadMenuAction { delete }
+
+/// Lightweight, dependency-free swipe-to-reveal for the conversation
+/// tile. Drags the tile left up to -88px to uncover a red Delete action;
+/// snaps back past the threshold. Only actively tracks drags on touch
+/// platforms (iOS / Android); desktop relies on right-click context menu.
+class _SwipeableConversationTile extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onDelete;
+
+  const _SwipeableConversationTile({
+    required this.child,
+    required this.onDelete,
+  });
+
+  @override
+  State<_SwipeableConversationTile> createState() =>
+      _SwipeableConversationTileState();
+}
+
+class _SwipeableConversationTileState
+    extends State<_SwipeableConversationTile>
+    with SingleTickerProviderStateMixin {
+  static const double _revealWidth = 88;
+  static const double _openSnapThreshold = 44;
+
+  double _dx = 0;
+  late AnimationController _ctrl;
+  Animation<double>? _anim;
+
+  bool get _touch =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _animateTo(double target) {
+    _anim = Tween<double>(begin: _dx, end: target).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
+    )..addListener(() {
+        setState(() => _dx = _anim!.value);
+      });
+    _ctrl
+      ..reset()
+      ..forward();
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    setState(() {
+      _dx = (_dx + d.delta.dx).clamp(-_revealWidth * 1.2, 0.0);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    if (_dx.abs() > _openSnapThreshold) {
+      _animateTo(-_revealWidth);
+    } else {
+      _animateTo(0);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Desktop / web: no swipe reveal — right-click handles delete.
+    if (!_touch) return widget.child;
+
+    final tile = Transform.translate(
+      offset: Offset(_dx, 0),
+      child: widget.child,
+    );
+
+    return Stack(
+      children: [
+        // Red delete action sits behind the tile and is only rendered when
+        // the tile has actually been dragged; otherwise it would bleed
+        // through whenever the tile itself isn't fully opaque.
+        if (_dx < 0)
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  _animateTo(0);
+                  widget.onDelete();
+                },
+                child: Container(
+                  width: _revealWidth,
+                  color: AppColors.red,
+                  alignment: Alignment.center,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.delete_outline_rounded,
+                          size: 20, color: AppColors.onAccent),
+                      const SizedBox(height: 2),
+                      Text('Delete',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.onAccent,
+                          )),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        GestureDetector(
+          behavior: HitTestBehavior.deferToChild,
+          onHorizontalDragUpdate: _onDragUpdate,
+          onHorizontalDragEnd: _onDragEnd,
+          child: tile,
+        ),
+      ],
+    );
   }
 }

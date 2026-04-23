@@ -137,6 +137,9 @@ class ChatMessage {
     required String direction,
     required String remotePhone,
     String? contactName,
+    String? smsProviderId,
+    String? smsProviderType,
+    int? smsLocalId,
   })  : id = id ?? _uid(),
         role = ChatRole.system,
         type = MessageType.sms,
@@ -148,6 +151,9 @@ class ChatMessage {
           'sms_direction': direction,
           'sms_remote_phone': remotePhone,
           if (contactName != null) 'sms_contact_name': contactName,
+          if (smsProviderId != null) 'sms_provider_id': smsProviderId,
+          if (smsProviderType != null) 'sms_provider_type': smsProviderType,
+          if (smsLocalId != null) 'sms_local_id': smsLocalId,
         };
 
   /// A timed reminder surfaced in the agent chat with action chips.
