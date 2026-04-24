@@ -148,6 +148,31 @@ class AgentService extends ChangeNotifier {
   String? _lastDialedNumber;
   String? _priorCallTranscript;
 
+  /// Timestamp when `forkCoalescing` was last flipped true. Used to cap how
+  /// long the flag may suppress `ended`/`failed` — a missed CONFIRMED can
+  /// otherwise latch state forever (see `notifyCallPhase`).
+  DateTime? _forkCoalescingSetAt;
+  static const _maxForkCoalescingAgeMs = 10000;
+
+  /// Wall-clock time of the most recent `notifyCallPhase` update. The idle
+  /// watchdog uses this to detect phases that got stuck because the UI
+  /// listener never fired `ended`/`failed` (e.g. CallScreen not mounted).
+  DateTime _callPhaseLastUpdated = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Periodic safety-net timer that force-ends calls whose SIP session has
+  /// clearly died but whose `_callPhase` got stranded above `idle`.
+  Timer? _callStateWatchdog;
+  static const _watchdogIntervalMs = 15000;
+  static const _watchdogStaleThresholdMs = 15000;
+
+  /// When the AgentService itself listens to the SIP helper (independent of
+  /// any UI widget), this holds the adapter registered against it.
+  _AgentSipListener? _agentSipListener;
+
+  /// Set while `_handleCallEnded` is running. Prevents nested cleanup if a
+  /// second `ended`/`failed` notification sneaks in while timers fire.
+  bool _endingInProgress = false;
+
   CallPhase get callPhase => _callPhase;
   int get partyCount => _partyCount;
   String? get remoteIdentity => _remoteIdentity;
@@ -741,6 +766,7 @@ class AgentService extends ChangeNotifier {
     final selected = _jobFunctionService?.selected;
     if (selected == null) return;
     _bootContext = _jobFunctionService!.buildBootContext();
+    setDefaultCountryCode(_bootContext.defaultCountryCode);
     _lastSyncedJobFunctionId = selected.id;
     _syncHostSpeakerName();
     if (_callPhase.isActive || _callPhase.isSettling) {
@@ -763,6 +789,7 @@ class AgentService extends ChangeNotifier {
     bool? whisperByDefault,
   }) {
     _bootContext = ctx;
+    setDefaultCountryCode(ctx.defaultCountryCode);
     _syncHostSpeakerName();
     if (jobFunctionName != null) {
       final mode = whisperByDefault == true ? ' (text-only)' : '';
@@ -834,6 +861,7 @@ class AgentService extends ChangeNotifier {
   AgentService() {
     _addMsg(ChatMessage.system('Agent starting...'));
     _tapChannel.setMethodCallHandler(_handleNativeTapCall);
+    setDefaultCountryCode(_bootContext.defaultCountryCode);
     _init();
   }
 
@@ -1302,6 +1330,10 @@ class AgentService extends ChangeNotifier {
 
       // Wire raw mic audio → whisper.cpp.
       await _whisperKitStt!.startTranscription();
+      // Start paused — at boot `_callPhase` is idle. The inference pipeline
+      // resumes in `notifyCallPhase` when the first non-idle phase arrives
+      // (ringing for inbound, initiating for outbound).
+      _applyIdleAudioProcessing(paused: true);
       _localAudioSub = _whisper.rawAudio.listen((chunk) {
         // Gate audio during TTS playback and for a short cooldown after.
         // The native side suppresses mic audio for 0.3s after playback,
@@ -1309,9 +1341,12 @@ class AgentService extends ChangeNotifier {
         // room reverb that the native suppression misses.  This doesn't
         // add latency to the first transcript because the WhisperKit timer
         // reset fires based on when isTtsPlaying went false.
-        if (!_muted && !_speaking && !_whisper.ttsSuppressed) {
-          _whisperKitStt?.feedAudio(chunk);
-        }
+        if (_muted || _speaking || _whisper.ttsSuppressed) return;
+        // Don't feed Whisper while idle — the native pause path stops the
+        // transcription timer, but guarding here avoids queueing audio
+        // into a paused native buffer and keeps Dart-side metrics honest.
+        if (_callPhase == CallPhase.idle) return;
+        _whisperKitStt?.feedAudio(chunk);
       });
 
       // Audio level waveform — works via sendAudio() even without OpenAI conn.
@@ -2944,6 +2979,27 @@ class AgentService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[AgentService] Failed to save voiceprint: $e');
     }
+  }
+
+  /// Pin the remote (caller) speaker identity in the native voiceprint
+  /// matcher to [name] for the duration of the current call. Prevents the
+  /// speaker identifier from mis-labelling a known caller as a different
+  /// contact whose voiceprint happens to be a closer match.
+  ///
+  /// Pass an empty or null [name] to clear the pin.
+  Future<void> pinRemoteSpeaker(String? name) async {
+    final trimmed = (name ?? '').trim();
+    if (trimmed.isEmpty) {
+      await _whisper.clearPinnedRemoteSpeaker();
+    } else {
+      await _whisper.pinRemoteSpeaker(trimmed);
+    }
+  }
+
+  /// Clear any pinned caller identity. Called when a call ends so the
+  /// next call starts with a fresh (unpinned) voiceprint matcher.
+  Future<void> clearPinnedRemoteSpeaker() async {
+    await _whisper.clearPinnedRemoteSpeaker();
   }
 
   bool _hostVoiceprintCaptured = false;
@@ -8818,7 +8874,15 @@ class AgentService extends ChangeNotifier {
   /// When true, the agent ignores `failed`/`ended` phase transitions so that
   /// SIP fork replacements (e.g. Telnyx multi-proxy delivery) don't tear down
   /// agent state between forks. Set by the dialpad during fork coalescing.
-  bool forkCoalescing = false;
+  /// Use the setter rather than assigning directly so the age timestamp
+  /// stays in sync (a stuck `true` would otherwise latch `ended` forever).
+  bool _forkCoalescing = false;
+  bool get forkCoalescing => _forkCoalescing;
+  set forkCoalescing(bool value) {
+    if (_forkCoalescing == value) return;
+    _forkCoalescing = value;
+    _forkCoalescingSetAt = value ? DateTime.now() : null;
+  }
 
   /// Push a call state change into the agent's context without triggering
   /// a verbal response. The agent sees the phase transition as a system
@@ -8832,13 +8896,29 @@ class AgentService extends ChangeNotifier {
     bool? outbound,
   }) {
     // During fork coalescing, suppress failed/ended so the agent doesn't
-    // tear down state between SIP forks of the same logical call.
-    if (forkCoalescing &&
+    // tear down state between SIP forks of the same logical call.  Cap the
+    // suppression age so a missed CONFIRMED can't latch the flag forever
+    // and permanently swallow real call-end notifications.
+    if (_forkCoalescing &&
         (phase == CallPhase.ended || phase == CallPhase.failed)) {
+      final setAt = _forkCoalescingSetAt;
+      final ageMs = setAt == null
+          ? _maxForkCoalescingAgeMs + 1
+          : DateTime.now().difference(setAt).inMilliseconds;
+      if (ageMs <= _maxForkCoalescingAgeMs) {
+        debugPrint(
+            '[AgentService] Suppressed ${phase.name} during fork coalescing '
+            '(age=${ageMs}ms)');
+        return;
+      }
       debugPrint(
-          '[AgentService] Suppressed ${phase.name} during fork coalescing');
-      return;
+          '[AgentService] forkCoalescing stale (age=${ageMs}ms) — clearing '
+          'and processing ${phase.name}');
+      _forkCoalescing = false;
+      _forkCoalescingSetAt = null;
     }
+
+    _callPhaseLastUpdated = DateTime.now();
 
     final phaseChanged = phase != _callPhase || partyCount != _partyCount;
 
@@ -8917,97 +8997,7 @@ class AgentService extends ChangeNotifier {
     }
 
     if (phase == CallPhase.ended || phase == CallPhase.failed) {
-      final String status;
-      if (!_isOutbound && _connectedAt == null) {
-        status = 'missed';
-      } else if (phase == CallPhase.failed) {
-        status = 'failed';
-      } else {
-        status = 'completed';
-      }
-      callHistory?.endCallRecord(status: status);
-
-      // Store the remote party's voiceprint if we know who they are
-      _saveRemoteVoiceprint();
-
-      if (_remoteIdentity != null) _lastDialedNumber = _remoteIdentity;
-      _remoteIdentity = null;
-      _remoteDisplayName = null;
-      _localIdentity = null;
-      _connectedAt = null;
-      _priorCallTranscript = null;
-      _priorTranscriptWhispered = false;
-      _beepDetected = false;
-      _voicemailPromptSent = false;
-      _ivrHeard = false;
-      _hasConnectedBefore = false;
-      _isConferenceLeg = false;
-      _inBeepWatchMode = false;
-      _settleWordCount = 0;
-      _preGreetInFlight = false;
-      _preGreetTextBuffer = null;
-      _preGreetFinalText = null;
-      _preGreetReady = false;
-      _preGreetGraceUntil = null;
-      _postGreetGraceUntil = null;
-      _cumulativeSpeechMs = 0;
-      _clearRemotePartyName();
-      _cancelSettleTimer();
-      _cancelBeepWatch();
-      _stopCadenceTracking();
-      _cancelConnectedGreeting();
-      _recentAgentTexts.clear();
-      _pendingTranscripts.clear();
-      _settleTranscripts.clear();
-      _settleAccumulatedTexts.clear();
-      _postSpeakFlushTimer?.cancel();
-      _postSpeechThinkingTimer?.cancel();
-      _playbackEndDebounce?.cancel();
-      _ttsGenerationComplete = false;
-      _thinking = false;
-      _stopTtsLevelDrain();
-      _whisper.resetSpeakerIdentifier();
-      _whisper.stopResponseAudio();
-      _whisper.inCallMode = false;
-      _activeTtsEndGeneration();
-      _textAgent?.inCallMode = false;
-      _textAgent?.reset();
-
-      // Clean up any agent-initiated voice sampling still in progress
-      if (_agentSampling) {
-        try {
-          _tapChannel.invokeMethod('stopVoiceSample');
-        } catch (_) {}
-        _agentSampling = false;
-        _agentSamplePath = null;
-        _finalizeSamplingMessage(success: false);
-      }
-
-      // Reset any cloned-voice override so the agent reverts to its default
-      // voice for subsequent interactions (prevents sticky voice bug).
-      _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
-
-      // Return to idle after a brief delay so the agent can listen again
-      // between calls. Without this, _callPhase stays at ended forever,
-      // which blocks agent responses and keeps TTS muted.
-      Future.delayed(const Duration(seconds: 2), () {
-        if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) {
-          _callPhase = CallPhase.idle;
-          _partyCount = 1;
-          _userMuteOverride = false;
-          // Restore listening state so the agent can hear new commands
-          if (_muted) {
-            _muted = false;
-            _whisper.muted = false;
-            _statusText = _speaking ? 'Speaking...' : 'Listening...';
-          }
-          if (_splitPipeline && _ttsMuted && !_bootContext.textOnly) {
-            _ttsMuted = false;
-          }
-          notifyListeners();
-          debugPrint('[AgentService] Returned to idle after call ended');
-        }
-      });
+      _handleCallEnded(phase);
     }
 
     if (phase == CallPhase.settling) {
@@ -9016,8 +9006,19 @@ class AgentService extends ChangeNotifier {
       _startSettleTimer();
       _activeTtsWarmUp();
       comfortNoiseService?.startPlayback(_bootContext.comfortNoisePath);
+      // Resume on-device audio processing for the duration of the call.
+      _applyIdleAudioProcessing(paused: false);
     } else if (_callPhase != CallPhase.settling) {
       _cancelSettleTimer();
+    }
+
+    // Any phase that's not idle/ended/failed counts as "call active" for
+    // the on-device inference pipeline; resume processing so inbound
+    // ring/connecting/onHold/connected all feed Whisper + SpeakerID.
+    if (phase != CallPhase.idle &&
+        phase != CallPhase.ended &&
+        phase != CallPhase.failed) {
+      _applyIdleAudioProcessing(paused: false);
     }
 
     if (phase == CallPhase.ended || phase == CallPhase.failed) {
@@ -9080,6 +9081,197 @@ class AgentService extends ChangeNotifier {
 
     debugPrint(
         '[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
+  }
+
+  /// Idempotent call-end teardown.  Callable from `notifyCallPhase`, the SIP
+  /// listener belt-and-suspenders path, and the idle watchdog without
+  /// double-clearing state or double-resetting the text-agent history.
+  void _handleCallEnded(CallPhase phase) {
+    if (_endingInProgress) {
+      debugPrint('[AgentService] _handleCallEnded: already in progress — skip');
+      return;
+    }
+    _endingInProgress = true;
+    try {
+      final String status;
+      if (!_isOutbound && _connectedAt == null) {
+        status = 'missed';
+      } else if (phase == CallPhase.failed) {
+        status = 'failed';
+      } else {
+        status = 'completed';
+      }
+      callHistory?.endCallRecord(status: status);
+
+      _saveRemoteVoiceprint();
+
+      if (_remoteIdentity != null) _lastDialedNumber = _remoteIdentity;
+      _remoteIdentity = null;
+      _remoteDisplayName = null;
+      _localIdentity = null;
+      _connectedAt = null;
+      _priorCallTranscript = null;
+      _priorTranscriptWhispered = false;
+      _beepDetected = false;
+      _voicemailPromptSent = false;
+      _ivrHeard = false;
+      _hasConnectedBefore = false;
+      _isConferenceLeg = false;
+      _inBeepWatchMode = false;
+      _settleWordCount = 0;
+      _preGreetInFlight = false;
+      _preGreetTextBuffer = null;
+      _preGreetFinalText = null;
+      _preGreetReady = false;
+      _preGreetGraceUntil = null;
+      _postGreetGraceUntil = null;
+      _cumulativeSpeechMs = 0;
+      _clearRemotePartyName();
+      _cancelSettleTimer();
+      _cancelBeepWatch();
+      _stopCadenceTracking();
+      _cancelConnectedGreeting();
+      _recentAgentTexts.clear();
+      _pendingTranscripts.clear();
+      _settleTranscripts.clear();
+      _settleAccumulatedTexts.clear();
+      _postSpeakFlushTimer?.cancel();
+      _postSpeechThinkingTimer?.cancel();
+      _playbackEndDebounce?.cancel();
+      _ttsGenerationComplete = false;
+      _thinking = false;
+      _stopTtsLevelDrain();
+      _whisper.resetSpeakerIdentifier();
+      _whisper.stopResponseAudio();
+      _whisper.inCallMode = false;
+      _activeTtsEndGeneration();
+      _textAgent?.inCallMode = false;
+      _textAgent?.reset();
+
+      // Pause on-device Whisper + SpeakerID processing so post-call ambient
+      // noise stops driving the transcription timer (which otherwise loops
+      // silence → hallucinated "you" → rate-limited log spam indefinitely).
+      _applyIdleAudioProcessing(paused: true);
+
+      if (_agentSampling) {
+        try {
+          _tapChannel.invokeMethod('stopVoiceSample');
+        } catch (_) {}
+        _agentSampling = false;
+        _agentSamplePath = null;
+        _finalizeSamplingMessage(success: false);
+      }
+
+      _tts?.updateVoiceId(_bootContext.elevenLabsVoiceId);
+
+      // Return to idle after a brief delay so the agent can listen again
+      // between calls. Without this, _callPhase stays at ended forever,
+      // which blocks agent responses and keeps TTS muted.
+      Future.delayed(const Duration(seconds: 2), () {
+        if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) {
+          _callPhase = CallPhase.idle;
+          _callPhaseLastUpdated = DateTime.now();
+          _partyCount = 1;
+          _userMuteOverride = false;
+          if (_muted) {
+            _muted = false;
+            _whisper.muted = false;
+            _statusText = _speaking ? 'Speaking...' : 'Listening...';
+          }
+          if (_splitPipeline && _ttsMuted && !_bootContext.textOnly) {
+            _ttsMuted = false;
+          }
+          notifyListeners();
+          debugPrint('[AgentService] Returned to idle after call ended');
+        }
+      });
+    } finally {
+      _endingInProgress = false;
+    }
+  }
+
+  /// Pause or resume on-device audio processing (Whisper transcription +
+  /// SpeakerID embedding) without stopping mic capture. Keeping capture
+  /// alive is required for always-listening features like wakeword; what
+  /// we stop is the inference loop that, when fed silence, generates
+  /// hallucinated transcripts and log storms.
+  void _applyIdleAudioProcessing({required bool paused}) {
+    try {
+      _whisper.setProcessingPaused(paused);
+    } catch (e) {
+      debugPrint('[AgentService] setProcessingPaused($paused) failed: $e');
+    }
+  }
+
+  /// Subscribe directly to SIP helper callbacks so call-end cleanup runs
+  /// regardless of which UI widget is currently mounted. Idempotent.
+  void registerSipHelper(SIPUAHelper helper) {
+    if (identical(helper, sipHelper) && _agentSipListener != null) return;
+    // Detach any previous listener first so we don't double-fire.
+    final prev = _agentSipListener;
+    if (prev != null) {
+      prev.helper.removeSipUaHelperListener(prev);
+      _agentSipListener = null;
+    }
+    sipHelper = helper;
+    final listener = _AgentSipListener(this, helper);
+    helper.addSipUaHelperListener(listener);
+    _agentSipListener = listener;
+    _startCallStateWatchdog();
+    debugPrint('[AgentService] Registered SIP listener + call-state watchdog');
+  }
+
+  void _startCallStateWatchdog() {
+    _callStateWatchdog?.cancel();
+    _callStateWatchdog = Timer.periodic(
+        const Duration(milliseconds: _watchdogIntervalMs), (_) {
+      _runCallStateWatchdog();
+    });
+  }
+
+  void _runCallStateWatchdog() {
+    if (_callPhase == CallPhase.idle) return;
+    if (_endingInProgress) return;
+    final helper = sipHelper;
+    final hasSipCall = helper?.activeCall != null;
+    if (hasSipCall) return;
+    final sinceUpdateMs =
+        DateTime.now().difference(_callPhaseLastUpdated).inMilliseconds;
+    if (sinceUpdateMs < _watchdogStaleThresholdMs) return;
+    debugPrint('[AgentService] Watchdog: no active SIP call and '
+        '_callPhase=${_callPhase.name} for ${sinceUpdateMs}ms — '
+        'forcing ended cleanup');
+    // Drop a stuck fork-coalescing flag so notifyCallPhase can proceed.
+    _forkCoalescing = false;
+    _forkCoalescingSetAt = null;
+    notifyCallPhase(CallPhase.ended);
+  }
+
+  /// Map SIP helper call states to `CallPhase`.  Kept in sync with the
+  /// equivalent logic in `CallScreen._sipStateToPhase` so the belt-and-
+  /// suspenders listener produces identical transitions.
+  CallPhase? _sipStateToPhase(CallStateEnum state) {
+    switch (state) {
+      case CallStateEnum.CALL_INITIATION:
+        return CallPhase.initiating;
+      case CallStateEnum.CONNECTING:
+        return CallPhase.connecting;
+      case CallStateEnum.PROGRESS:
+        return CallPhase.ringing;
+      case CallStateEnum.ACCEPTED:
+      case CallStateEnum.CONFIRMED:
+        return CallPhase.settling;
+      case CallStateEnum.HOLD:
+        return CallPhase.onHold;
+      case CallStateEnum.UNHOLD:
+        return CallPhase.connected;
+      case CallStateEnum.ENDED:
+        return CallPhase.ended;
+      case CallStateEnum.FAILED:
+        return CallPhase.failed;
+      default:
+        return null;
+    }
   }
 
   /// Start the settling timer. When it fires without being extended by
@@ -9391,14 +9583,47 @@ class AgentService extends ChangeNotifier {
         return;
       }
 
+      // Resolve the current caller's trusted name via contact lookup (phone →
+      // contact). Stored `speaker_name` on past transcript rows came from the
+      // voiceprint matcher, which can mis-attribute a caller to a different
+      // contact (the "Ron" bug: unrelated voiceprint scored closer than any
+      // legit match, so every remote row was saved as "Ron"). Those stale
+      // labels would then poison the LLM's pre-greeting on the next call.
+      //
+      // Rule: trust the current contact mapping for the remote side. If no
+      // contact resolves from the phone number, use a neutral "Caller" label
+      // — never the per-row `speaker_name`. The host side uses the configured
+      // manager name (or "Host"). The agent is always "Agent".
+      final trustedRemoteName = () {
+        final contact = contactService?.lookupByPhone(remoteIdentity);
+        final name = contact?['display_name'] as String?;
+        return (name != null && name.isNotEmpty) ? name : 'Caller';
+      }();
+      final hostName = _agentManagerConfig.name.isNotEmpty
+          ? _agentManagerConfig.name
+          : 'Host';
+
+      String labelFor(String role) {
+        switch (role) {
+          case 'remote':
+            return trustedRemoteName;
+          case 'host':
+          case 'whisper':
+          case 'note':
+            return hostName;
+          case 'agent':
+            return 'Agent';
+          default:
+            return role;
+        }
+      }
+
       final buf = StringBuffer();
       for (final row in rows) {
         final role = row['role'] as String? ?? 'unknown';
-        final speaker = row['speaker_name'] as String? ?? '';
         final text = row['text'] as String? ?? '';
         if (text.isEmpty) continue;
-        final label = speaker.isNotEmpty ? speaker : role;
-        buf.writeln('$label: $text');
+        buf.writeln('${labelFor(role)}: $text');
       }
 
       var transcript = buf.toString().trim();
@@ -9979,6 +10204,13 @@ class AgentService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _callStateWatchdog?.cancel();
+    _callStateWatchdog = null;
+    final listener = _agentSipListener;
+    if (listener != null) {
+      listener.helper.removeSipUaHelperListener(listener);
+      _agentSipListener = null;
+    }
     _cancelSettleTimer();
     _cancelConnectedGreeting();
     _postSpeakFlushTimer?.cancel();
@@ -10012,6 +10244,69 @@ class AgentService extends ChangeNotifier {
     _whisper.dispose();
     super.dispose();
   }
+}
+
+/// Forwards `SIPUAHelper` call-state callbacks into `AgentService` so that
+/// call-end cleanup runs regardless of which UI widget is currently mounted.
+/// Previously the only path that triggered `notifyCallPhase(ended)` was the
+/// `CallScreen` listener; if that screen was unmounted when a BYE arrived,
+/// the agent's internal state (including LLM history) would stay at
+/// "Connected / Remote: <name>" forever and every subsequent call + SMS
+/// would be handled as if the old call were still live.
+class _AgentSipListener implements SipUaHelperListener {
+  _AgentSipListener(this.agent, this.helper);
+
+  final AgentService agent;
+  final SIPUAHelper helper;
+
+  @override
+  void callStateChanged(Call call, CallState callState) {
+    final phase = agent._sipStateToPhase(callState.state);
+    if (phase == null) return;
+    // Only force cleanup for end states — settling/ringing transitions are
+    // already handled by the dialpad + callscreen with richer context
+    // (remoteDisplayName, partyCount). Duplicating those here would clobber
+    // the cached caller-ID name.
+    if (phase != CallPhase.ended && phase != CallPhase.failed) return;
+    // Avoid double-teardown during fork coalescing — the dialpad's UI path
+    // owns that decision.
+    if (agent.forkCoalescing) {
+      final setAt = agent._forkCoalescingSetAt;
+      final ageMs = setAt == null
+          ? AgentService._maxForkCoalescingAgeMs + 1
+          : DateTime.now().difference(setAt).inMilliseconds;
+      if (ageMs <= AgentService._maxForkCoalescingAgeMs) {
+        return;
+      }
+    }
+    // If no other SIP call is live, treat this as the end of the session.
+    if (helper.activeCall != null && helper.activeCall != call) return;
+    debugPrint('[AgentService] SIP listener: ${callState.state.name} → '
+        '${phase.name}');
+    agent.notifyCallPhase(
+      phase,
+      partyCount: 1,
+      remoteIdentity: call.remote_identity,
+      remoteDisplayName: call.remote_display_name,
+      localIdentity: call.local_identity,
+      outbound: call.direction == Direction.outgoing,
+    );
+  }
+
+  @override
+  void registrationStateChanged(RegistrationState state) {}
+
+  @override
+  void transportStateChanged(TransportState state) {}
+
+  @override
+  void onNewMessage(SIPMessageRequest msg) {}
+
+  @override
+  void onNewNotify(Notify ntf) {}
+
+  @override
+  void onNewReinvite(ReInvite event) {}
 }
 
 /// One logical slice of a `/search` recap (Calls / Messages / Calendar).

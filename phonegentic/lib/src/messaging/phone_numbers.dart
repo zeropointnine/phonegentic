@@ -1,19 +1,58 @@
 import 'dart:convert';
 
-/// Normalize a phone number to E.164 for carrier APIs.
+/// Dialing prefix to assume when a phone number arrives without a country
+/// code (bare national digits). Defaults to '1' (US/CA) but should be set
+/// at app boot to match the configured locale — see
+/// [setDefaultCountryCode]. A single source of truth prevents drift between
+/// call-ingress, messaging, contacts, and storage layers (which was the
+/// root cause of cross-contact mis-attribution — e.g. the "Ron, hey!"
+/// greeting that fired on a bare 10-digit inbound caller-ID).
+String _defaultCountryCode = '1';
+
+/// Set the default dialing prefix used by [ensureE164] when a raw number
+/// has no country code. Should be invoked once at boot from the active
+/// [AgentBootContext.defaultCountryCode]. Ignored if [code] is empty.
+void setDefaultCountryCode(String code) {
+  final digits = code.replaceAll(RegExp(r'[^\d]'), '');
+  if (digits.isEmpty) return;
+  _defaultCountryCode = digits;
+}
+
+/// Current default dialing prefix (read-only).
+String get defaultCountryCode => _defaultCountryCode;
+
+/// Normalize a phone number to E.164 for carrier APIs and storage.
+///
+/// Rules (in order):
+/// 1. Empty → empty.
+/// 2. Already E.164 (starts with `+`) → strip formatting and return.
+/// 3. National-length digits for the default country → prepend `+<cc>`.
+/// 4. Digits starting with the default country code and matching
+///    `<cc-digits> + <national-length>` → prepend `+`.
+/// 5. Any other non-empty digit string → prepend `+` (best-effort — the
+///    caller is responsible for typing a recognizable international form).
 String ensureE164(String number) {
   var n = number.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
-  if (n.startsWith('+')) return n;
-  if (RegExp(r'^\d{10}$').hasMatch(n)) {
-    return '+1$n';
+  if (n.isEmpty) return n;
+  if (n.startsWith('+')) {
+    final digits = n.substring(1).replaceAll(RegExp(r'[^\d]'), '');
+    return digits.isEmpty ? '' : '+$digits';
   }
-  if (n.length == 11 && n.startsWith('1')) {
-    return '+$n';
+
+  final digits = n.replaceAll(RegExp(r'[^\d]'), '');
+  if (digits.isEmpty) return '';
+
+  final cc = _defaultCountryCode;
+  final info = _localeInfo[cc] ?? _localeInfo['1']!;
+  final nationalLen = info.nationalLen;
+
+  if (digits.length == nationalLen) {
+    return '+$cc$digits';
   }
-  if (n.isNotEmpty) {
-    return '+$n';
+  if (digits.length == cc.length + nationalLen && digits.startsWith(cc)) {
+    return '+$digits';
   }
-  return n;
+  return '+$digits';
 }
 
 /// Return a JSON-encoded description of the phone locale for the given

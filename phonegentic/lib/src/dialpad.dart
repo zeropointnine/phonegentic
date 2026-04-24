@@ -2321,6 +2321,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
           }
         } else if (isForkReplacement) {
           debugPrint('[Dialpad] Fork coalesced for $_inboundRingCaller');
+          // If the router is actively showing a toast for this caller, its
+          // `_pendingInbound` is still pointing at the previous (now-dead)
+          // fork. Swap it over to the fresh leg so Hold+Answer /
+          // Hangup+Answer operate on a live call.
+          context.read<InboundCallRouter>().replacePendingFork(call);
           if (_pendingAutoAnswer) {
             _attemptAutoAnswer();
           }
@@ -2360,11 +2365,25 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
         // Notify the router so it can clear any toast pointing at this call
         // and queue held-hangup records for auto-callback.
+        //
+        // Exception: during a SIP fork race (Telnyx sometimes sends 2-4
+        // INVITEs for the same logical caller from different endpoints;
+        // each individual fork dies with ALLOTTED_TIMEOUT before its
+        // replacement arrives), we must NOT clear the toast on every fork
+        // death — otherwise the inbound badge flickers out after ~5s and
+        // never comes back. We defer the router teardown to
+        // _endInboundRingSession (grace timer) for that case.
         final router = context.read<InboundCallRouter>();
         final remoteHangup = callState.originator == Originator.remote;
         final wasHeld = call.state == CallStateEnum.HOLD ||
             conf.legById(call.id ?? '')?.state == LegState.held;
-        router.onCallEnded(call, remoteHangup: remoteHangup);
+        final endedCaller = _normalizeCaller(call.remote_identity ?? '');
+        final isForkDeath = _inboundRingCaller != null &&
+            endedCaller.isNotEmpty &&
+            _inboundRingCaller == endedCaller;
+        if (!isForkDeath) {
+          router.onCallEnded(call, remoteHangup: remoteHangup);
+        }
         if (remoteHangup && wasHeld) {
           router.noteHeldEndedByRemote(call);
         }
@@ -2658,6 +2677,10 @@ class _MyDialPadWidget extends State<DialPadWidget>
         agent.notifyCallPhase(CallPhase.failed);
       }
       context.read<InboundCallFlowService>().clearActiveFlow();
+      // Tell the router the fork race ended with no surviving leg — it's
+      // safe now to drop the pending-inbound toast if it's still pointing
+      // at a dead fork.
+      context.read<InboundCallRouter>().onRingSessionEnded();
     } catch (_) {}
     if (_calls.isEmpty) {
       _stopRinging();

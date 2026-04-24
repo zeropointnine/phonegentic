@@ -165,6 +165,19 @@ class WhisperKitSttService {
     }
   }
 
+  /// Pause or resume the native transcription timer without tearing down
+  /// WhisperKit's loaded CoreML model. Use this between calls so silence
+  /// doesn't drive the hallucination loop — processing resumes on the
+  /// next call-phase transition.
+  Future<void> setProcessingPaused(bool paused) async {
+    if (!_initialized) return;
+    try {
+      await _channel.invokeMethod('setProcessingPaused', {'paused': paused});
+    } on PlatformException catch (e) {
+      debugPrint('[WhisperKit] setProcessingPaused failed: ${e.message}');
+    }
+  }
+
   Future<void> dispose() async {
     _transcribing = false;
     _transcriptSub?.cancel();

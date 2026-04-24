@@ -49,6 +49,11 @@ class WhisperRealtimeService {
   static const _audioTapChannel = EventChannel('com.agentic_ai/audio_tap');
   static const _methodChannel =
       MethodChannel('com.agentic_ai/audio_tap_control');
+  /// Separate channel owned by `WhisperKitChannel` on the native side.
+  /// Used from here only to forward `setProcessingPaused` so the STT
+  /// transcription timer halts in sync with SpeakerID.
+  static const _whisperKitPauseChannel =
+      MethodChannel('com.agentic_ai/whisperkit_stt');
   static final _logger = Logger();
 
   WebSocketChannel? _ws;
@@ -160,6 +165,29 @@ class WhisperRealtimeService {
     }
   }
 
+  /// Pin the caller-side speaker identity to [name] for the current call.
+  /// The native speaker identifier will stop matching remote audio against
+  /// contact voiceprints while pinned — this prevents a known caller from
+  /// being mis-identified as a different contact whose voiceprint happens
+  /// to be a closer match. Pass an empty string to clear the pin.
+  Future<void> pinRemoteSpeaker(String name) async {
+    try {
+      await _methodChannel.invokeMethod('pinRemoteSpeaker', {'name': name});
+    } catch (e) {
+      debugPrint('[Whisper] pinRemoteSpeaker failed: $e');
+    }
+  }
+
+  /// Clear any pinned caller identity set by [pinRemoteSpeaker]. Normal
+  /// voiceprint matching resumes on the next remote-audio embedding.
+  Future<void> clearPinnedRemoteSpeaker() async {
+    try {
+      await _methodChannel.invokeMethod('clearPinnedRemoteSpeaker');
+    } catch (e) {
+      debugPrint('[Whisper] clearPinnedRemoteSpeaker failed: $e');
+    }
+  }
+
   /// Register the host user as a known speaker so mic audio shows their
   /// name instead of "unknown mic user".
   Future<void> registerHostSpeaker(String name, List<double> embedding) async {
@@ -191,6 +219,30 @@ class WhisperRealtimeService {
       await _methodChannel.invokeMethod('resetSpeakerIdentifier');
     } catch (e) {
       debugPrint('[Whisper] resetSpeakerIdentifier failed: $e');
+    }
+  }
+
+  /// Pause or resume the on-device inference pipelines (SpeakerID + the
+  /// WhisperKit STT transcription timer) while keeping mic capture alive.
+  /// Called on call-phase transitions so that between calls the mic can
+  /// stay hot for VAD/wakeword, but we don't burn cycles turning silence
+  /// into hallucinated transcripts.
+  Future<void> setProcessingPaused(bool paused) async {
+    try {
+      await _methodChannel.invokeMethod('setProcessingPaused', {
+        'paused': paused,
+      });
+    } catch (e) {
+      debugPrint('[Whisper] setProcessingPaused($paused) failed: $e');
+    }
+    // The WhisperKit transcription timer is owned by a separate method
+    // channel — forward the pause there too.
+    try {
+      await _whisperKitPauseChannel.invokeMethod('setProcessingPaused', {
+        'paused': paused,
+      });
+    } catch (e) {
+      debugPrint('[WhisperKit] setProcessingPaused($paused) failed: $e');
     }
   }
 

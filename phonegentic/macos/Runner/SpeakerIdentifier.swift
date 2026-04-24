@@ -55,6 +55,26 @@ final class SpeakerIdentifier {
     /// assignSpeaker runs so it always reflects the actual caller's voice.
     private var lastRawRemoteEmbedding: [Float]?
 
+    /// When true, `checkAndProcess` drops accumulated audio without running
+    /// embedding extraction. Set by the Dart side between calls so the
+    /// 3 s embedding loop doesn't keep firing on ambient noise.
+    private var processingPaused = false
+
+    /// Last (locked-speaker, ignored-candidate) pair logged from the
+    /// `ignoring unknown mic user` branch. Used to suppress duplicate
+    /// lines when the same mismatch repeats every 3 s indefinitely.
+    private var lastIgnoredMicPair: (String, String)?
+    private var lastIgnoredRemotePair: (String, String)?
+
+    /// When set, caller-side identity is pinned to this name for the
+    /// duration of the call and voiceprint matching is NOT allowed to
+    /// override it. Used when the Flutter side knows the caller from
+    /// their phone number (caller-ID → contact lookup) and we must not
+    /// let the speaker manager pick a different contact just because
+    /// their voiceprint happens to be a closer match. Clear between
+    /// calls via `clearPinnedRemoteSpeaker()` or `reset()`.
+    private var pinnedRemoteName: String?
+
     /// Agent TTS voiceprint for self-suppression.
     private var agentEmbedding: [Float]?
     private var agentExtractionInProgress = false
@@ -193,6 +213,15 @@ final class SpeakerIdentifier {
     // MARK: - Extraction
 
     private func checkAndProcess() {
+        if processingPaused {
+            // Drop anything we've accumulated so a later resume doesn't run
+            // embedding on minutes-old audio.
+            bufferLock.lock()
+            remoteBuffer.removeAll(keepingCapacity: true)
+            micBuffer.removeAll(keepingCapacity: true)
+            bufferLock.unlock()
+            return
+        }
         let samplesPerSecond = Int(sourceSampleRate)
         let bytesPerSecond = samplesPerSecond * 2 // PCM16
         let minBytes = Int(Double(bytesPerSecond) * minAccumulationSeconds)
@@ -246,6 +275,17 @@ final class SpeakerIdentifier {
 
                 if isRemote {
                     self.lastRawRemoteEmbedding = embedding
+                }
+
+                // Caller identity is pinned by the Flutter side (phone-number
+                // → contact lookup). Never run voiceprint matching for the
+                // remote channel — it would otherwise pick a closer-matching
+                // contact like "Ron" and mis-label the known caller.
+                if isRemote, let pinned = self.pinnedRemoteName, !pinned.isEmpty {
+                    self.identifiedRemoteSpeaker = pinned
+                    self.remoteLocked = true
+                    self.remoteConfidence = 1.0
+                    return
                 }
 
                 let result = diarizer.speakerManager.assignSpeaker(
@@ -304,8 +344,12 @@ final class SpeakerIdentifier {
 
                     if isRemote {
                         if self.remoteLocked {
-                            NSLog("[SpeakerID] Caller voice (%@) — ignoring %@ (conf=%.2f)",
-                                  self.remoteLabel(), label, confidence)
+                            let pair = (self.remoteLabel(), label)
+                            if self.lastIgnoredRemotePair?.0 != pair.0 || self.lastIgnoredRemotePair?.1 != pair.1 {
+                                NSLog("[SpeakerID] Caller voice (%@) — ignoring %@ (conf=%.2f)",
+                                      pair.0, pair.1, confidence)
+                                self.lastIgnoredRemotePair = pair
+                            }
                             return
                         }
                         if confidence < 0.6 {
@@ -332,8 +376,12 @@ final class SpeakerIdentifier {
                         }
                     } else {
                         if self.hostLocked {
-                            NSLog("[SpeakerID] Mic (%@) — ignoring %@ (conf=%.2f)",
-                                  self.hostLabel(), label, confidence)
+                            let pair = (self.hostLabel(), label)
+                            if self.lastIgnoredMicPair?.0 != pair.0 || self.lastIgnoredMicPair?.1 != pair.1 {
+                                NSLog("[SpeakerID] Mic (%@) — ignoring %@ (conf=%.2f)",
+                                      pair.0, pair.1, confidence)
+                                self.lastIgnoredMicPair = pair
+                            }
                             return
                         }
                         if confidence < 0.6 {
@@ -523,6 +571,59 @@ final class SpeakerIdentifier {
         lastRemoteCandidate = ""
         lastHostCandidate = ""
         lastRawRemoteEmbedding = nil
+        pinnedRemoteName = nil
+        lastIgnoredMicPair = nil
+        lastIgnoredRemotePair = nil
+    }
+
+    /// Pause or resume embedding extraction while keeping mic capture alive
+    /// on the tap channel. On pause, any audio that was accumulating is
+    /// dropped so that a later resume doesn't run embedding on stale data.
+    func setProcessingPaused(_ paused: Bool) {
+        if processingPaused == paused { return }
+        processingPaused = paused
+        if paused {
+            bufferLock.lock()
+            remoteBuffer.removeAll(keepingCapacity: true)
+            micBuffer.removeAll(keepingCapacity: true)
+            bufferLock.unlock()
+            lastIgnoredMicPair = nil
+            lastIgnoredRemotePair = nil
+            NSLog("[SpeakerID] Processing paused")
+        } else {
+            NSLog("[SpeakerID] Processing resumed")
+        }
+    }
+
+    /// Lock the caller-side identity to `name` for the rest of this call.
+    /// Voiceprint matching on remote audio will not be allowed to override
+    /// it. Pass an empty string to unpin (equivalent to
+    /// `clearPinnedRemoteSpeaker`). Call this when a new inbound/outbound
+    /// call's remote phone number maps to a known contact.
+    func pinRemoteSpeaker(name: String) {
+        guard !name.isEmpty else {
+            clearPinnedRemoteSpeaker()
+            return
+        }
+        pinnedRemoteName = name
+        identifiedRemoteSpeaker = name
+        remoteLocked = true
+        remoteConfidence = 1.0
+        NSLog("[SpeakerID] Remote pinned: %@", name)
+    }
+
+    /// Clear any pinned caller identity. Normal voiceprint matching
+    /// resumes on the next remote-audio embedding.
+    func clearPinnedRemoteSpeaker() {
+        if pinnedRemoteName != nil {
+            NSLog("[SpeakerID] Remote unpinned (was %@)", pinnedRemoteName ?? "")
+        }
+        pinnedRemoteName = nil
+        identifiedRemoteSpeaker = ""
+        remoteLocked = false
+        remoteConfidence = 0
+        lastRemoteCandidate = ""
+        remoteConsecutiveHits = 0
     }
 
     // MARK: - Audio Conversion

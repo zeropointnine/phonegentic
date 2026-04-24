@@ -131,10 +131,40 @@ class InboundCallRouter extends ChangeNotifier {
     return true;
   }
 
-  /// Called by the dialpad when any call reaches ENDED/FAILED.
+  /// Called when a SIP fork replacement arrives for the currently-pending
+  /// inbound (same logical caller, new `Call` object because Telnyx re-INVITED
+  /// from a different endpoint). We swap our `_pendingInbound` reference over
+  /// to the fresh leg so that Hold+Answer / Hangup+Answer operate on a LIVE
+  /// call, not the dead fork. The toast stays visible throughout.
+  void replacePendingFork(Call call) {
+    if (_pendingInbound == null) return;
+    if (_pendingInbound?.id == call.id) return;
+    debugPrint('[InboundCallRouter] Fork replacement: '
+        '${_pendingInbound?.id} → ${call.id}');
+    _pendingInbound = call;
+    notifyListeners();
+  }
+
+  /// Called by the dialpad when the inbound ring session truly ends — e.g.
+  /// the grace timer expired with no surviving fork. If our pending-inbound
+  /// is stale (its call leg is no longer live), clear the toast.
+  void onRingSessionEnded() {
+    final pending = _pendingInbound;
+    if (pending == null) return;
+    final calls = _callsLookup?.call() ?? const <String?, Call>{};
+    final stillLive = calls[pending.id] != null;
+    if (!stillLive) {
+      debugPrint('[InboundCallRouter] Ring session ended — clearing toast');
+      _pendingInbound = null;
+      notifyListeners();
+    }
+  }
+
+  /// Called by the dialpad when any call reaches ENDED/FAILED — EXCEPT when
+  /// the dialpad is inside a SIP fork coalescing window (another fork of the
+  /// same caller is expected to replace it). The dialpad is responsible for
+  /// that gate; see `onRingSessionEnded` for the truly-ended case.
   void onCallEnded(Call call, {required bool remoteHangup}) {
-    // If the pending inbound itself ends (caller gave up, or we handled it),
-    // clear the toast.
     if (_pendingInbound?.id == call.id) {
       _pendingInbound = null;
       notifyListeners();

@@ -86,6 +86,7 @@ CALL_INITIATION (incoming)
 | 7 | Auto-SMS when away |
 | 8 | Auto-callback (prompt + auto-dial) |
 | 9 | Field-test follow-ups (UX + audio-path fixes) |
+| 10 | Fork-race toast persistence + conference-avatar filter |
 
 ## Phase 9 — Field-test follow-ups
 
@@ -118,3 +119,31 @@ The native mic tap mute (`MethodChannel setMicMute`) is process-wide. If the ope
 ### 9.5 Silent ringtone when already on a call
 
 Playing the ringtone audibly while the primary call is in progress bled a "ring-ring" into the first caller's audio path and was disorienting for the operator. In `CALL_INITIATION` the `hasExistingLive` branch no longer calls `RingtoneService.startRinging()` — the visual toast plus the agent panel highlight are the sole notification surfaces for a second inbound while on a call. Standalone first-call inbound still rings normally via `_handleInboundRing`.
+
+## Phase 10 — Fork-race toast persistence + conference-avatar filter
+
+Two new issues surfaced in the next round of field testing:
+
+### 10.1 Inbound badge disappeared almost immediately
+
+Telnyx routinely SIP-forks an inbound INVITE to multiple gateway endpoints (we saw 4 forks for a single call in the logs). Each fork has a *different* `Call-ID` but the same `From:` number. The forks that lose the race die with `487 Request Terminated` / `ALLOTTED_TIMEOUT` after a few seconds; the dialpad's existing coalescing logic (`_inboundRingCaller` + fork-grace timer) was written to handle this for the *primary* ring UX.
+
+The new `InboundCallRouter` was bypassing that coalescing: on *every* fork death, the dialpad called `router.onCallEnded(call, ...)`, which cleared `_pendingInbound` and hid the toast. Subsequent fork replacements were correctly coalesced by the dialpad, but the `onInboundInitiation` hand-off was only invoked for the *first* INVITE, so the toast never returned.
+
+Fix:
+
+- Dialpad — in `FAILED`/`ENDED`, compute `isForkDeath = _inboundRingCaller != null && _normalizeCaller(call.remote_identity) == _inboundRingCaller`. Skip `router.onCallEnded(...)` when true; the router is holding the toast for this caller on purpose.
+- Dialpad — in `CALL_INITIATION` `isForkReplacement` branch, call `router.replacePendingFork(call)` so the router's `_pendingInbound` is always pointing at a *live* `Call` (otherwise a subsequent Hold+Answer tap would accept a dead leg).
+- Dialpad — in `_endInboundRingSession` (called when the grace timer expires with no surviving fork), call `router.onRingSessionEnded()`. This is the authoritative teardown point for the toast.
+- Router — add `replacePendingFork(Call call)` (swaps the reference, emits `notifyListeners`) and `onRingSessionEnded()` (clears `_pendingInbound` only if the lookup map says the referenced call is no longer live).
+
+### 10.2 Main call screen showed the ringing 2nd call as a participant
+
+`CallScreen._buildConferenceAvatars` renders one circle per `ConferenceService.legs` entry. When the second inbound arrived and the dialpad called `conf.addLeg(call, isOutbound: false)`, the leg was added with `LegState.ringing` — correct for the agent panel's *"ongoing calls"* list, wrong for the main center-of-screen avatar row (which implies "people you are currently talking to").
+
+Fix — in `callscreen.dart`:
+
+- `isConference` now counts only legs whose `state != LegState.ringing` (`activeLegCount`).
+- `_buildConferenceAvatars` filters out `LegState.ringing` legs too.
+
+The agent panel continues to read the full `conf.legs` list, so the ringing second call still shows up there with the `isPendingInbound` highlight and the Hold+Answer / Hangup+Answer mini buttons.

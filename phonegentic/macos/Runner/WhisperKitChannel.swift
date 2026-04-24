@@ -39,6 +39,14 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private var transcriptionTimer: Timer?
     private var isProcessing = false
     private var consecutiveAneFailures = 0
+    /// When true, `processBufferedAudio` no-ops and the transcription timer
+    /// is stopped. Mic capture still runs so a wakeword path can check
+    /// levels, but we don't burn ANE cycles turning silence into "you".
+    private var processingPaused = false
+    /// Rate-limit counter for the "entire transcript is repeat" carry-over
+    /// dedup log. When ambient noise keeps producing the same short word,
+    /// this log otherwise fires every 1.5s for hours.
+    private var carryOverRepeatLogCount = 0
     private static let maxAneFailuresBeforeCpuFallback = 2
     private static let transcriptionIntervalMs = 1500
     private static let inputSampleRate: Double = 24000
@@ -53,7 +61,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     //   sits in the 0.02–0.10 range; AC hum and ambient room noise is usually
     //   below 0.005.  Raise this if you're still getting hallucinations; lower
     //   it if soft speech is being clipped.  TODO: expose in Settings > Agents.
-    private static let rmsNoiseGateThreshold: Float = 0.0  // 0.0 = disabled; raise (e.g. 0.01) to gate ambient noise
+    private static let rmsNoiseGateThreshold: Float = 0.01  // 0.0 = disabled; 0.01 gates typical ambient/room noise that otherwise produces "you" hallucinations
 
     // WhisperKit DecodingOptions — applied even when audio passes the RMS gate.
     // These let the model's own confidence scores reject bad transcriptions.
@@ -169,6 +177,10 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             handleNotifyPlaybackEnded(result: result)
         case "flushAudioBuffer":
             handleFlushAudioBuffer(result: result)
+        case "setProcessingPaused":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let paused = args["paused"] as? Bool ?? false
+            handleSetProcessingPaused(paused: paused, result: result)
         case "dispose":
             handleDispose(result: result)
         default:
@@ -351,7 +363,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
 
     private func processBufferedAudio() {
         #if canImport(WhisperKit)
-        guard let kit = whisperKit, isTranscribing, !isProcessing else { return }
+        guard let kit = whisperKit, isTranscribing, !isProcessing, !processingPaused else { return }
 
         bufferLock.lock()
         guard audioBuffer.count > 0 else {
@@ -578,9 +590,17 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
 
         // If the entire current text is a repeat of the previous tail, drop it.
         if overlapLen == currWords.count {
-            NSLog("[WhisperKit] Carry-over dedup: entire transcript is repeat, dropping")
+            // Rate-limit: when ambient noise keeps generating the same short
+            // word for hours this branch otherwise fires every 1.5s.
+            carryOverRepeatLogCount += 1
+            if carryOverRepeatLogCount <= 3 || carryOverRepeatLogCount % 50 == 0 {
+                NSLog("[WhisperKit] Carry-over dedup: entire transcript is repeat, dropping (total=%d)", carryOverRepeatLogCount)
+            }
             return ""
         }
+        // Real novel text reached — reset the repeat counter so the next
+        // noise spell logs its first 3 again.
+        carryOverRepeatLogCount = 0
 
         // Strip the overlapping prefix from the original (preserving casing).
         let origWords = text.components(separatedBy: .whitespacesAndNewlines)
@@ -601,6 +621,37 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         bufferLock.unlock()
 
         NSLog("[WhisperKit] Transcription stopped")
+        result(nil)
+    }
+
+    /// Pause / resume the transcription timer + buffered-audio processing
+    /// without tearing down the loaded model. Idempotent.
+    private func handleSetProcessingPaused(paused: Bool, result: @escaping FlutterResult) {
+        if processingPaused == paused {
+            result(nil)
+            return
+        }
+        processingPaused = paused
+        if paused {
+            transcriptionTimer?.invalidate()
+            transcriptionTimer = nil
+            bufferLock.lock()
+            audioBuffer = Data()
+            carryOverBuffer = Data()
+            bufferLock.unlock()
+            lastTranscriptText = ""
+            lastTranscriptWasEmpty = true
+            carryOverRepeatLogCount = 0
+            NSLog("[WhisperKit] Processing paused (timer stopped, buffers cleared)")
+        } else if isTranscribing && transcriptionTimer == nil {
+            transcriptionTimer = Timer.scheduledTimer(
+                withTimeInterval: Double(WhisperKitChannel.transcriptionIntervalMs) / 1000.0,
+                repeats: true
+            ) { [weak self] _ in
+                self?.processBufferedAudio()
+            }
+            NSLog("[WhisperKit] Processing resumed")
+        }
         result(nil)
     }
 

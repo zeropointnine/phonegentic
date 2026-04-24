@@ -193,6 +193,19 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         case "resetSpeakerIdentifier":
             SpeakerIdentifier.shared.reset()
             result(nil)
+        case "setProcessingPaused":
+            let paused = (call.arguments as? [String: Any])?["paused"] as? Bool ?? false
+            SpeakerIdentifier.shared.setProcessingPaused(paused)
+            result(nil)
+        case "pinRemoteSpeaker":
+            if let args = call.arguments as? [String: Any],
+               let name = args["name"] as? String {
+                SpeakerIdentifier.shared.pinRemoteSpeaker(name: name)
+            }
+            result(nil)
+        case "clearPinnedRemoteSpeaker":
+            SpeakerIdentifier.shared.clearPinnedRemoteSpeaker()
+            result(nil)
         case "getRemoteSpeakerEmbedding":
             result(SpeakerIdentifier.shared.getRemoteSpeakerEmbedding())
         case "getRawRemoteEmbedding":

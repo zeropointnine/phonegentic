@@ -823,7 +823,27 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   }
 
   void _handleHangup() {
-    call!.hangup({'status_code': 603});
+    final c = call;
+    if (c == null) {
+      _timer.cancel();
+      return;
+    }
+    // Guard against tapping hangup on a call whose RTCSession has already
+    // terminated — happens when the focused leg is a dead SIP fork or the
+    // user double-taps. `Call.hangup` throws `Invalid status: terminated`
+    // in that case; swallow it since the user's intent ("end this call")
+    // is already satisfied.
+    final state = c.state;
+    if (state == CallStateEnum.ENDED || state == CallStateEnum.FAILED) {
+      debugPrint('[CallScreen] _handleHangup skipped — already $state');
+      _timer.cancel();
+      return;
+    }
+    try {
+      c.hangup({'status_code': 603});
+    } catch (e) {
+      debugPrint('[CallScreen] _handleHangup swallowed: $e');
+    }
     _timer.cancel();
   }
 
@@ -1172,7 +1192,12 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     ContactService contactService,
     DemoModeService demoMode,
   ) {
-    final legs = conf.legs;
+    // Exclude ringing legs from the center-of-screen "conference" avatars.
+    // See the comment in the voice-overlay branch above: a ringing leg is
+    // a second inbound waiting on the InboundCallRouter toast, not a
+    // connected peer in the current call.
+    final legs =
+        conf.legs.where((l) => l.state != LegState.ringing).toList();
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
@@ -1319,7 +1344,16 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
       final contactService = context.read<ContactService>();
       final demoMode = context.watch<DemoModeService>();
       final conf = context.watch<ConferenceService>();
-      final isConference = conf.legCount >= 2;
+      // A "ringing" leg is one that hasn't been accepted yet — typically a
+      // second inbound call waiting on the InboundCallRouter toast. It
+      // lives in conf so the agent panel can render a ringing row, but the
+      // main call screen must NOT treat it as a fellow conference
+      // participant (that's the "multiple participants in the same call"
+      // bug). Only legs that have actually connected count as conference
+      // slots for the center avatars.
+      final activeLegCount =
+          conf.legs.where((l) => l.state != LegState.ringing).length;
+      final isConference = activeLegCount >= 2;
 
       if (isConference) {
         _startConfLevelPolling();

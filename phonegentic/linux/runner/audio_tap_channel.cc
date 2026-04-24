@@ -603,6 +603,12 @@ static void method_call_handler(FlMethodChannel* channel, FlMethodCall* method_c
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (strcmp(method, kMethodResetSpeakerIdentifier) == 0) {
     response = reset_speaker_identifier();
+  } else if (strcmp(method, "pinRemoteSpeaker") == 0) {
+    g_debug("[AudioTap] pinRemoteSpeaker - not implemented on Linux");
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+  } else if (strcmp(method, "clearPinnedRemoteSpeaker") == 0) {
+    g_debug("[AudioTap] clearPinnedRemoteSpeaker - not implemented on Linux");
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (strcmp(method, kMethodGetRemoteSpeakerEmbedding) == 0) {
     response = get_remote_speaker_embedding();
   } else if (strcmp(method, kMethodGetRawRemoteEmbedding) == 0) {

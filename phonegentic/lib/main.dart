@@ -153,7 +153,7 @@ class MyApp extends StatelessWidget {
             GmailService,
             GoogleCalendarService,
             AgentService>(
-          create: (_) => AgentService()..sipHelper = _helper,
+          create: (_) => AgentService()..registerSipHelper(_helper),
           update: (context, history, contacts, jobFunctions, flight, gmail,
               gcal, agent) {
             history.onAgentSearch = (query) =>

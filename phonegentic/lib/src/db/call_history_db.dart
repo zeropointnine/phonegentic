@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../messaging/phone_numbers.dart' as phone_utils;
 import '../models/calendar_event.dart';
 import '../models/inbound_call_flow.dart';
 import '../models/job_function.dart';
@@ -477,9 +478,9 @@ class CallHistoryDb {
     return db.insert('call_records', {
       'direction': direction,
       'status': 'active',
-      'remote_identity': remoteIdentity,
+      'remote_identity': _e164OrPassthrough(remoteIdentity),
       'remote_display_name': remoteDisplayName,
-      'local_identity': localIdentity,
+      'local_identity': _e164OrPassthrough(localIdentity),
       'contact_id': contactId,
       'job_function_id': jobFunctionId,
       'started_at': DateTime.now().toIso8601String(),
@@ -999,6 +1000,18 @@ class CallHistoryDb {
     return digits;
   }
 
+  /// Coerce a phone number to canonical E.164 at the storage boundary so
+  /// every row in every table agrees on a single representation. Preserves
+  /// null/empty. Short codes that can't be E.164-ified (< national length)
+  /// are passed through unchanged so DTMF-only entries aren't corrupted.
+  static String? _e164OrPassthrough(String? raw) {
+    if (raw == null) return null;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final canonical = phone_utils.ensureE164(trimmed);
+    return canonical.isEmpty ? trimmed : canonical;
+  }
+
   static Future<int> insertContact({
     required String displayName,
     String phoneNumber = '',
@@ -1010,7 +1023,7 @@ class CallHistoryDb {
     final db = await database;
     return db.insert('contacts', {
       'display_name': displayName,
-      'phone_number': phoneNumber,
+      'phone_number': _e164OrPassthrough(phoneNumber) ?? '',
       'email': email,
       'company': company,
       'notes': notes,
@@ -1021,7 +1034,12 @@ class CallHistoryDb {
 
   static Future<void> updateContact(int id, Map<String, dynamic> fields) async {
     final db = await database;
-    await db.update('contacts', fields, where: 'id = ?', whereArgs: [id]);
+    final coerced = Map<String, dynamic>.from(fields);
+    if (coerced.containsKey('phone_number')) {
+      coerced['phone_number'] =
+          _e164OrPassthrough(coerced['phone_number'] as String?) ?? '';
+    }
+    await db.update('contacts', coerced, where: 'id = ?', whereArgs: [id]);
   }
 
   static Future<void> deleteContact(int id) async {
@@ -1100,13 +1118,14 @@ class CallHistoryDb {
       where: 'macos_contact_id = ?',
       whereArgs: [macosContactId],
     );
+    final canonicalPhone = _e164OrPassthrough(phoneNumber) ?? '';
     if (existing.isNotEmpty) {
       final id = existing.first['id'] as int;
       await db.update(
         'contacts',
         {
           'display_name': displayName,
-          'phone_number': phoneNumber,
+          'phone_number': canonicalPhone,
           if (email != null) 'email': email,
           if (company != null) 'company': company,
           if (thumbnailPath != null) 'thumbnail_path': thumbnailPath,
@@ -1118,7 +1137,7 @@ class CallHistoryDb {
     }
     return db.insert('contacts', {
       'display_name': displayName,
-      'phone_number': phoneNumber,
+      'phone_number': canonicalPhone,
       'email': email,
       'company': company,
       'thumbnail_path': thumbnailPath,
@@ -1273,7 +1292,7 @@ class CallHistoryDb {
     return db.insert('tear_sheet_items', {
       'tear_sheet_id': tearSheetId,
       'position': position,
-      'phone_number': phoneNumber,
+      'phone_number': _e164OrPassthrough(phoneNumber) ?? '',
       'contact_name': contactName,
       'status': 'pending',
     });
@@ -1606,7 +1625,16 @@ class CallHistoryDb {
 
   static Future<int> insertSmsMessage(Map<String, dynamic> map) async {
     final db = await database;
-    return db.insert('sms_messages', map,
+    final coerced = Map<String, dynamic>.from(map);
+    if (coerced.containsKey('remote_phone')) {
+      coerced['remote_phone'] =
+          _e164OrPassthrough(coerced['remote_phone'] as String?);
+    }
+    if (coerced.containsKey('local_phone')) {
+      coerced['local_phone'] =
+          _e164OrPassthrough(coerced['local_phone'] as String?);
+    }
+    return db.insert('sms_messages', coerced,
         conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
@@ -1835,7 +1863,10 @@ class CallHistoryDb {
     final ts = (at ?? DateTime.now()).toIso8601String();
     await db.insert(
       'sms_thread_deletes',
-      {'remote_phone': remotePhone, 'deleted_at': ts},
+      {
+        'remote_phone': _e164OrPassthrough(remotePhone) ?? remotePhone,
+        'deleted_at': ts,
+      },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
