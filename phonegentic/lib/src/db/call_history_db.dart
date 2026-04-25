@@ -37,7 +37,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 23,
+        version: 24,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -298,6 +298,15 @@ class CallHistoryDb {
           'ALTER TABLE job_functions ADD COLUMN speak_polite_hold_notice INTEGER NOT NULL DEFAULT 0');
       await db.execute(
           'ALTER TABLE job_functions ADD COLUMN away_sms_template TEXT');
+    }
+
+    if (oldVersion < 24) {
+      await db.execute(
+          'ALTER TABLE agent_reminders ADD COLUMN calendar_event_id INTEGER REFERENCES calendar_events(id)');
+      await db.execute(
+          'ALTER TABLE agent_reminders ADD COLUMN contact_phone TEXT');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_ar_calendar_event ON agent_reminders(calendar_event_id)');
     }
   }
 
@@ -1959,13 +1968,17 @@ class CallHistoryDb {
         created_at TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
         google_calendar_event_id TEXT,
-        source TEXT NOT NULL DEFAULT 'agent'
+        source TEXT NOT NULL DEFAULT 'agent',
+        calendar_event_id INTEGER REFERENCES calendar_events(id),
+        contact_phone TEXT
       )
     ''');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_ar_remind_at ON agent_reminders(remind_at)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_ar_status ON agent_reminders(status)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_ar_calendar_event ON agent_reminders(calendar_event_id)');
   }
 
   static Future<int> insertReminder({
@@ -1974,6 +1987,8 @@ class CallHistoryDb {
     required DateTime remindAt,
     String? googleCalendarEventId,
     String source = 'agent',
+    int? calendarEventId,
+    String? contactPhone,
   }) async {
     final db = await database;
     return db.insert('agent_reminders', {
@@ -1984,7 +1999,51 @@ class CallHistoryDb {
       'status': 'pending',
       'google_calendar_event_id': googleCalendarEventId,
       'source': source,
+      'calendar_event_id': calendarEventId,
+      'contact_phone': contactPhone,
     });
+  }
+
+  /// Update the fire time of an existing reminder. Used for both
+  /// LLM-driven reschedule and calendar-sync-driven realignment when
+  /// the underlying event moves.
+  static Future<void> updateReminderRemindAt(int id, DateTime remindAt) async {
+    final db = await database;
+    await db.update(
+      'agent_reminders',
+      {'remind_at': remindAt.toUtc().toIso8601String()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Look up the pending reminder linked to a given calendar event row, if any.
+  /// Returns the most recent pending one (there should normally only be one).
+  static Future<Map<String, dynamic>?> getPendingReminderForCalendarEvent(
+      int calendarEventId) async {
+    final db = await database;
+    final rows = await db.query(
+      'agent_reminders',
+      where: "status = 'pending' AND calendar_event_id = ?",
+      whereArgs: [calendarEventId],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Fetch a calendar event row by primary key. Used by the reminder
+  /// firing logic to validate that the linked event still exists and
+  /// hasn't already ended before we tell the manager about it.
+  static Future<Map<String, dynamic>?> getCalendarEventRowById(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      'calendar_events',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 
   static Future<List<Map<String, dynamic>>> getPendingReminders() async {

@@ -317,10 +317,38 @@ class ManagerPresenceService extends ChangeNotifier
     if (overdue.isEmpty) return;
 
     debugPrint(
-        '[ManagerPresence] ${overdue.length} missed reminder(s) on startup');
+        '[ManagerPresence] ${overdue.length} candidate missed reminder(s) on startup');
 
+    int surfaced = 0;
     for (final row in overdue) {
       final id = row['id'] as int;
+
+      // Skip calendar reminders whose underlying event has ended (or was
+      // deleted). Surfacing "missed: meeting at 2pm" hours after the meeting
+      // is over confuses the manager and leads the agent to talk about
+      // meetings that already happened. Mark them expired and move on.
+      final source = row['source'] as String? ?? '';
+      final calendarEventId = row['calendar_event_id'] as int?;
+      if (source == 'calendar' && calendarEventId != null) {
+        final evRow =
+            await CallHistoryDb.getCalendarEventRowById(calendarEventId);
+        if (evRow == null) {
+          await CallHistoryDb.updateReminderStatus(id, 'expired');
+          continue;
+        }
+        final evStatus = (evRow['status'] as String?) ?? 'active';
+        if (evStatus == 'cancelled' || evStatus == 'deleted') {
+          await CallHistoryDb.updateReminderStatus(id, 'expired');
+          continue;
+        }
+        final actualEnd = DateTime.tryParse(evRow['end_time'] as String? ?? '')
+            ?.toLocal();
+        if (actualEnd != null && actualEnd.isBefore(DateTime.now())) {
+          await CallHistoryDb.updateReminderStatus(id, 'expired');
+          continue;
+        }
+      }
+
       final title = row['title'] as String? ?? 'Reminder';
       final desc = row['description'] as String?;
       final remindAt = DateTime.parse(row['remind_at'] as String).toLocal();
@@ -340,8 +368,11 @@ class ManagerPresenceService extends ChangeNotifier
           : 'Missed ($timeAgo): $title';
 
       _agent?.addMissedReminderMessage(text, reminderId: id);
+      surfaced++;
     }
 
+    debugPrint(
+        '[ManagerPresence] Surfaced $surfaced missed reminder(s) (rest expired)');
     await _refreshReminderCache();
   }
 
@@ -381,12 +412,50 @@ class ManagerPresenceService extends ChangeNotifier
       final desc = row['description'] as String?;
 
       _scheduledReminderTimers.remove(id)?.cancel();
-      await CallHistoryDb.updateReminderStatus(id, 'fired');
 
       final source = row['source'] as String? ?? '';
       final remindAt =
           DateTime.tryParse(row['remind_at'] as String? ?? '')?.toLocal();
       final isCalendar = source == 'calendar';
+
+      // For calendar-linked reminders, validate the underlying event before
+      // surfacing anything. If the event was deleted or has already ended,
+      // mark the reminder expired and stay silent — telling the manager
+      // their meeting "is coming up" when it ended hours ago is the bug
+      // we're fixing here.
+      DateTime? actualStart;
+      DateTime? actualEnd;
+      final calendarEventId = row['calendar_event_id'] as int?;
+      if (isCalendar && calendarEventId != null) {
+        final evRow =
+            await CallHistoryDb.getCalendarEventRowById(calendarEventId);
+        if (evRow == null) {
+          debugPrint(
+              '[ManagerPresence] Reminder $id: linked calendar event $calendarEventId is gone — marking expired');
+          await CallHistoryDb.updateReminderStatus(id, 'expired');
+          return;
+        }
+        final evStatus = (evRow['status'] as String?) ?? 'active';
+        if (evStatus == 'cancelled' || evStatus == 'deleted') {
+          debugPrint(
+              '[ManagerPresence] Reminder $id: linked event status=$evStatus — marking expired');
+          await CallHistoryDb.updateReminderStatus(id, 'expired');
+          return;
+        }
+        actualStart = DateTime.tryParse(evRow['start_time'] as String? ?? '')
+            ?.toLocal();
+        actualEnd = DateTime.tryParse(evRow['end_time'] as String? ?? '')
+            ?.toLocal();
+        if (actualEnd != null && actualEnd.isBefore(DateTime.now())) {
+          debugPrint(
+              '[ManagerPresence] Reminder $id: linked event ended at $actualEnd — marking expired');
+          await CallHistoryDb.updateReminderStatus(id, 'expired');
+          return;
+        }
+      }
+
+      // Past this point we will surface the reminder, so commit the status.
+      await CallHistoryDb.updateReminderStatus(id, 'fired');
 
       String? contactName;
       if (isCalendar && desc != null && desc.startsWith('Meeting with ')) {
@@ -401,16 +470,43 @@ class ManagerPresenceService extends ChangeNotifier
           reminderId: id, contactName: contactName);
 
       String prompt;
-      if (isCalendar && remindAt != null) {
-        final eventTime = remindAt.add(const Duration(minutes: 15));
-        final h = eventTime.hour > 12
-            ? eventTime.hour - 12
-            : (eventTime.hour == 0 ? 12 : eventTime.hour);
-        final m = eventTime.minute.toString().padLeft(2, '0');
-        final ap = eventTime.hour >= 12 ? 'PM' : 'AM';
-        prompt = '[UPCOMING MEETING] $text at $h:$m $ap — '
-            'Give the manager a brief, friendly heads-up that their meeting '
-            'is coming up soon. Do NOT mention the word "reminder".';
+      if (isCalendar) {
+        // Prefer the actual event start time when known. Fall back to the
+        // legacy assumption (remindAt + 15min) only for old reminders that
+        // were created before we tracked calendar_event_id.
+        final eventTime = actualStart ??
+            (remindAt != null
+                ? remindAt.add(const Duration(minutes: 15))
+                : null);
+        if (eventTime == null) {
+          prompt = '[REMINDER FIRED] $text — Please act on this reminder now.';
+        } else {
+          final h = eventTime.hour > 12
+              ? eventTime.hour - 12
+              : (eventTime.hour == 0 ? 12 : eventTime.hour);
+          final m = eventTime.minute.toString().padLeft(2, '0');
+          final ap = eventTime.hour >= 12 ? 'PM' : 'AM';
+          final now = DateTime.now();
+          final minsUntil = eventTime.difference(now).inMinutes;
+          if (minsUntil > 1) {
+            prompt = '[UPCOMING MEETING] $text at $h:$m $ap '
+                '(in $minsUntil min) — Give the manager a brief, '
+                'friendly heads-up. Do NOT mention the word "reminder".';
+          } else if (minsUntil >= -2) {
+            prompt = '[MEETING STARTING NOW] $text at $h:$m $ap — '
+                'Give the manager a brief heads-up that this meeting is '
+                'starting right now. Do NOT mention the word "reminder".';
+          } else {
+            // Late firing for an in-progress meeting (e.g. app was offline).
+            // Tell the LLM to acknowledge the lateness rather than pretending
+            // the meeting hasn\'t started.
+            final ago = -minsUntil;
+            prompt = '[MEETING ALREADY STARTED] $text was at $h:$m $ap '
+                '($ago min ago) — The reminder fired late. Briefly let the '
+                'manager know the meeting is already underway. Do NOT '
+                'pretend it is upcoming.';
+          }
+        }
       } else {
         prompt = '[REMINDER FIRED] $text — Please act on this reminder now.';
       }

@@ -145,13 +145,17 @@ class AgentService extends ChangeNotifier {
   bool _idleCallConfirmed = false;
   Map<String, dynamic>? _pendingIdleCall;
 
-  /// Last time the manager authored a request (local voice transcript or
-  /// inbound SMS from their configured number).  The idle-call guard treats
-  /// any make_call within `_managerAuthWindow` after this timestamp as
-  /// pre-authorized so that LLM round-trips and intermediate state resets
-  /// can't strip the authorization between the request and the tool call.
+  /// Whether the most recent interactive party was the manager (local voice at
+  /// idle, or inbound SMS from their configured number).  When true, the
+  /// idle-call guard pre-authorizes `make_call` without a separate confirmation
+  /// hop — the manager's own request *is* the authorization.  Cleared when a
+  /// third party sends an SMS so a stranger can't ride on the manager's prior
+  /// authorization to coerce the LLM into placing a call.
+  ///
+  /// `_lastManagerAuthAt` is kept purely for diagnostic logging; it is not
+  /// used by the guard.
+  bool _managerAuthActive = false;
   DateTime? _lastManagerAuthAt;
-  static const Duration _managerAuthWindow = Duration(minutes: 5);
   bool _isConferenceLeg = false;
   String? _lastDialedNumber;
   String? _priorCallTranscript;
@@ -1945,7 +1949,11 @@ class AgentService extends ChangeNotifier {
         'Always offer to also add important reminders to Google Calendar.\n\n'
         'When you receive an [UPCOMING MEETING] system event, give a brief '
         'friendly heads-up like "Hey, you\'ve got your meeting with X coming up '
-        'at Y." Do NOT say "reminder" — just naturally mention the meeting.');
+        'at Y." Do NOT say "reminder" — just naturally mention the meeting. '
+        'When you receive a [MEETING STARTING NOW] event, say it is starting '
+        'right now. When you receive a [MEETING ALREADY STARTED] event, '
+        'acknowledge that the heads-up is late and the meeting is already '
+        'underway — do NOT pretend it is upcoming.');
     if (appleRemindersConfig.enabled) {
       buf.write(
           ' The Apple Reminders integration is ENABLED — also offer to sync '
@@ -1956,6 +1964,32 @@ class AgentService extends ChangeNotifier {
         'Use `list_reminders` when the manager asks about scheduled reminders, '
         'upcoming events they set through you, or "do I have any reminders?". '
         'This returns all agent-created reminders from the local database.\n\n');
+    buf.write(
+        '### Reminder lifecycle — pick the right action\n'
+        'Each pending or fired reminder has an `id` you can act on:\n'
+        '- **acknowledge_reminder(id)** — the manager indicated they have '
+        'SEEN/HEARD the reminder ("got it", "yeah I know", "thanks", "I\'m '
+        'on it"). The underlying event still happened; you just stop '
+        'bringing it up. **This is your default response after a reminder '
+        'fires and the manager replies casually.** Use it eagerly so you '
+        'don\'t pester them about the same thing again.\n'
+        '- **cancel_reminder(id)** — the underlying event itself is no '
+        'longer happening ("cancel that", "that meeting got cancelled", '
+        '"never mind, don\'t remind me about that"). Removes it from the '
+        'pending list entirely.\n'
+        '- **reschedule_reminder(id, ...)** — the manager wants to be '
+        'reminded at a different time ("snooze 15 min", "push it to '
+        'tomorrow", "remind me at 5 instead"), or the underlying meeting '
+        'moved. Same time-arg semantics as create_reminder. For meetings '
+        'with a linked contact, set notify_contact=true to also SMS the '
+        'attendee about the new time.\n'
+        '- **create_reminder(...)** — only when there is no existing '
+        'reminder to operate on.\n\n'
+        'NEVER repeatedly bring up the same reminder once it has fired '
+        'unless the manager explicitly asks again. NEVER mention reminders '
+        'whose underlying calendar event has already ended (the firing '
+        'pipeline already filters these — but if you somehow see one in '
+        'list_reminders for an old time, treat it as stale).\n\n');
     buf.write(
         'When the manager returns after being away, or asks about recent activity, '
         'use `get_call_summary` to catch them up on what happened. The matching '
@@ -2741,14 +2775,91 @@ class AgentService extends ChangeNotifier {
       name: 'cancel_reminder',
       description:
           'Cancel/remove a pending reminder. Use when the manager asks to '
-          'cancel, remove, or delete a reminder. List reminders first if the '
-          'ID is unknown.',
+          'cancel, remove, or delete a reminder entirely (the underlying '
+          'event is no longer happening). List reminders first if the ID '
+          'is unknown.',
       inputSchema: {
         'type': 'object',
         'properties': {
           'reminder_id': {
             'type': 'integer',
             'description': 'The ID of the reminder to cancel.',
+          },
+        },
+        'required': ['reminder_id'],
+      },
+    ),
+    LlmTool(
+      name: 'acknowledge_reminder',
+      description:
+          'Mark a reminder as acknowledged. Use when the manager indicates '
+          'they have SEEN or HEARD the reminder and want it to stop being '
+          'surfaced — e.g. "got it", "yeah I know", "thanks", "I\'m on it". '
+          'Different from cancel: the underlying event still happened, the '
+          'manager just doesn\'t need another nudge. Keeps history intact.',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'reminder_id': {
+            'type': 'integer',
+            'description': 'The ID of the reminder to acknowledge.',
+          },
+        },
+        'required': ['reminder_id'],
+      },
+    ),
+    LlmTool(
+      name: 'reschedule_reminder',
+      description:
+          'Move a pending reminder to a new time. Use when the manager says '
+          '"push that to tomorrow", "snooze for an hour", "remind me at 5pm '
+          'instead", or when an underlying meeting was rescheduled. Use the '
+          'same delay/at_time/remind_at semantics as create_reminder. '
+          'Set notify_contact=true to also send the linked contact an SMS '
+          'confirmation about the new time (only works for calendar-linked '
+          'reminders that have a contact phone on file).',
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          'reminder_id': {
+            'type': 'integer',
+            'description': 'The ID of the reminder to reschedule.',
+          },
+          'delay_minutes': {
+            'type': 'integer',
+            'description':
+                'Additional minutes from now to fire. Combine with '
+                'delay_hours and delay_days.',
+          },
+          'delay_hours': {
+            'type': 'integer',
+            'description':
+                'Additional hours from now to fire. Combine with '
+                'delay_minutes and delay_days.',
+          },
+          'delay_days': {
+            'type': 'integer',
+            'description':
+                'Additional days from now to fire. Combine with delay_hours, '
+                'delay_minutes, and at_time.',
+          },
+          'at_time': {
+            'type': 'string',
+            'description':
+                'Time of day in HH:MM 24-hour format. Overrides the time-of-day '
+                'on the computed date.',
+          },
+          'remind_at': {
+            'type': 'string',
+            'description':
+                'ISO 8601 datetime — last resort for fully absolute times.',
+          },
+          'notify_contact': {
+            'type': 'boolean',
+            'description':
+                'If true, send a confirmation SMS to the linked contact '
+                '(calendar reminders only) telling them about the new time. '
+                'Defaults to false.',
           },
         },
         'required': ['reminder_id'],
@@ -3878,6 +3989,7 @@ class AgentService extends ChangeNotifier {
       final hadPending = _pendingIdleCall != null;
       _idleCallConfirmed = true;
       _pendingIdleCall = null;
+      _managerAuthActive = true;
       _lastManagerAuthAt = DateTime.now();
       debugPrint('[AgentService] Idle call pre-authorized — manager spoke '
           '(hadPending=$hadPending): "$text"');
@@ -4515,6 +4627,12 @@ class AgentService extends ChangeNotifier {
         case 'cancel_reminder':
           result = await _handleCancelReminder(args);
           break;
+        case 'acknowledge_reminder':
+          result = await _handleAcknowledgeReminder(args);
+          break;
+        case 'reschedule_reminder':
+          result = await _handleRescheduleReminder(args);
+          break;
         case 'create_transfer_rule':
           result = await _handleCreateTransferRule(args);
           break;
@@ -4561,28 +4679,30 @@ class AgentService extends ChangeNotifier {
     try {
       switch (req.name) {
         case 'make_call':
-          // The manager's recent voice/SMS request itself authorizes the
-          // dial; the per-call confirmation flag would otherwise be wiped
-          // by intermediate state resets between the request and this tool
-          // call.  Falling back to a 5-minute auth window keeps requests
-          // like "call Stan" working without an extra confirmation hop.
-          final managerAuthorized =
-              _idleCallConfirmed || _hasRecentManagerAuth;
+          // The manager's most recent interaction (local voice at idle or
+          // inbound SMS from their number) is itself the authorization to
+          // dial — they don't need a separate confirmation hop.  The guard
+          // only blocks when the LLM emits make_call with no manager-driven
+          // context (hallucination) or when the most recent interactive party
+          // was a third party trying to coerce a call.
+          final managerAuthorized = _idleCallConfirmed || _managerAuthActive;
           if (_callPhase == CallPhase.idle && !managerAuthorized) {
             _pendingIdleCall = req.arguments;
-            result = 'BLOCKED: You are in idle mode with no active call. '
+            result = 'BLOCKED: You are in idle mode with no active call and '
+                'the manager has not authorized this dial. '
                 'Ask the user to confirm they want to place this call before proceeding. '
                 'Do NOT call make_call again until the user explicitly confirms.';
             debugPrint('[AgentService] Idle call guard: blocked make_call to '
                 '${req.arguments['number']} '
                 '(idleConfirmed=$_idleCallConfirmed '
-                'managerAuthAgeSec=${_lastManagerAuthAt == null ? 'never' : DateTime.now().difference(_lastManagerAuthAt!).inSeconds})');
+                'mgrAuthActive=$_managerAuthActive '
+                'lastMgrAuth=${_lastManagerAuthAt ?? 'never'})');
             break;
           }
           debugPrint('[AgentService] Idle call guard: passing make_call to '
               '${req.arguments['number']} '
               '(idleConfirmed=$_idleCallConfirmed '
-              'recentMgrAuth=$_hasRecentManagerAuth)');
+              'mgrAuthActive=$_managerAuthActive)');
           _idleCallConfirmed = false;
           result = await _handleMakeCall(req.arguments);
           break;
@@ -4705,6 +4825,12 @@ class AgentService extends ChangeNotifier {
           break;
         case 'cancel_reminder':
           result = await _handleCancelReminder(req.arguments);
+          break;
+        case 'acknowledge_reminder':
+          result = await _handleAcknowledgeReminder(req.arguments);
+          break;
+        case 'reschedule_reminder':
+          result = await _handleRescheduleReminder(req.arguments);
           break;
         case 'create_transfer_rule':
           result = await _handleCreateTransferRule(req.arguments);
@@ -5023,9 +5149,13 @@ class AgentService extends ChangeNotifier {
     // can reply to them.  The manager's SMS is itself authorization, so
     // pre-approve any make_call the LLM emits in response — no extra
     // transcript-based confirmation required.  Use a tolerant phone match
-    // (last-10-digits fallback) and stamp `_lastManagerAuthAt` so the
-    // authorization survives state resets between this SMS and the
-    // make_call tool call that follows.
+    // (last-10-digits fallback) and flip `_managerAuthActive` so the
+    // authorization survives intermediate state resets between this SMS and
+    // the make_call tool call that follows.
+    //
+    // For third-party SMS we also revoke any prior manager auth so a stranger
+    // texting in shortly after the manager can't ride on the manager's
+    // authorization to coerce the LLM into placing a call.
     final fromManager = _isManagerNumber(msg.from);
     debugPrint('[AgentService] SMS auth check: from=${msg.from} '
         'normalized=$normalizedFrom mgr="${_agentManagerConfig.phoneNumber}" '
@@ -5036,11 +5166,14 @@ class AgentService extends ChangeNotifier {
       _smsThirdPartySendAt = null;
       _idleCallConfirmed = true;
       _pendingIdleCall = null;
+      _managerAuthActive = true;
       _lastManagerAuthAt = DateTime.now();
     } else {
-      // Third-party SMS must not pre-authorize calls.  Clear any prior
-      // confirmation so the idle-guard requires manager approval again.
+      // Third-party SMS must not pre-authorize calls.  Clear both the
+      // per-call confirmation flag and the manager-auth flag so the idle
+      // guard requires fresh manager approval again.
       _idleCallConfirmed = false;
+      _managerAuthActive = false;
     }
 
     String? contactName;
@@ -6002,6 +6135,159 @@ class AgentService extends ChangeNotifier {
 
     final title = row['title'] as String? ?? 'Untitled';
     return 'Reminder "$title" [id=$id] has been cancelled.';
+  }
+
+  /// Mark a reminder as acknowledged. Use when the manager has indicated
+  /// awareness ("got it", "yeah I know") and the agent should stop bringing
+  /// it up — but the underlying event still happened so we don't want to
+  /// label it as cancelled. Works on `pending` and `fired` reminders alike.
+  Future<String> _handleAcknowledgeReminder(Map<String, dynamic> args) async {
+    final id = args['reminder_id'] as int?;
+    if (id == null) return 'reminder_id is required.';
+
+    final row = await CallHistoryDb.getReminderById(id);
+    if (row == null) return 'No reminder found with id=$id.';
+
+    final status = row['status'] as String? ?? '';
+    if (status == 'acknowledged') {
+      return 'Reminder $id was already acknowledged.';
+    }
+    if (status == 'cancelled' || status == 'expired') {
+      return 'Reminder $id is $status — nothing to acknowledge.';
+    }
+
+    await CallHistoryDb.updateReminderStatus(id, 'acknowledged');
+    managerPresenceService?.onReminderCreatedOrChanged();
+
+    final title = row['title'] as String? ?? 'Untitled';
+    return 'Reminder "$title" [id=$id] acknowledged. Will not surface again.';
+  }
+
+  /// Move a pending reminder to a new fire time. Accepts the same
+  /// delay/at_time/remind_at semantics as `create_reminder`. Optionally
+  /// sends a confirmation SMS to the linked contact (calendar reminders
+  /// only) so an external attendee learns about the new time.
+  Future<String> _handleRescheduleReminder(Map<String, dynamic> args) async {
+    final id = args['reminder_id'] as int?;
+    if (id == null) return 'reminder_id is required.';
+
+    final row = await CallHistoryDb.getReminderById(id);
+    if (row == null) return 'No reminder found with id=$id.';
+
+    final status = row['status'] as String? ?? '';
+    if (status == 'cancelled' || status == 'expired') {
+      return 'Reminder $id is $status — cannot reschedule. Create a new one '
+          'instead.';
+    }
+
+    final delayMinutes = args['delay_minutes'] as int?;
+    final delayHours = args['delay_hours'] as int?;
+    final delayDays = args['delay_days'] as int?;
+    final atTime = args['at_time'] as String?;
+    final remindAtRaw = args['remind_at'] as String?;
+
+    final hasDelay =
+        delayMinutes != null || delayHours != null || delayDays != null;
+
+    if (!hasDelay && atTime == null && remindAtRaw == null) {
+      return 'A new time is required. Use delay_minutes/delay_hours/delay_days, '
+          'at_time, or remind_at.';
+    }
+
+    DateTime newRemindAt;
+    if (hasDelay || atTime != null) {
+      final now = DateTime.now();
+      newRemindAt = now.add(Duration(
+        days: delayDays ?? 0,
+        hours: delayHours ?? 0,
+        minutes: delayMinutes ?? 0,
+      ));
+      if (atTime != null) {
+        final parts = atTime.split(':');
+        if (parts.length >= 2) {
+          final hour = int.tryParse(parts[0]) ?? newRemindAt.hour;
+          final minute = int.tryParse(parts[1]) ?? newRemindAt.minute;
+          newRemindAt = DateTime(newRemindAt.year, newRemindAt.month,
+              newRemindAt.day, hour, minute);
+          if (!hasDelay && newRemindAt.isBefore(now)) {
+            newRemindAt = newRemindAt.add(const Duration(days: 1));
+          }
+        }
+      }
+    } else {
+      try {
+        final normalized =
+            remindAtRaw!.endsWith('Z') || remindAtRaw.endsWith('z')
+                ? remindAtRaw.substring(0, remindAtRaw.length - 1)
+                : remindAtRaw;
+        newRemindAt = DateTime.parse(normalized);
+        if (newRemindAt.isUtc) {
+          newRemindAt = DateTime(
+              newRemindAt.year,
+              newRemindAt.month,
+              newRemindAt.day,
+              newRemindAt.hour,
+              newRemindAt.minute,
+              newRemindAt.second);
+        }
+      } catch (_) {
+        return 'Invalid remind_at format. Use ISO 8601 (e.g. 2026-04-25T15:00:00).';
+      }
+    }
+
+    if (newRemindAt.isBefore(DateTime.now())) {
+      return 'New time must be in the future. Got ${newRemindAt.toLocal()}.';
+    }
+
+    await CallHistoryDb.updateReminderRemindAt(id, newRemindAt);
+    // Re-open the reminder if it had already fired but the manager wants to
+    // be reminded again at a new time.
+    if (status != 'pending') {
+      await CallHistoryDb.updateReminderStatus(id, 'pending');
+    }
+    managerPresenceService?.onReminderCreatedOrChanged();
+
+    final title = row['title'] as String? ?? 'Untitled';
+    final localTime = newRemindAt.toLocal();
+    final timeStr =
+        '${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}';
+
+    final notify = args['notify_contact'] as bool? ?? false;
+    String smsNote = '';
+    if (notify) {
+      final contactPhone = row['contact_phone'] as String?;
+      if (contactPhone == null || contactPhone.isEmpty) {
+        smsNote = ' (no linked contact phone — SMS not sent)';
+      } else if (messagingService == null ||
+          !messagingService!.isConfigured) {
+        smsNote = ' (messaging not configured — SMS not sent)';
+      } else {
+        try {
+          String? contactName;
+          if (contactService != null) {
+            final contact = contactService!.lookupByPhone(contactPhone);
+            if (contact != null) {
+              contactName = (contact['display_name'] as String?)?.trim();
+            }
+          }
+          final greeting = contactName != null && contactName.isNotEmpty
+              ? 'Hi ${contactName.split(RegExp(r'\s+')).first}'
+              : 'Hi';
+          final dateLabel =
+              '${localTime.month}/${localTime.day} at $timeStr';
+          final body = '$greeting, just a heads-up — our "$title" '
+              'has been moved to $dateLabel.';
+          await messagingService!
+              .sendMessage(to: contactPhone, text: body);
+          smsNote = ' (confirmation SMS sent to $contactPhone)';
+        } catch (e) {
+          smsNote = ' (SMS send failed: $e)';
+          debugPrint('[AgentService] reschedule_reminder SMS failed: $e');
+        }
+      }
+    }
+
+    return 'Reminder "$title" [id=$id] rescheduled to $timeStr$smsNote.';
   }
 
   // ---------------------------------------------------------------------------
@@ -7198,15 +7484,6 @@ class AgentService extends ChangeNotifier {
     return phoneShort.isNotEmpty && phoneShort == mgrShort;
   }
 
-  /// True when the manager spoke or texted within `_managerAuthWindow`.
-  /// Used by the idle-call guard so make_call from the LLM that follows a
-  /// manager request goes through, even if the per-call confirmation flag
-  /// got cleared by an intermediate state reset.
-  bool get _hasRecentManagerAuth {
-    final t = _lastManagerAuthAt;
-    if (t == null) return false;
-    return DateTime.now().difference(t) <= _managerAuthWindow;
-  }
 
   /// Returns null if access is granted, or a rejection message if denied.
   String? _checkReadAccess({
@@ -7668,6 +7945,22 @@ class AgentService extends ChangeNotifier {
     // been raised by prior TTS echo or a self-talk burst. Otherwise the next
     // agent reply will be suppressed by `_consecutiveAgentResponses`.
     _consecutiveAgentResponses = 0;
+
+    // Typing in the local chat panel is, by definition, the manager — only
+    // they have access to the device's UI. Flip the manager-auth flag so the
+    // idle-call guard recognizes the resulting make_call as authorized,
+    // exactly like local voice at idle or inbound SMS from the manager.
+    // Without this, "call me" / "yes do it" typed in chat hit the guard with
+    // mgrAuthActive=false and got blocked into a confirmation loop.
+    if (_callPhase == CallPhase.idle) {
+      final hadPending = _pendingIdleCall != null;
+      _idleCallConfirmed = true;
+      _pendingIdleCall = null;
+      _managerAuthActive = true;
+      _lastManagerAuthAt = DateTime.now();
+      debugPrint('[AgentService] Idle call pre-authorized — manager typed in '
+          'chat (hadPending=$hadPending): "$trimmed"');
+    }
 
     if (_active) {
       if (_splitPipeline) {
@@ -9507,32 +9800,7 @@ class AgentService extends ChangeNotifier {
 
     _whisperPriorTranscriptOnce();
 
-    String prompt;
-    if (_isConferenceLeg) {
-      final calleeName = _resolveCallerName();
-      final nameClause = calleeName != null
-          ? 'You are now speaking with $calleeName.'
-          : '';
-      prompt = '[SYSTEM] A conference call leg has connected. '
-          '$nameClause '
-          'Greet this person, introduce yourself, and explain that you are '
-          'setting up a conference call on behalf of the manager. '
-          'Be brief and professional.';
-    } else if (_isOutbound) {
-      prompt = '[SYSTEM] The call is connected and the line is quiet. '
-          'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
-          'Otherwise, begin the conversation per your job function instructions.';
-    } else {
-      final callerName = _resolveCallerName();
-      final nameClause = callerName != null
-          ? 'The caller is $callerName. Address them by name.'
-          : 'You do not know the caller\'s name yet — if they provide it, '
-              'use save_contact to remember it for next time.';
-      prompt = '[SYSTEM] An incoming call has connected. The caller is now on the line. '
-          'This is an INBOUND call — someone called you. Do NOT say "calling" or act as if you placed this call. '
-          '$nameClause '
-          'Greet the caller warmly and help them per your job function instructions.';
-    }
+    final prompt = _buildGreetingPrompt();
     if (_splitPipeline && _textAgent != null) {
       _textAgent!.sendUserMessage(prompt);
     } else if (_active) {
@@ -9730,42 +9998,108 @@ class AgentService extends ChangeNotifier {
 
     _whisperPriorTranscriptOnce();
 
-    String prompt;
-    if (_isConferenceLeg) {
-      final calleeName = _resolveCallerName();
-      final nameClause = calleeName != null
-          ? 'You are now speaking with $calleeName.'
-          : '';
-      prompt = '[SYSTEM] A conference call leg has connected. '
-          '$nameClause '
-          'Greet this person, introduce yourself, and explain that you are '
-          'setting up a conference call on behalf of the manager. '
-          'Be brief and professional.';
-    } else if (_isOutbound) {
-      prompt = '[SYSTEM] The call is connected and the line is quiet. '
-          'If you heard a voicemail greeting followed by a beep, leave a brief voicemail now. '
-          'Otherwise, begin the conversation per your job function instructions.';
-    } else {
-      final callerName = _resolveCallerName();
-      final nameClause = callerName != null
-          ? 'The caller is $callerName. Address them by name.'
-          : 'You do not know the caller\'s name yet — if they provide it, '
-              'use save_contact to remember it for next time.';
-      prompt = '[SYSTEM] An incoming call has connected. The caller is now on the line. '
-          'This is an INBOUND call — someone called you. Do NOT say "calling" or act as if you placed this call. '
-          '$nameClause '
-          'Greet the caller warmly and help them per your job function instructions.';
-    }
+    final prompt = _buildGreetingPrompt();
     _textAgent!.sendUserMessage(prompt);
     debugPrint('[AgentService] Pre-greeting fired during settle (${_isOutbound ? "outbound" : "inbound"}${_isConferenceLeg ? ", conference leg" : ""})');
   }
 
+  /// Builds the system prompt that nudges the LLM to produce the opening
+  /// utterance of a call.
+  ///
+  /// CRITICAL: this prompt MUST tell the model to output ONLY spoken words.
+  /// Earlier versions framed the request as "begin the conversation" /
+  /// "greet the caller", which Claude interpreted as descriptive guidance
+  /// and responded with either bracketed stage directions
+  /// (e.g. "[Waiting for Patrick to answer]") or first-person meta-narration
+  /// (e.g. "- I'm now listening and ready to respond..."). The first kind
+  /// gets stripped by `_stripBracketsForTts` and produces silence; the
+  /// second kind gets spoken aloud and sounds robotic. The "OUTPUT RULES"
+  /// block below is the guardrail that keeps the model on the spoken track.
+  String _buildGreetingPrompt() {
+    const outputRules =
+        'OUTPUT RULES — read carefully:\n'
+        '• Reply with ONLY the exact words you want spoken aloud right now.\n'
+        '• Do NOT use square brackets, parentheses for stage directions, or asterisks for actions.\n'
+        '• Do NOT narrate what you are doing or describe your own state '
+        '(no "I\'m now listening", "Waiting for…", "Ready to respond", etc.).\n'
+        '• Do NOT use bullet points, dashes, or list markers at the start of the line.\n'
+        '• Do NOT preface with labels like "Agent:" or "Greeting:".\n'
+        '• Just speak — one short, natural sentence is ideal.';
+
+    if (_isConferenceLeg) {
+      final calleeName = _resolveCallerName();
+      final nameClause = calleeName != null
+          ? 'You are speaking with $calleeName. '
+          : '';
+      return '[SYSTEM] A conference call leg has connected. '
+          '${nameClause}Greet this person briefly, introduce yourself, and '
+          'mention that you are setting up a conference call on behalf of '
+          'the manager.\n\n$outputRules';
+    }
+    if (_isOutbound) {
+      final calleeName = _resolveCallerName();
+      final nameClause = calleeName != null
+          ? 'You called $calleeName. '
+          : '';
+      return '[SYSTEM] The call you placed has just connected. '
+          '${nameClause}Open the conversation now with a short, friendly '
+          'greeting that identifies why you are calling, in one sentence. '
+          'If you hit voicemail later you can leave a message, but right '
+          'now act as if a person picked up.\n\n$outputRules';
+    }
+    final callerName = _resolveCallerName();
+    final nameClause = callerName != null
+        ? 'The caller is $callerName — address them by name. '
+        : 'You do not know the caller\'s name yet. ';
+    return '[SYSTEM] An incoming call has connected. This is an INBOUND '
+        'call — someone called you, you did NOT place it. '
+        '${nameClause}Greet them warmly in one short sentence and invite '
+        'them to share what they need.\n\n$outputRules';
+  }
+
+  /// Strip leading bullet/list markers and meta-narration prefixes that
+  /// occasionally leak through despite the OUTPUT RULES in the greeting
+  /// prompt. Returns null if the cleaned text is empty.
+  String? _sanitizePreGreetingText(String input) {
+    var cleaned = input.trim();
+    // Strip leading "- ", "* ", "• ", "— ", "– ", possibly repeated.
+    final leadingMarker = RegExp(r'^[\-–—•*]+\s+');
+    while (leadingMarker.hasMatch(cleaned)) {
+      cleaned = cleaned.replaceFirst(leadingMarker, '').trim();
+    }
+    // Strip "Agent:" / "Greeting:" / "Reply:" labels at the very start.
+    cleaned = cleaned.replaceFirst(
+      RegExp(r'^(agent|greeting|reply|response)\s*:\s*', caseSensitive: false),
+      '',
+    );
+    return cleaned.isEmpty ? null : cleaned;
+  }
+
+  /// Default fallback used when the LLM's pre-greeting collapses to nothing
+  /// after bracket/marker stripping. Keeps the call from starting in dead
+  /// silence.
+  String _fallbackGreeting() {
+    if (_isOutbound) {
+      final name = _resolveCallerName();
+      return name != null ? 'Hi $name, this is Phonegentic.' : 'Hello?';
+    }
+    final name = _resolveCallerName();
+    return name != null ? 'Hi $name, thanks for calling.' : 'Hello, thanks for calling.';
+  }
+
   /// Play the pre-generated greeting through TTS and add it to chat.
   void _flushPreGreeting() {
-    final text = _preGreetFinalText;
+    final raw = _preGreetFinalText;
+    var text = raw == null ? null : _sanitizePreGreetingText(raw);
+    // Also reject text that is entirely bracketed stage directions.
+    if (text != null && _stripBracketsForTts(text).trim().isEmpty) {
+      debugPrint(
+          '[AgentService] Pre-greeting collapsed to empty after bracket strip — using fallback');
+      text = null;
+    }
     if (text == null || text.isEmpty) {
-      _discardPreGreeting();
-      return;
+      text = _fallbackGreeting();
+      debugPrint('[AgentService] Pre-greeting fallback: "$text"');
     }
     _preGreetReady = false;
     _preGreetFinalText = null;

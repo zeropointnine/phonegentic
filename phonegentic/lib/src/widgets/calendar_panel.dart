@@ -2645,7 +2645,9 @@ class _NewEventDialogState extends State<_NewEventDialog> {
       } catch (_) {}
     }
 
-    // Schedule a 15-minute reminder
+    // Schedule a 15-minute reminder linked to this calendar event so the
+    // firing logic can validate the event still exists / hasn't ended yet
+    // and so calendar reschedules can re-align the reminder automatically.
     if (start.isAfter(DateTime.now().toUtc()) && mounted) {
       try {
         final remindAt = start.subtract(const Duration(minutes: 15));
@@ -2654,6 +2656,8 @@ class _NewEventDialogState extends State<_NewEventDialog> {
           description: name.isNotEmpty ? 'Meeting with $name' : null,
           remindAt: remindAt,
           source: 'calendar',
+          calendarEventId: localId,
+          contactPhone: phone.isNotEmpty ? phone : null,
         );
         widget.parentContext
             .read<ManagerPresenceService>()
@@ -3606,16 +3610,33 @@ class _EditEventDialogState extends State<_EditEventDialog> {
       } catch (_) {}
     }
 
-    // ── Schedule a 15-minute reminder ──
+    // ── Realign the existing 15-minute reminder for this event ──
+    // If the event was rescheduled, find the linked pending reminder and
+    // move it to the new time rather than creating a duplicate. Falls back
+    // to insert if no linked reminder exists yet (older events from before
+    // calendar_event_id was tracked).
     if (_timeChanged && start.isAfter(DateTime.now().toUtc()) && mounted) {
       try {
         final remindAt = start.subtract(const Duration(minutes: 15));
-        await CallHistoryDb.insertReminder(
-          title: _titleCtrl.text.trim(),
-          description: name.isNotEmpty ? 'Meeting with $name' : null,
-          remindAt: remindAt,
-          source: 'calendar',
-        );
+        final eventId = widget.event.id;
+        Map<String, dynamic>? existing;
+        if (eventId != null) {
+          existing =
+              await CallHistoryDb.getPendingReminderForCalendarEvent(eventId);
+        }
+        if (existing != null) {
+          await CallHistoryDb.updateReminderRemindAt(
+              existing['id'] as int, remindAt);
+        } else {
+          await CallHistoryDb.insertReminder(
+            title: _titleCtrl.text.trim(),
+            description: name.isNotEmpty ? 'Meeting with $name' : null,
+            remindAt: remindAt,
+            source: 'calendar',
+            calendarEventId: eventId,
+            contactPhone: phone.isNotEmpty ? phone : null,
+          );
+        }
         widget.parentContext
             .read<ManagerPresenceService>()
             .onReminderCreatedOrChanged();
