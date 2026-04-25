@@ -123,7 +123,9 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  'Does not include contacts or call history.',
+                  'Includes audio assets (ringtones, recordings, voice samples). '
+                  'Does not include contacts or call history metadata.',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 10,
                     color: AppColors.textTertiary,
