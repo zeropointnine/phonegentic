@@ -275,7 +275,7 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
             ),
           ),
           const SizedBox(width: 8),
-          if (service.isLoading)
+          if (service.isLoading || service.isAiSearching)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: SizedBox(
@@ -351,29 +351,10 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
   }
 
   Widget _buildResultsList(CallHistoryService service) {
-    if (service.searchResults.isEmpty && !service.isLoading) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.phone_missed_rounded,
-                size: 36, color: AppColors.textTertiary.withValues(alpha: 0.4)),
-            const SizedBox(height: 12),
-            Text(
-              'No calls found',
-              style: TextStyle(
-                  fontSize: 14, color: AppColors.textTertiary, height: 1.4),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Try a different search — AI will kick in automatically',
-              style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textTertiary.withValues(alpha: 0.7)),
-            ),
-          ],
-        ),
-      );
+    if (service.searchResults.isEmpty) {
+      if (service.isAiSearching) return _buildAiSearchingState();
+      if (service.isLoading) return _buildLoadingState();
+      return _buildEmptyState(service);
     }
 
     return ListView.builder(
@@ -389,6 +370,96 @@ class _CallHistoryPanelState extends State<CallHistoryPanel> {
           onTap: () => service.toggleExpanded(callId),
         );
       },
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Center(
+      child: SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.5,
+          color: AppColors.accent,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAiSearchingState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.8,
+              color: AppColors.accent,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Searching with AI',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.accent,
+              letterSpacing: -0.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'No local match — asking the assistant to look…',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppColors.textTertiary.withValues(alpha: 0.8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(CallHistoryService service) {
+    final description = service.lastSearchParams?.describe();
+    final hasQuery = service.searchQuery.trim().isNotEmpty;
+    final headline =
+        description != null ? 'No $description' : 'No calls found';
+    final subline = hasQuery
+        ? 'Try a different search — AI will kick in automatically'
+        : 'Call activity will show up here';
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.phone_missed_rounded,
+                size: 36, color: AppColors.textTertiary.withValues(alpha: 0.4)),
+            const SizedBox(height: 12),
+            Text(
+              headline,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: AppColors.textTertiary,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subline,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.textTertiary.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -932,18 +1003,30 @@ class _CallRecordTileState extends State<_CallRecordTile> {
             children: [
               Row(
                 children: [
+                  const SizedBox(width: 6),
                   ContactIdenticon(
                     seed: _name(demo, contacts),
                     size: 48,
                     thumbnailPath: _thumbnailPathFor(contacts),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 20),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
+                            Text(
+                              _name(demo, contacts),
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
                             Icon(
                               widget.record['status'] == 'missed'
                                   ? Icons.phone_missed_rounded
@@ -954,19 +1037,6 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                               color: widget.record['status'] == 'missed'
                                   ? AppColors.burntAmber
                                   : AppColors.textTertiary,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _name(demo, contacts),
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.textPrimary,
-                                  letterSpacing: -0.2,
-                                ),
-                              ),
                             ),
                           ],
                         ),
@@ -988,7 +1058,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                             Text(
                               _durationLabel,
                               style: TextStyle(
-                                  fontSize: 14, color: AppColors.textTertiary),
+                                  fontSize: 12, color: AppColors.textTertiary),
                             ),
                             if (_hasRecording) ...[
                               const SizedBox(width: 6),
@@ -1065,7 +1135,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                           size: 13, color: AppColors.accent),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 40),
                   Text(
                     _timeLabel,
                     style: TextStyle(
@@ -1081,6 +1151,7 @@ class _CallRecordTileState extends State<_CallRecordTile> {
                     size: 16,
                     color: AppColors.textTertiary,
                   ),
+                  const SizedBox(width: 6),
                 ],
               ),
               if (widget.isExpanded) ...[
@@ -1525,9 +1596,8 @@ class _NoteTrashButton extends StatelessWidget {
   });
 
   Future<void> _confirmAndDelete(BuildContext context) async {
-    final preview = noteText.length > 80
-        ? '${noteText.substring(0, 80)}…'
-        : noteText;
+    final preview =
+        noteText.length > 80 ? '${noteText.substring(0, 80)}…' : noteText;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1535,7 +1605,9 @@ class _NoteTrashButton extends StatelessWidget {
         title: Text('Delete note?',
             style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
         content: Text(
-          preview.isEmpty ? 'This note will be removed from the call.' : preview,
+          preview.isEmpty
+              ? 'This note will be removed from the call.'
+              : preview,
           style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
         ),
         actions: [
@@ -1546,8 +1618,7 @@ class _NoteTrashButton extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Delete',
-                style: TextStyle(color: AppColors.hotSignal)),
+            child: Text('Delete', style: TextStyle(color: AppColors.hotSignal)),
           ),
         ],
       ),

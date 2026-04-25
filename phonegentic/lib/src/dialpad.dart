@@ -315,6 +315,21 @@ class _MyDialPadWidget extends State<DialPadWidget>
       final calendar = context.read<CalendarSyncService>();
       final contacts = context.read<ContactService>();
       final history = context.read<CallHistoryService>();
+      final tearSheet = context.read<TearSheetService>();
+      final jobFunction = context.read<JobFunctionService>();
+      final icf = context.read<InboundCallFlowService>();
+      if (tearSheet.isEditorOpen) {
+        tearSheet.closeEditor();
+        return true;
+      }
+      if (jobFunction.isEditorOpen) {
+        jobFunction.closeEditor();
+        return true;
+      }
+      if (icf.isEditorOpen) {
+        icf.closeEditor();
+        return true;
+      }
       if (contacts.isQuickAddOpen) {
         contacts.closeQuickAdd();
         return true;

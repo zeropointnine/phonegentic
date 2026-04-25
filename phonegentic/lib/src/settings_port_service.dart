@@ -1,16 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'agent_config_service.dart';
 import 'conference/conference_config.dart';
 import 'db/call_history_db.dart';
+import 'db/pocket_tts_voice_db.dart';
 import 'models/inbound_call_flow.dart';
 import 'models/job_function.dart';
 import 'settings_crypto.dart';
@@ -843,7 +845,15 @@ class SettingsPortService {
       'comfort_noise': {
         'enabled': cn.enabled,
         'volume': cn.volume,
-        'selected_path': cn.selectedPath,
+        // selected_path is device-specific; we store the basename + bundle
+        // the WAV bytes in `files` and remap on import.
+        'selected_filename':
+            cn.selectedPath != null ? p.basename(cn.selectedPath!) : null,
+        // Bundle ALL uploaded comfort-noise WAVs (not just the selected one)
+        // so the entire user pool is preserved across export/import.
+        'files': await _bundleComfortNoiseFiles(
+          await _listAllComfortNoisePaths(),
+        ),
       },
       'manager': {
         'phone_number': mgr.phoneNumber,
@@ -864,13 +874,42 @@ class SettingsPortService {
       final match = items.where((j) => j.id == selectedId);
       if (match.isNotEmpty) selectedTitle = match.first.title;
     }
+
+    // Build name/filename replacements for the numeric voice id and absolute
+    // comfort noise path so the export is portable across devices.
+    final voices = await PocketTtsVoiceDb.listVoices();
+    final voicesById = {for (final v in voices) if (v.id != null) v.id!: v};
+
+    // Bundle the entire user-uploaded pool -- voices and comfort-noise WAVs --
+    // rather than only the ones currently referenced by a job function. This
+    // ensures audio the user has uploaded is preserved across export/import
+    // even if it isn't wired up yet.
+    final bundledVoices = await _bundleVoices(
+      voicesById.values.where((v) => !v.isDefault),
+    );
+    final bundledComfort = await _bundleComfortNoiseFiles(
+      await _listAllComfortNoisePaths(),
+    );
+
     return {
       'selected_title': selectedTitle,
       'items': items.map((jf) {
         final m = jf.toMap();
         m.remove('id');
+        // Replace numeric voice id with a portable voice name.
+        final voice =
+            jf.pocketTtsVoiceId != null ? voicesById[jf.pocketTtsVoiceId] : null;
+        m['pocket_tts_voice_id'] = null;
+        m['pocket_tts_voice_name'] = voice?.name;
+        // Replace absolute comfort-noise path with a portable basename.
+        m['comfort_noise_path'] = null;
+        m['comfort_noise_filename'] = jf.comfortNoisePath != null
+            ? p.basename(jf.comfortNoisePath!)
+            : null;
         return m;
       }).toList(),
+      'pocket_tts_voices': bundledVoices,
+      'comfort_noise_files': bundledComfort,
     };
   }
 
@@ -898,6 +937,214 @@ class SettingsPortService {
         };
       }).toList(),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Voice / comfort-noise WAV bundling
+  // ---------------------------------------------------------------------------
+
+  /// Reads each Pocket TTS voice's WAV (if the file exists) and serializes
+  /// metadata + embedding + base64 audio for inclusion in the export envelope.
+  /// Default voices are still listed (by name only, no audio bytes) so they
+  /// can be matched by name on the target device after re-seeding.
+  static Future<List<Map<String, dynamic>>> _bundleVoices(
+    Iterable<PocketTtsVoice> voices,
+  ) async {
+    final bundled = <Map<String, dynamic>>[];
+    for (final v in voices) {
+      String? audioB64;
+      String? audioFilename;
+      if (!v.isDefault && v.audioPath != null && v.audioPath!.isNotEmpty) {
+        try {
+          final file = File(v.audioPath!);
+          if (await file.exists()) {
+            final bytes = await file.readAsBytes();
+            audioB64 = base64Encode(bytes);
+            audioFilename = p.basename(v.audioPath!);
+          }
+        } catch (e) {
+          debugPrint('[SettingsPort] Failed to bundle voice wav '
+              '"${v.name}": $e');
+        }
+      }
+
+      bundled.add({
+        'name': v.name,
+        'accent': v.accent,
+        'gender': v.gender,
+        'is_default': v.isDefault,
+        'audio_filename': audioFilename,
+        'audio_base64': audioB64,
+        'embedding_base64':
+            v.embedding != null ? base64Encode(v.embedding!) : null,
+        'created_at': v.createdAt.toIso8601String(),
+      });
+    }
+    return bundled;
+  }
+
+  /// Lists every file currently in the app's comfort-noise storage dir
+  /// (`{docs}/phonegentic/comfort_noise/`) so the whole user-uploaded pool can
+  /// be exported, not just the ones currently selected or referenced.
+  static Future<List<String>> _listAllComfortNoisePaths() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final cnDir = Directory(p.join(dir.path, 'phonegentic', 'comfort_noise'));
+      if (!await cnDir.exists()) return const <String>[];
+      return cnDir
+          .listSync()
+          .whereType<File>()
+          .map((f) => f.path)
+          .toList();
+    } catch (e) {
+      debugPrint('[SettingsPort] Failed to list comfort-noise dir: $e');
+      return const <String>[];
+    }
+  }
+
+  /// Reads each referenced comfort-noise WAV (skipping ones whose path doesn't
+  /// resolve on disk) and emits base64 entries keyed by basename.
+  static Future<List<Map<String, dynamic>>> _bundleComfortNoiseFiles(
+    Iterable<String> paths,
+  ) async {
+    final bundled = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final path in paths) {
+      if (path.isEmpty) continue;
+      final filename = p.basename(path);
+      if (!seen.add(filename)) continue;
+      try {
+        final file = File(path);
+        if (!await file.exists()) continue;
+        final bytes = await file.readAsBytes();
+        bundled.add({
+          'filename': filename,
+          'audio_base64': base64Encode(bytes),
+        });
+      } catch (e) {
+        debugPrint(
+            '[SettingsPort] Failed to bundle comfort-noise "$path": $e');
+      }
+    }
+    return bundled;
+  }
+
+  /// Extracts bundled comfort-noise WAVs into the app's comfort-noise dir
+  /// (`{docs}/phonegentic/comfort_noise/`). Returns a map of basename ->
+  /// absolute path for use when remapping references on import.
+  static Future<Map<String, String>> _extractComfortNoiseFiles(
+    List<dynamic>? entries,
+  ) async {
+    if (entries == null || entries.isEmpty) return const {};
+    final dir = await getApplicationDocumentsDirectory();
+    final outDir = Directory(p.join(dir.path, 'phonegentic', 'comfort_noise'));
+    await outDir.create(recursive: true);
+
+    final result = <String, String>{};
+    for (final raw in entries) {
+      final entry = raw as Map<String, dynamic>;
+      final filename = entry['filename'] as String?;
+      final b64 = entry['audio_base64'] as String?;
+      if (filename == null || filename.isEmpty || b64 == null) continue;
+      final outPath = p.join(outDir.path, filename);
+      try {
+        final bytes = base64Decode(b64);
+        final file = File(outPath);
+        if (!await file.exists()) {
+          await file.writeAsBytes(bytes, flush: true);
+        }
+        result[filename] = outPath;
+      } catch (e) {
+        debugPrint(
+            '[SettingsPort] Failed to extract comfort-noise "$filename": $e');
+      }
+    }
+    return result;
+  }
+
+  /// Extracts bundled Pocket TTS voice WAVs + embeddings and inserts (or
+  /// reuses existing by name) rows in the `pocket_tts_voices` table. Returns
+  /// a map of voice name -> db id for use when remapping `pocket_tts_voice_id`
+  /// references on import.
+  static Future<Map<String, int>> _extractAndInsertVoices(
+    List<dynamic>? entries,
+  ) async {
+    final result = <String, int>{};
+
+    // Pre-populate the map with already-present voices (defaults + prior
+    // imports) so references without a bundled WAV can still be resolved.
+    final existing = await PocketTtsVoiceDb.listVoices();
+    for (final v in existing) {
+      if (v.id != null) result[v.name] = v.id!;
+    }
+
+    if (entries == null || entries.isEmpty) return result;
+
+    final dir = await getApplicationDocumentsDirectory();
+    final voiceDir =
+        Directory(p.join(dir.path, 'phonegentic', 'pocket_tts_voices'));
+    await voiceDir.create(recursive: true);
+
+    for (final raw in entries) {
+      final entry = raw as Map<String, dynamic>;
+      final name = entry['name'] as String?;
+      if (name == null || name.isEmpty) continue;
+
+      // If a voice with this name already exists (default or previously
+      // imported), keep the existing row rather than duplicating.
+      if (result.containsKey(name)) continue;
+
+      final audioB64 = entry['audio_base64'] as String?;
+      final audioFilename = entry['audio_filename'] as String?;
+      final embeddingB64 = entry['embedding_base64'] as String?;
+      final accent = entry['accent'] as String?;
+      final gender = entry['gender'] as String?;
+      final isDefault = entry['is_default'] as bool? ?? false;
+      final createdAt =
+          DateTime.tryParse(entry['created_at'] as String? ?? '') ??
+              DateTime.now();
+
+      String? audioPath;
+      if (audioB64 != null && audioFilename != null && audioFilename.isNotEmpty) {
+        try {
+          final bytes = base64Decode(audioB64);
+          final outPath = p.join(voiceDir.path, audioFilename);
+          final file = File(outPath);
+          if (!await file.exists()) {
+            await file.writeAsBytes(bytes, flush: true);
+          }
+          audioPath = outPath;
+        } catch (e) {
+          debugPrint(
+              '[SettingsPort] Failed to extract voice wav "$name": $e');
+        }
+      }
+
+      if (audioPath == null && !isDefault) {
+        // No bundled audio and not a default -- can't recreate this voice.
+        continue;
+      }
+
+      Uint8List? embedding;
+      if (embeddingB64 != null) {
+        try {
+          embedding = base64Decode(embeddingB64);
+        } catch (_) {}
+      }
+
+      final newId = await PocketTtsVoiceDb.insertVoice(PocketTtsVoice(
+        name: name,
+        accent: accent,
+        gender: gender,
+        isDefault: isDefault,
+        audioPath: audioPath,
+        embedding: embedding,
+        createdAt: createdAt,
+      ));
+      result[name] = newId;
+    }
+
+    return result;
   }
 
   static Future<Map<String, dynamic>> _gatherApp() async {
@@ -1028,10 +1275,22 @@ class SettingsPortService {
 
     final cn = data['comfort_noise'] as Map<String, dynamic>?;
     if (cn != null) {
+      // Extract bundled WAV(s) and remap the portable filename back to an
+      // absolute path on this device. Fall back to the legacy `selected_path`
+      // field for older exports.
+      final extracted =
+          await _extractComfortNoiseFiles(cn['files'] as List?);
+      final filename = cn['selected_filename'] as String?;
+      String? selectedPath;
+      if (filename != null && extracted.containsKey(filename)) {
+        selectedPath = extracted[filename];
+      } else if (cn['selected_path'] is String) {
+        selectedPath = cn['selected_path'] as String;
+      }
       await AgentConfigService.saveComfortNoiseConfig(ComfortNoiseConfig(
         enabled: cn['enabled'] as bool? ?? false,
         volume: (cn['volume'] as num?)?.toDouble() ?? 0.3,
-        selectedPath: cn['selected_path'] as String?,
+        selectedPath: selectedPath,
       ));
     }
 
@@ -1050,6 +1309,15 @@ class SettingsPortService {
     final items = (data['items'] as List?) ?? [];
     final selectedTitle = data['selected_title'] as String?;
 
+    // Extract bundled WAVs & register voices before touching job functions so
+    // name/filename references can be remapped to the local ids/paths.
+    final comfortNoiseByFilename = await _extractComfortNoiseFiles(
+      data['comfort_noise_files'] as List?,
+    );
+    final voiceIdsByName = await _extractAndInsertVoices(
+      data['pocket_tts_voices'] as List?,
+    );
+
     // Delete existing job functions
     final existing = await CallHistoryDb.getAllJobFunctions();
     for (final row in existing) {
@@ -1061,6 +1329,25 @@ class SettingsPortService {
     for (final item in items) {
       final map = Map<String, dynamic>.from(item as Map);
       map.remove('id');
+
+      // Remap portable voice name -> local id (fallback to legacy numeric
+      // field if the export predates phase 2).
+      final voiceName = map.remove('pocket_tts_voice_name') as String?;
+      if (voiceName != null && voiceIdsByName.containsKey(voiceName)) {
+        map['pocket_tts_voice_id'] = voiceIdsByName[voiceName];
+      } else if (voiceName != null) {
+        map['pocket_tts_voice_id'] = null;
+      }
+
+      // Remap portable comfort-noise filename -> local absolute path.
+      final cnFilename = map.remove('comfort_noise_filename') as String?;
+      if (cnFilename != null &&
+          comfortNoiseByFilename.containsKey(cnFilename)) {
+        map['comfort_noise_path'] = comfortNoiseByFilename[cnFilename];
+      } else if (cnFilename != null) {
+        map['comfort_noise_path'] = null;
+      }
+
       final jf = JobFunction.fromMap(map);
       final newId = await CallHistoryDb.insertJobFunction(jf);
       if (selectedTitle != null && jf.title == selectedTitle) {

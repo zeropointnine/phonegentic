@@ -144,6 +144,14 @@ class AgentService extends ChangeNotifier {
   bool _callDialPending = false;
   bool _idleCallConfirmed = false;
   Map<String, dynamic>? _pendingIdleCall;
+
+  /// Last time the manager authored a request (local voice transcript or
+  /// inbound SMS from their configured number).  The idle-call guard treats
+  /// any make_call within `_managerAuthWindow` after this timestamp as
+  /// pre-authorized so that LLM round-trips and intermediate state resets
+  /// can't strip the authorization between the request and the tool call.
+  DateTime? _lastManagerAuthAt;
+  static const Duration _managerAuthWindow = Duration(minutes: 5);
   bool _isConferenceLeg = false;
   String? _lastDialedNumber;
   String? _priorCallTranscript;
@@ -3862,11 +3870,17 @@ class AgentService extends ChangeNotifier {
       }
     }
 
-    // When a make_call was blocked by the idle guard and the user's follow-up
-    // transcript arrives, unlock so the LLM can retry the call.
-    if (_pendingIdleCall != null && _callPhase == CallPhase.idle && !isRemote) {
+    // The host speaker at idle is the manager, so any local utterance
+    // pre-authorizes a make_call from the LLM that follows.  This both
+    // unlocks an already-pending blocked call and skips the guard for new
+    // direct requests like "call Stan now".
+    if (_callPhase == CallPhase.idle && !isRemote) {
+      final hadPending = _pendingIdleCall != null;
       _idleCallConfirmed = true;
-      debugPrint('[AgentService] Idle call unlocked — user responded: "$text"');
+      _pendingIdleCall = null;
+      _lastManagerAuthAt = DateTime.now();
+      debugPrint('[AgentService] Idle call pre-authorized — manager spoke '
+          '(hadPending=$hadPending): "$text"');
     }
 
     final lowConfidence = confidence > 0.0 && confidence < 0.5;
@@ -4547,15 +4561,28 @@ class AgentService extends ChangeNotifier {
     try {
       switch (req.name) {
         case 'make_call':
-          if (_callPhase == CallPhase.idle && !_idleCallConfirmed) {
+          // The manager's recent voice/SMS request itself authorizes the
+          // dial; the per-call confirmation flag would otherwise be wiped
+          // by intermediate state resets between the request and this tool
+          // call.  Falling back to a 5-minute auth window keeps requests
+          // like "call Stan" working without an extra confirmation hop.
+          final managerAuthorized =
+              _idleCallConfirmed || _hasRecentManagerAuth;
+          if (_callPhase == CallPhase.idle && !managerAuthorized) {
             _pendingIdleCall = req.arguments;
             result = 'BLOCKED: You are in idle mode with no active call. '
                 'Ask the user to confirm they want to place this call before proceeding. '
                 'Do NOT call make_call again until the user explicitly confirms.';
             debugPrint('[AgentService] Idle call guard: blocked make_call to '
-                '${req.arguments['number']}');
+                '${req.arguments['number']} '
+                '(idleConfirmed=$_idleCallConfirmed '
+                'managerAuthAgeSec=${_lastManagerAuthAt == null ? 'never' : DateTime.now().difference(_lastManagerAuthAt!).inSeconds})');
             break;
           }
+          debugPrint('[AgentService] Idle call guard: passing make_call to '
+              '${req.arguments['number']} '
+              '(idleConfirmed=$_idleCallConfirmed '
+              'recentMgrAuth=$_hasRecentManagerAuth)');
           _idleCallConfirmed = false;
           result = await _handleMakeCall(req.arguments);
           break;
@@ -4993,11 +5020,27 @@ class AgentService extends ChangeNotifier {
     _smsConsecutiveRateLimits.remove(normalizedFrom);
 
     // If the manager texts in, clear the confirmation cooldown so the agent
-    // can reply to them.
-    if (_agentManagerConfig.isConfigured &&
-        normalizedFrom == ensureE164(_agentManagerConfig.phoneNumber)) {
+    // can reply to them.  The manager's SMS is itself authorization, so
+    // pre-approve any make_call the LLM emits in response — no extra
+    // transcript-based confirmation required.  Use a tolerant phone match
+    // (last-10-digits fallback) and stamp `_lastManagerAuthAt` so the
+    // authorization survives state resets between this SMS and the
+    // make_call tool call that follows.
+    final fromManager = _isManagerNumber(msg.from);
+    debugPrint('[AgentService] SMS auth check: from=${msg.from} '
+        'normalized=$normalizedFrom mgr="${_agentManagerConfig.phoneNumber}" '
+        'mgrConfigured=${_agentManagerConfig.isConfigured} '
+        'fromManager=$fromManager');
+    if (fromManager) {
       _smsManagerCooldownUntil = null;
       _smsThirdPartySendAt = null;
+      _idleCallConfirmed = true;
+      _pendingIdleCall = null;
+      _lastManagerAuthAt = DateTime.now();
+    } else {
+      // Third-party SMS must not pre-authorize calls.  Clear any prior
+      // confirmation so the idle-guard requires manager approval again.
+      _idleCallConfirmed = false;
     }
 
     String? contactName;
@@ -7135,10 +7178,34 @@ class AgentService extends ChangeNotifier {
     if (!_callPhase.isActive || _isOutbound) return false;
     final remote = _remoteIdentity;
     if (remote == null || remote.isEmpty) return false;
-    final normalizedRemote = CallHistoryDb.normalizePhone(remote);
-    final normalizedManager =
-        CallHistoryDb.normalizePhone(_agentManagerConfig.phoneNumber);
-    return normalizedRemote == normalizedManager;
+    return _isManagerNumber(remote);
+  }
+
+  /// Tolerant comparison against the configured manager phone number.
+  /// Matches on E.164 first, then falls back to the last-10-digits match used
+  /// elsewhere so quirks in stored formatting (spaces, parens, leading 1) do
+  /// not break authorization.  Returns false when the manager isn't configured
+  /// or the input is null/empty.
+  bool _isManagerNumber(String? phone) {
+    if (!_agentManagerConfig.isConfigured) return false;
+    if (phone == null || phone.isEmpty) return false;
+    final mgrRaw = _agentManagerConfig.phoneNumber;
+    final phoneE164 = ensureE164(phone);
+    final mgrE164 = ensureE164(mgrRaw);
+    if (phoneE164.isNotEmpty && phoneE164 == mgrE164) return true;
+    final phoneShort = CallHistoryDb.normalizePhone(phone);
+    final mgrShort = CallHistoryDb.normalizePhone(mgrRaw);
+    return phoneShort.isNotEmpty && phoneShort == mgrShort;
+  }
+
+  /// True when the manager spoke or texted within `_managerAuthWindow`.
+  /// Used by the idle-call guard so make_call from the LLM that follows a
+  /// manager request goes through, even if the per-call confirmation flag
+  /// got cleared by an intermediate state reset.
+  bool get _hasRecentManagerAuth {
+    final t = _lastManagerAuthAt;
+    if (t == null) return false;
+    return DateTime.now().difference(t) <= _managerAuthWindow;
   }
 
   /// Returns null if access is granted, or a rejection message if denied.

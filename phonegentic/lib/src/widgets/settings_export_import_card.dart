@@ -19,7 +19,10 @@ class SettingsExportImportPanel extends StatefulWidget {
 class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
   final Set<SettingsSection> _selected = Set.of(SettingsSection.values);
   ExportFormat _format = ExportFormat.zip;
-  bool _busy = false;
+  bool _exporting = false;
+  bool _importing = false;
+
+  bool get _busy => _exporting || _importing;
 
   bool get _allSelected => _selected.length == SettingsSection.values.length;
 
@@ -45,7 +48,7 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
 
   Future<void> _export() async {
     if (_selected.isEmpty) return;
-    setState(() => _busy = true);
+    setState(() => _exporting = true);
     try {
       if (_allSelected) {
         await SettingsPortService.exportAll(_format, context);
@@ -53,17 +56,17 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
         await SettingsPortService.exportSelected(_selected, _format, context);
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _exporting = false);
     }
   }
 
   Future<void> _import() async {
-    setState(() => _busy = true);
+    setState(() => _importing = true);
     try {
       final ok = await SettingsPortService.importAll(context);
       if (ok) widget.onImported?.call();
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _importing = false);
     }
   }
 
@@ -106,13 +109,14 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
                 children: [
                   Expanded(
                     child: _buildButton(
-                        'Export', Icons.upload_rounded, _export,
-                        enabled: _selected.isNotEmpty),
+                        'Export', Icons.download_rounded, _export,
+                        enabled: _selected.isNotEmpty, loading: _exporting),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child:
-                        _buildButton('Import', Icons.download_rounded, _import),
+                    child: _buildButton(
+                        'Import', Icons.upload_rounded, _import,
+                        loading: _importing),
                   ),
                 ],
               ),
@@ -180,9 +184,8 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: checked
-                      ? AppColors.textPrimary
-                      : AppColors.textTertiary,
+                  color:
+                      checked ? AppColors.textPrimary : AppColors.textTertiary,
                 ),
               ),
             ),
@@ -257,8 +260,7 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
                     f == ExportFormat.zip ? 'ZIP' : 'TAR',
                     style: TextStyle(
                       fontSize: 11,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.w500,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                       letterSpacing: -0.2,
                       color: selected
                           ? AppColors.onAccent
@@ -275,7 +277,7 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
   }
 
   Widget _buildButton(String label, IconData icon, VoidCallback onTap,
-      {bool enabled = true}) {
+      {bool enabled = true, bool loading = false}) {
     final isEnabled = enabled && !_busy;
     return GestureDetector(
       onTap: isEnabled ? onTap : null,
@@ -287,7 +289,7 @@ class _SettingsExportImportPanelState extends State<SettingsExportImportPanel> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: AppColors.border, width: 0.5),
         ),
-        child: _busy
+        child: loading
             ? Center(
                 child: SizedBox(
                   width: 16,

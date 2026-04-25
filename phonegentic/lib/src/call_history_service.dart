@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'db/call_history_db.dart';
@@ -290,6 +292,113 @@ class CallSearchParams {
     return n;
   }
 
+  /// True when no filters have been set; the search is effectively "everything".
+  bool get isEmpty =>
+      contactName == null &&
+      minDurationSeconds == null &&
+      maxDurationSeconds == null &&
+      since == null &&
+      before == null &&
+      direction == null &&
+      status == null &&
+      (transcriptQuery == null || transcriptQuery!.isEmpty);
+
+  /// Human-readable description of this search's filters, for empty-state
+  /// UIs. Example: "Missed Calls in the Last Hour to Lee". Returns null
+  /// when no filters are set (caller should fall back to generic text).
+  String? describe() {
+    if (isEmpty) return null;
+    final segments = <String>[_describeCore()];
+    final time = _describeTime();
+    if (time != null) segments.add(time);
+    final contact = _describeContact();
+    if (contact != null) segments.add(contact);
+    final dur = _describeDuration();
+    if (dur != null) segments.add(dur);
+    if (transcriptQuery != null && transcriptQuery!.isNotEmpty) {
+      segments.add('mentioning "$transcriptQuery"');
+    }
+    return segments.join(' ');
+  }
+
+  String _describeCore() {
+    final parts = <String>[];
+    if (direction == 'outbound') {
+      parts.add('Outbound');
+    } else if (direction == 'inbound') {
+      parts.add('Inbound');
+    }
+    if (status == 'missed') {
+      parts.add('Missed');
+    } else if (status == 'failed') {
+      parts.add('Failed');
+    }
+    parts.add('Calls');
+    return parts.join(' ');
+  }
+
+  String? _describeTime() {
+    if (since == null) return null;
+    final now = DateTime.now();
+    if (before != null && _sameDay(since!, before!)) {
+      if (_sameDay(since!, now)) return 'Today';
+      if (_sameDay(since!, now.subtract(const Duration(days: 1)))) {
+        return 'Yesterday';
+      }
+      return 'on ${_formatDate(since!)}';
+    }
+    if (before != null) {
+      return 'from ${_formatDate(since!)} to ${_formatDate(before!)}';
+    }
+    final diff = now.difference(since!);
+    if (diff.inMinutes < 65) return 'in the Last Hour';
+    if (diff.inHours < 25) return 'in the Last 24 Hours';
+    if (_sameDay(since!, now)) return 'Today';
+    if (diff.inDays < 8) return 'in the Last ${diff.inDays} Days';
+    return 'since ${_formatDate(since!)}';
+  }
+
+  String? _describeContact() {
+    final raw = contactName?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final name = _titleCase(raw);
+    if (direction == 'outbound') return 'to $name';
+    if (direction == 'inbound') return 'from $name';
+    return 'by $name';
+  }
+
+  String? _describeDuration() {
+    String fmt(int s) {
+      if (s >= 3600) return '${(s / 3600).round()} hr';
+      if (s >= 60) return '${(s / 60).round()} min';
+      return '$s sec';
+    }
+
+    if (minDurationSeconds != null && maxDurationSeconds != null) {
+      return 'between ${fmt(minDurationSeconds!)} and ${fmt(maxDurationSeconds!)}';
+    }
+    if (minDurationSeconds != null) return 'over ${fmt(minDurationSeconds!)}';
+    if (maxDurationSeconds != null) return 'under ${fmt(maxDurationSeconds!)}';
+    return null;
+  }
+
+  static String _titleCase(String s) => s
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .map((w) => w[0].toUpperCase() + w.substring(1))
+      .join(' ');
+
+  static String _formatDate(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[d.month - 1]} ${d.day}';
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   /// Try to parse a date token like "today", "yesterday", "monday",
   /// "april 15", "4/15", "4/15/2026".
   static DateTime? _tryParseDate(String token, DateTime now) {
@@ -385,6 +494,9 @@ class CallHistoryService extends ChangeNotifier {
   bool _isOpen = false;
   String _searchQuery = '';
   bool _isLoading = false;
+  bool _isAiSearching = false;
+  Timer? _aiSearchTimer;
+  CallSearchParams? _lastSearchParams;
   int? _expandedCallId;
 
   List<Map<String, dynamic>> get searchResults =>
@@ -392,6 +504,18 @@ class CallHistoryService extends ChangeNotifier {
   bool get isOpen => _isOpen;
   String get searchQuery => _searchQuery;
   bool get isLoading => _isLoading;
+
+  /// True while `smartSearch` has escalated to the AI agent and we're
+  /// waiting for it to run the `search_calls` tool (or for the safety
+  /// timeout). The UI uses this to show a "Searching with AI…" state
+  /// instead of immediately flashing "No calls found" after the local
+  /// DB returns zero rows.
+  bool get isAiSearching => _isAiSearching;
+
+  /// Parameters from the most recent search, used by the panel to build
+  /// a descriptive empty-state message (e.g. "No Missed Calls in the
+  /// Last Hour to Lee") instead of a generic "No calls found".
+  CallSearchParams? get lastSearchParams => _lastSearchParams;
   int? get activeCallRecordId => _activeCallRecordId;
   int? get expandedCallId => _expandedCallId;
 
@@ -710,7 +834,17 @@ class CallHistoryService extends ChangeNotifier {
 
   /// Unified search: runs a local DB search first. If it finds results,
   /// displays them immediately. If not, falls through to the AI agent.
+  ///
+  /// While the AI is working on the escalated query we keep
+  /// `isAiSearching=true` so the panel can show a "Searching with AI…"
+  /// state instead of flashing the empty-results UI the instant the
+  /// local DB returns zero rows. The flag is cleared when the AI tool
+  /// runs `searchAndFormat` (the normal path) or after a safety
+  /// timeout (covers cases where the AI replies without calling the
+  /// `search_calls` tool).
   Future<void> smartSearch(String query) async {
+    _aiSearchTimer?.cancel();
+    _isAiSearching = false;
     if (query.trim().isEmpty) {
       await loadRecentCalls();
       return;
@@ -718,7 +852,14 @@ class CallHistoryService extends ChangeNotifier {
     _searchQuery = query;
     await naturalSearch(query);
     if (_searchResults.isEmpty && onAgentSearch != null) {
+      _isAiSearching = true;
+      notifyListeners();
       onAgentSearch!(query);
+      _aiSearchTimer = Timer(const Duration(seconds: 30), () {
+        if (!_isAiSearching) return;
+        _isAiSearching = false;
+        notifyListeners();
+      });
     }
   }
 
@@ -727,6 +868,7 @@ class CallHistoryService extends ChangeNotifier {
   }
 
   Future<void> loadRecentCalls() async {
+    _lastSearchParams = null;
     _isLoading = true;
     notifyListeners();
     try {
@@ -742,6 +884,7 @@ class CallHistoryService extends ChangeNotifier {
   }
 
   Future<void> search(CallSearchParams params) async {
+    _lastSearchParams = params;
     _isLoading = true;
     notifyListeners();
     try {
@@ -781,6 +924,11 @@ class CallHistoryService extends ChangeNotifier {
   /// Execute a search and return a human-readable summary for the agent.
   Future<String> searchAndFormat(CallSearchParams params) async {
     await search(params);
+    _aiSearchTimer?.cancel();
+    if (_isAiSearching) {
+      _isAiSearching = false;
+      notifyListeners();
+    }
     if (_searchResults.isEmpty) return 'No calls found matching your criteria.';
 
     final lines = _searchResults.take(10).map((r) {
@@ -809,5 +957,11 @@ class CallHistoryService extends ChangeNotifier {
 
   Future<List<Map<String, dynamic>>> getTranscripts(int callRecordId) {
     return CallHistoryDb.getTranscripts(callRecordId);
+  }
+
+  @override
+  void dispose() {
+    _aiSearchTimer?.cancel();
+    super.dispose();
   }
 }
