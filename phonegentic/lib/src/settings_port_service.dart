@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
@@ -75,6 +76,93 @@ extension SettingsSectionLabel on SettingsSection {
   }
 }
 
+/// Collects the set of audio files to include in an export archive,
+/// *without* reading their bytes. Reading is deferred to the export
+/// isolate ([_runExportInIsolate]) so the UI thread never blocks on
+/// large WAV reads or the final ZIP/TAR encode.
+class _AudioManifest {
+  /// `(archivePath, absoluteDiskPath)` pairs.
+  final List<({String archivePath, String diskPath})> entries = [];
+  final Set<String> _seenArchivePaths = {};
+
+  /// Adds every file in `{docs}/phonegentic/<docsSubdir>/` (or [paths] if
+  /// explicit) to the manifest under `<archivePrefix>/<filename>`. Returns
+  /// the basenames added (or already present) for embedding into the JSON
+  /// envelope.
+  Future<List<String>> attachDir(
+    String archivePrefix,
+    String docsSubdir, {
+    Iterable<String>? paths,
+  }) async {
+    final sourcePaths =
+        paths ?? await SettingsPortService._listAudioDir(docsSubdir);
+    final names = <String>[];
+    final seenLocal = <String>{};
+    for (final path in sourcePaths) {
+      if (path.isEmpty) continue;
+      final filename = p.basename(path);
+      if (!seenLocal.add(filename)) continue;
+      final entryName = '$archivePrefix/$filename';
+      if (_seenArchivePaths.add(entryName)) {
+        entries.add((archivePath: entryName, diskPath: path));
+      }
+      names.add(filename);
+    }
+    return names;
+  }
+}
+
+/// Sendable payload describing all the work to be done in the export
+/// isolate. Class instances composed entirely of sendable fields (Strings,
+/// bools, Lists, Uint8List, records) transfer cleanly across isolates.
+class _ExportPayload {
+  final List<({String name, Uint8List bytes})> jsonEntries;
+  final List<({String archivePath, String diskPath})> audioEntries;
+  final String outputPath;
+  final bool useTar;
+
+  _ExportPayload({
+    required this.jsonEntries,
+    required this.audioEntries,
+    required this.outputPath,
+    required this.useTar,
+  });
+}
+
+/// Runs entirely inside a background isolate spawned by [Isolate.run]. Reads
+/// every audio file from disk, assembles an [Archive], encodes to ZIP or
+/// TAR+GZip, and writes the result to [_ExportPayload.outputPath]. Keeping
+/// all of this off the main isolate prevents the UI from hanging during
+/// large exports (multi-megabyte recordings, hours of audio, etc.).
+Future<void> _runExportInIsolate(_ExportPayload payload) async {
+  final archive = Archive();
+
+  for (final ae in payload.audioEntries) {
+    try {
+      final f = File(ae.diskPath);
+      if (!f.existsSync()) continue;
+      final bytes = f.readAsBytesSync();
+      archive.addFile(ArchiveFile(ae.archivePath, bytes.length, bytes));
+    } catch (_) {
+      // Skip unreadable files rather than failing the whole export.
+    }
+  }
+
+  for (final je in payload.jsonEntries) {
+    archive.addFile(ArchiveFile(je.name, je.bytes.length, je.bytes));
+  }
+
+  final outFile = File(payload.outputPath);
+  if (payload.useTar) {
+    final tarBytes = TarEncoder().encode(archive);
+    final gzBytes = GZipEncoder().encode(tarBytes);
+    outFile.writeAsBytesSync(gzBytes);
+  } else {
+    final encoded = ZipEncoder().encode(archive);
+    outFile.writeAsBytesSync(encoded);
+  }
+}
+
 class SettingsPortService {
   SettingsPortService._();
 
@@ -87,12 +175,11 @@ class SettingsPortService {
     ExportFormat format,
     BuildContext context,
   ) async {
-    // Audio attachments only round-trip through .zip / .tar archives.
-    // For the legacy `.json` format we don't have an archive to put raw
-    // bytes into, so audio bundling is skipped (the JSON envelope still
-    // round-trips all settings/metadata).
-    final attach = format == ExportFormat.json ? null : Archive();
-    final data = await _gatherData(section, attach);
+    // Audio attachments only round-trip through .zip / .tar archives. For
+    // the legacy `.json` format there's no archive to put raw bytes into,
+    // so audio bundling is skipped (settings/metadata still round-trip).
+    final manifest = format == ExportFormat.json ? null : _AudioManifest();
+    final data = await _gatherData(section, manifest);
     final envelope = {
       'app': 'phonegentic',
       'version': 1,
@@ -133,19 +220,23 @@ class SettingsPortService {
         await outputFile.writeAsBytes(outputBytes);
         break;
       case ExportFormat.zip:
-        attach!.addFile(ArchiveFile('$baseName.json', outputBytes.length,
-            Uint8List.fromList(outputBytes)));
-        final encoded = ZipEncoder().encode(attach);
-        outputFile = File('${downloadsDir.path}/$baseName.zip');
-        await outputFile.writeAsBytes(encoded);
-        break;
       case ExportFormat.tar:
-        attach!.addFile(ArchiveFile('$baseName.json', outputBytes.length,
-            Uint8List.fromList(outputBytes)));
-        final tarBytes = TarEncoder().encode(attach);
-        final gzBytes = GZipEncoder().encode(tarBytes);
-        outputFile = File('${downloadsDir.path}/$baseName.tar.gz');
-        await outputFile.writeAsBytes(gzBytes);
+        final isTar = format == ExportFormat.tar;
+        outputFile = File(
+          '${downloadsDir.path}/$baseName${isTar ? '.tar.gz' : '.zip'}',
+        );
+        final payload = _ExportPayload(
+          jsonEntries: [
+            (
+              name: '$baseName.json',
+              bytes: Uint8List.fromList(outputBytes),
+            ),
+          ],
+          audioEntries: manifest!.entries,
+          outputPath: outputFile.path,
+          useTar: isTar,
+        );
+        await Isolate.run(() => _runExportInIsolate(payload));
         break;
     }
 
@@ -194,12 +285,14 @@ class SettingsPortService {
     if (!context.mounted) return null;
     final password = await _askExportPassword(context);
 
-    final archive = Archive();
+    // Gather (main isolate): each section produces a JSON envelope and adds
+    // its audio file paths to a shared manifest. No audio bytes are read
+    // here -- the heavy file I/O + archive encode happens in [Isolate.run]
+    // below so the UI stays responsive.
+    final manifest = _AudioManifest();
+    final jsonEntries = <({String name, Uint8List bytes})>[];
     for (final section in SettingsSection.values) {
-      // Pass `archive` so each section attaches its raw audio entries to
-      // the same archive (under `audio/<subdir>/<filename>` paths). This
-      // keeps the JSON envelope small even when there are large recordings.
-      final data = await _gatherData(section, archive);
+      final data = await _gatherData(section, manifest);
       final envelope = {
         'app': 'phonegentic',
         'version': 1,
@@ -210,40 +303,33 @@ class SettingsPortService {
       final rawJsonBytes = utf8
           .encode(const JsonEncoder.withIndent('  ').convert(envelope));
 
-      List<int> fileBytes;
+      Uint8List fileBytes;
       if (password != null) {
         final encrypted = await SettingsCrypto.encrypt(
           Uint8List.fromList(rawJsonBytes),
           password,
         );
-        fileBytes = utf8
-            .encode(const JsonEncoder.withIndent('  ').convert(encrypted));
+        fileBytes = Uint8List.fromList(
+          utf8.encode(const JsonEncoder.withIndent('  ').convert(encrypted)),
+        );
       } else {
-        fileBytes = rawJsonBytes;
+        fileBytes = Uint8List.fromList(rawJsonBytes);
       }
 
-      archive.addFile(ArchiveFile(
-        '${section.label}.json',
-        fileBytes.length,
-        Uint8List.fromList(fileBytes),
-      ));
+      jsonEntries.add((name: '${section.label}.json', bytes: fileBytes));
     }
 
-    File outputFile;
-    switch (format) {
-      case ExportFormat.json:
-      case ExportFormat.zip:
-        final encoded = ZipEncoder().encode(archive);
-        outputFile = File('${downloadsDir.path}/$baseName.zip');
-        await outputFile.writeAsBytes(encoded);
-        break;
-      case ExportFormat.tar:
-        final tarBytes = TarEncoder().encode(archive);
-        final gzBytes = GZipEncoder().encode(tarBytes);
-        outputFile = File('${downloadsDir.path}/$baseName.tar.gz');
-        await outputFile.writeAsBytes(gzBytes);
-        break;
-    }
+    final isTar = format == ExportFormat.tar;
+    final outputFile = File(
+      '${downloadsDir.path}/$baseName${isTar ? '.tar.gz' : '.zip'}',
+    );
+    final payload = _ExportPayload(
+      jsonEntries: jsonEntries,
+      audioEntries: manifest.entries,
+      outputPath: outputFile.path,
+      useTar: isTar,
+    );
+    await Isolate.run(() => _runExportInIsolate(payload));
 
     await Process.run('open', [downloadsDir.path]);
 
@@ -783,14 +869,14 @@ class SettingsPortService {
   // ---------------------------------------------------------------------------
 
   static Future<Map<String, dynamic>> _gatherData(
-      SettingsSection section, Archive? attach) async {
+      SettingsSection section, _AudioManifest? manifest) async {
     switch (section) {
       case SettingsSection.sipSettings:
-        return _gatherSip(attach);
+        return _gatherSip(manifest);
       case SettingsSection.agentSettings:
-        return _gatherAgent(attach);
+        return _gatherAgent(manifest);
       case SettingsSection.jobFunctions:
-        return _gatherJobFunctions(attach);
+        return _gatherJobFunctions(manifest);
       case SettingsSection.inboundWorkflows:
         return _gatherInboundWorkflows();
       case SettingsSection.appSettings:
@@ -798,7 +884,8 @@ class SettingsPortService {
     }
   }
 
-  static Future<Map<String, dynamic>> _gatherSip(Archive? attach) async {
+  static Future<Map<String, dynamic>> _gatherSip(
+      _AudioManifest? manifest) async {
     final prefs = await SharedPreferences.getInstance();
     final conf = await AgentConfigService.loadConferenceConfig();
 
@@ -809,9 +896,8 @@ class SettingsPortService {
     // basename (for custom WAV/MP3/AAC/M4A files in `{docs}/.../ringtones/`).
     final selectedRingtone = prefs.getString('agent_ringtone') ?? '';
     final selectedIsAsset = selectedRingtone.startsWith('assets/');
-    final ringtoneFilenames = attach != null
-        ? await _attachAudioDirToArchive(
-            attach, 'audio/ringtones', 'ringtones')
+    final ringtoneFilenames = manifest != null
+        ? await manifest.attachDir('audio/ringtones', 'ringtones')
         : <String>[];
     return {
       'port': prefs.getString('port') ?? '',
@@ -862,7 +948,8 @@ class SettingsPortService {
     };
   }
 
-  static Future<Map<String, dynamic>> _gatherAgent(Archive? attach) async {
+  static Future<Map<String, dynamic>> _gatherAgent(
+      _AudioManifest? manifest) async {
     final voice = await AgentConfigService.loadVoiceConfig();
     final text = await AgentConfigService.loadTextConfig();
     final tts = await AgentConfigService.loadTtsConfig();
@@ -872,17 +959,14 @@ class SettingsPortService {
     final cn = await AgentConfigService.loadComfortNoiseConfig();
     final mgr = await UserConfigService.loadAgentManagerConfig();
 
-    final recordingFilenames = attach != null
-        ? await _attachAudioDirToArchive(
-            attach, 'audio/recordings', 'recordings')
+    final recordingFilenames = manifest != null
+        ? await manifest.attachDir('audio/recordings', 'recordings')
         : <String>[];
-    final voiceSampleFilenames = attach != null
-        ? await _attachAudioDirToArchive(
-            attach, 'audio/voice_samples', 'voice_samples')
+    final voiceSampleFilenames = manifest != null
+        ? await manifest.attachDir('audio/voice_samples', 'voice_samples')
         : <String>[];
-    final comfortFilenames = attach != null
-        ? await _attachAudioDirToArchive(
-            attach, 'audio/comfort_noise', 'comfort_noise')
+    final comfortFilenames = manifest != null
+        ? await manifest.attachDir('audio/comfort_noise', 'comfort_noise')
         : <String>[];
     return {
       'voice': {
@@ -953,7 +1037,7 @@ class SettingsPortService {
   }
 
   static Future<Map<String, dynamic>> _gatherJobFunctions(
-      Archive? attach) async {
+      _AudioManifest? manifest) async {
     final rows = await CallHistoryDb.getAllJobFunctions();
     final items = rows.map((r) => JobFunction.fromMap(r)).toList();
     final prefs = await SharedPreferences.getInstance();
@@ -1006,17 +1090,15 @@ class SettingsPortService {
         'created_at': v.createdAt.toIso8601String(),
       });
     }
-    if (attach != null) {
-      await _attachAudioDirToArchive(
-        attach,
+    if (manifest != null) {
+      await manifest.attachDir(
         'audio/pocket_tts_voices',
         'pocket_tts_voices',
         paths: voiceWavPaths,
       );
     }
-    final comfortFilenames = attach != null
-        ? await _attachAudioDirToArchive(
-            attach, 'audio/comfort_noise', 'comfort_noise')
+    final comfortFilenames = manifest != null
+        ? await manifest.attachDir('audio/comfort_noise', 'comfort_noise')
         : <String>[];
 
     return {
@@ -1073,9 +1155,12 @@ class SettingsPortService {
   // Audio files (ringtones, recordings, voice samples, comfort-noise WAVs,
   // pocket-TTS voice WAVs) are NOT base64-encoded into the JSON envelopes.
   // Encoding multi-megabyte WAVs into a single JSON blob blows up memory and
-  // hangs the UI thread. Instead we add raw audio bytes directly to the
-  // export Archive under `audio/<subdir>/<filename>` paths, and the JSON
-  // envelope only references those by basename.
+  // hangs the UI thread. Instead, the export side builds an [_AudioManifest]
+  // of `(archivePath, diskPath)` pairs on the main isolate (no I/O), then
+  // hands the manifest off to a background isolate ([_runExportInIsolate])
+  // that reads each file, builds the [Archive], encodes ZIP/TAR+GZip, and
+  // writes the result to disk. The JSON envelope only references files by
+  // basename; raw bytes live in `audio/<subdir>/<filename>` archive entries.
   //
   // For the legacy `.json` export format (no archive), audio attachments
   // are silently skipped — only settings/metadata round-trip.
@@ -1096,47 +1181,6 @@ class SettingsPortService {
       debugPrint('[SettingsPort] Failed to list "$subdir" dir: $e');
       return const <String>[];
     }
-  }
-
-  /// Attaches every file in the docs subdir (or [paths] if explicit) to the
-  /// archive under `<archivePrefix>/<filename>`. Skips entries already
-  /// present in the archive (so the same WAV can be referenced from multiple
-  /// sections without duplicating bytes). Returns the basenames added/seen.
-  static Future<List<String>> _attachAudioDirToArchive(
-    Archive attach,
-    String archivePrefix,
-    String docsSubdir, {
-    Iterable<String>? paths,
-  }) async {
-    final sourcePaths = paths ?? await _listAudioDir(docsSubdir);
-    final names = <String>[];
-    final seen = <String>{};
-
-    final existingNames = <String>{
-      for (final f in attach.files) f.name,
-    };
-
-    for (final path in sourcePaths) {
-      if (path.isEmpty) continue;
-      final filename = p.basename(path);
-      if (!seen.add(filename)) continue;
-      final entryName = '$archivePrefix/$filename';
-      if (existingNames.contains(entryName)) {
-        names.add(filename);
-        continue;
-      }
-      try {
-        final file = File(path);
-        if (!await file.exists()) continue;
-        final bytes = await file.readAsBytes();
-        attach.addFile(ArchiveFile(entryName, bytes.length, bytes));
-        existingNames.add(entryName);
-        names.add(filename);
-      } catch (e) {
-        debugPrint('[SettingsPort] Failed to attach "$path": $e');
-      }
-    }
-    return names;
   }
 
   /// Extracts every entry in [attach] whose name starts with
@@ -1704,12 +1748,14 @@ class SettingsPortService {
     if (!context.mounted) return null;
     final password = await _askExportPassword(context);
 
-    final archive = Archive();
+    // Gather (main isolate). Audio bytes are NOT read here; instead the
+    // shared manifest collects file paths and the heavy archive encode +
+    // write happens in [Isolate.run] below.
+    final manifest = _AudioManifest();
+    final jsonEntries = <({String name, Uint8List bytes})>[];
     for (final section in SettingsSection.values) {
       if (!sections.contains(section)) continue;
-      // Pass the shared archive so each section's raw audio bytes are added
-      // as `audio/<subdir>/<filename>` entries (no base64 in JSON).
-      final data = await _gatherData(section, archive);
+      final data = await _gatherData(section, manifest);
       final envelope = {
         'app': 'phonegentic',
         'version': 1,
@@ -1720,40 +1766,33 @@ class SettingsPortService {
       final rawJsonBytes =
           utf8.encode(const JsonEncoder.withIndent('  ').convert(envelope));
 
-      List<int> fileBytes;
+      Uint8List fileBytes;
       if (password != null) {
         final encrypted = await SettingsCrypto.encrypt(
           Uint8List.fromList(rawJsonBytes),
           password,
         );
-        fileBytes = utf8
-            .encode(const JsonEncoder.withIndent('  ').convert(encrypted));
+        fileBytes = Uint8List.fromList(
+          utf8.encode(const JsonEncoder.withIndent('  ').convert(encrypted)),
+        );
       } else {
-        fileBytes = rawJsonBytes;
+        fileBytes = Uint8List.fromList(rawJsonBytes);
       }
 
-      archive.addFile(ArchiveFile(
-        '${section.label}.json',
-        fileBytes.length,
-        Uint8List.fromList(fileBytes),
-      ));
+      jsonEntries.add((name: '${section.label}.json', bytes: fileBytes));
     }
 
-    File outputFile;
-    switch (format) {
-      case ExportFormat.json:
-      case ExportFormat.zip:
-        final encoded = ZipEncoder().encode(archive);
-        outputFile = File('${downloadsDir.path}/$baseName.zip');
-        await outputFile.writeAsBytes(encoded);
-        break;
-      case ExportFormat.tar:
-        final tarBytes = TarEncoder().encode(archive);
-        final gzBytes = GZipEncoder().encode(tarBytes);
-        outputFile = File('${downloadsDir.path}/$baseName.tar.gz');
-        await outputFile.writeAsBytes(gzBytes);
-        break;
-    }
+    final isTar = format == ExportFormat.tar;
+    final outputFile = File(
+      '${downloadsDir.path}/$baseName${isTar ? '.tar.gz' : '.zip'}',
+    );
+    final payload = _ExportPayload(
+      jsonEntries: jsonEntries,
+      audioEntries: manifest.entries,
+      outputPath: outputFile.path,
+      useTar: isTar,
+    );
+    await Isolate.run(() => _runExportInIsolate(payload));
 
     await Process.run('open', [downloadsDir.path]);
 
