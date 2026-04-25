@@ -37,6 +37,7 @@
 		E5F6A7B800000003FLA00001 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E5F6A7B800000004FLA00002 /* FluidAudio */; };
 		E8C4A047BF41B4A2D0635957 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E856E701D1208E2577AAD96B /* Pods_RunnerTests.framework */; };
 		F0A1B2C300000002SCM00002 /* SimpleCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */; };
+		F0A1B2C400000002TGN00002 /* ToneGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A1B2C400000001TGN00001 /* ToneGenerator.swift */; };
 		F1A2B3C400000002KTC00001 /* KokoroTtsChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */; };
 		F1A2B3C400000002WKC00001 /* WhisperKitChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */; };
 		F1A2B3C400000003KSW00001 /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = F1A2B3C400000004KSW00002 /* KokoroSwift */; };
@@ -111,6 +112,7 @@
 		EC906358CFE0C48974F10E54 /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		ECBD98B4B52730466C82DC36 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCompressor.swift; sourceTree = "<group>"; };
+		F0A1B2C400000001TGN00001 /* ToneGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToneGenerator.swift; sourceTree = "<group>"; };
 		F1A2B3C400000001KTC00001 /* KokoroTtsChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KokoroTtsChannel.swift; sourceTree = "<group>"; };
 		F1A2B3C400000001WKC00001 /* WhisperKitChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitChannel.swift; sourceTree = "<group>"; };
 		P1A2B3C400000001OCC00001 /* pocket_tts_onnx_engine.cc */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = pocket_tts_onnx_engine.cc; path = ../../native/pocket_tts/pocket_tts_onnx_engine.cc; sourceTree = "<group>"; };
@@ -221,6 +223,7 @@
 				D4E5F6A700000001WAP00001 /* WebRTCAudioProcessor.swift */,
 				E5F6A7B800000001SID00001 /* SpeakerIdentifier.swift */,
 				F0A1B2C300000001SCM00001 /* SimpleCompressor.swift */,
+				F0A1B2C400000001TGN00001 /* ToneGenerator.swift */,
 				A0B1C2D300000001NAC00001 /* NativeActionsChannel.swift */,
 				C3D4E5F600000001BRH00001 /* Runner-Bridging-Header.h */,
 				33E51913231747F40026EE4D /* DebugProfile.entitlements */,
@@ -527,6 +530,7 @@
 				D4E5F6A700000002WAP00002 /* WebRTCAudioProcessor.swift in Sources */,
 				E5F6A7B800000002SID00002 /* SpeakerIdentifier.swift in Sources */,
 				F0A1B2C300000002SCM00002 /* SimpleCompressor.swift in Sources */,
+				F0A1B2C400000002TGN00002 /* ToneGenerator.swift in Sources */,
 				A0B1C2D300000002NAC00002 /* NativeActionsChannel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

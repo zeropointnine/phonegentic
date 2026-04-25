@@ -792,6 +792,20 @@ class SettingsPortService {
         'basic_supports_update': conf.basicSupportsUpdate,
         'basic_renegotiate_media': conf.basicRenegotiateMedia,
       },
+      // Phone tones live in the Phone settings tab, so they round-trip
+      // alongside the rest of the SIP/phone preferences.
+      'tones': {
+        'touch_enabled': prefs.getBool('tone_touch_enabled') ?? true,
+        'touch_style': prefs.getString('tone_touch_style') ?? 'dtmf',
+        'call_waiting_enabled':
+            prefs.getBool('tone_call_waiting_enabled') ?? true,
+        'call_waiting_announce':
+            prefs.getBool('tone_call_waiting_announce') ?? false,
+        'call_ended_enabled':
+            prefs.getBool('tone_call_ended_enabled') ?? true,
+        'call_ended_announce':
+            prefs.getBool('tone_call_ended_announce') ?? false,
+      },
     };
   }
 
@@ -1212,6 +1226,24 @@ class SettingsPortService {
         basicSupportsUpdate: conf['basic_supports_update'] as bool? ?? false,
         basicRenegotiateMedia: conf['basic_renegotiate_media'] as bool? ?? false,
       ));
+    }
+
+    final tones = data['tones'] as Map<String, dynamic>?;
+    if (tones != null) {
+      await prefs.setBool(
+          'tone_touch_enabled', tones['touch_enabled'] as bool? ?? true);
+      final style = tones['touch_style'] as String?;
+      if (style == 'blue' || style == 'dtmf') {
+        await prefs.setString('tone_touch_style', style!);
+      }
+      await prefs.setBool('tone_call_waiting_enabled',
+          tones['call_waiting_enabled'] as bool? ?? true);
+      await prefs.setBool('tone_call_waiting_announce',
+          tones['call_waiting_announce'] as bool? ?? false);
+      await prefs.setBool('tone_call_ended_enabled',
+          tones['call_ended_enabled'] as bool? ?? true);
+      await prefs.setBool('tone_call_ended_announce',
+          tones['call_ended_announce'] as bool? ?? false);
     }
   }
 

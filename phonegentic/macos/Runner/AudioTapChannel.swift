@@ -232,6 +232,22 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
             result(rms.map { Double($0) })
         case "getRemoteAudioLevel":
             result(lastRemoteRMS)
+        case "playToneStart":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let key = args["key"] as? String ?? ""
+            let style = args["style"] as? String ?? "dtmf"
+            ToneGenerator.shared.startTone(key: key, style: style)
+            result(nil)
+        case "playToneStop":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let key = args["key"] as? String ?? ""
+            ToneGenerator.shared.stopTone(key: key)
+            result(nil)
+        case "playToneEvent":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let event = args["event"] as? String ?? ""
+            ToneGenerator.shared.playEvent(event)
+            result(nil)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -413,6 +429,7 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
         guard inCallMode else { return }
         inCallMode = false
 
+        ToneGenerator.shared.stopAll()
         stopCallRecording()
 
         // Tear down beep detection callbacks

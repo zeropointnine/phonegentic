@@ -31,6 +31,7 @@ import 'job_function_service.dart';
 import 'manager_presence_service.dart';
 import 'ringtone_service.dart';
 import 'tear_sheet_service.dart';
+import 'tone_service.dart';
 import 'widgets/action_button.dart';
 import 'widgets/agent_panel.dart';
 import 'widgets/audio_device_sheet.dart';
@@ -500,6 +501,29 @@ class _MyDialPadWidget extends State<DialPadWidget>
     setState(() {
       _textController!.text += number;
     });
+  }
+
+  /// Press-down on a dialer digit — start the local touchtone immediately
+  /// so the operator hears DTMF feedback while typing the number to call.
+  /// We do not send any SIP DTMF here; this is only a local cue.
+  void _handleNumDown(String number) {
+    try {
+      final ToneService tones = context.read<ToneService>();
+      tones.playDtmfDown(number);
+    } catch (e) {
+      debugPrint('[Dialpad] _handleNumDown($number) failed: $e');
+    }
+  }
+
+  /// Release of a dialer digit — stop the local tone (the service enforces
+  /// the 300 ms minimum hold so quick taps still produce a clean blip).
+  void _handleNumUp(String number) {
+    try {
+      final ToneService tones = context.read<ToneService>();
+      tones.playDtmfUp(number);
+    } catch (e) {
+      debugPrint('[Dialpad] _handleNumUp($number) failed: $e');
+    }
   }
 
   void _handleBackspace() {
@@ -1192,6 +1216,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
 
   void _showRingSettingsPopover(BuildContext context) {
     final ringtone = context.read<RingtoneService>();
+    final tones = context.read<ToneService>();
     final icf = context.read<InboundCallFlowService>();
     final jf = context.read<JobFunctionService>();
     final RenderBox button = context.findRenderObject() as RenderBox;
@@ -1318,6 +1343,7 @@ class _MyDialPadWidget extends State<DialPadWidget>
             },
           ),
         ),
+        ..._buildToneSettingsItems(tones),
         if (icf.items.isNotEmpty) ...[
           const PopupMenuDivider(height: 1),
           PopupMenuItem<String>(
@@ -1470,6 +1496,273 @@ class _MyDialPadWidget extends State<DialPadWidget>
       await icf.delete(id);
     }
     if (mounted) _showRingSettingsPopover(context);
+  }
+
+  /// Builds the tones-section items for the ring-settings popover:
+  /// touchtone toggle + style picker, call-waiting toggle (with announce
+  /// sub-checkbox), and call-ended toggle (with announce sub-checkbox).
+  List<PopupMenuEntry<String>> _buildToneSettingsItems(ToneService tones) {
+    return <PopupMenuEntry<String>>[
+      const PopupMenuDivider(height: 1),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 28,
+        child: Text(
+          'TONES',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.8,
+          ),
+        ),
+      ),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 44,
+        child: StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setMenuState) {
+            return Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Touchtone playback',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  height: 24,
+                  child: Switch(
+                    value: tones.touchTonesEnabled,
+                    activeThumbColor: AppColors.accent,
+                    onChanged: (bool v) {
+                      tones.setTouchTonesEnabled(v);
+                      setMenuState(() {});
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 36,
+        child: StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setMenuState) {
+            return Row(
+              children: <Widget>[
+                const SizedBox(width: 18),
+                Expanded(
+                  child: Text(
+                    'Style',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: tones.touchTonesEnabled
+                          ? AppColors.textSecondary
+                          : AppColors.textTertiary,
+                    ),
+                  ),
+                ),
+                _toneStyleChip(
+                  label: 'DTMF',
+                  selected: tones.touchToneStyle == TouchToneStyle.dtmf,
+                  enabled: tones.touchTonesEnabled,
+                  onTap: () {
+                    tones.setTouchToneStyle(TouchToneStyle.dtmf);
+                    setMenuState(() {});
+                  },
+                ),
+                const SizedBox(width: 6),
+                _toneStyleChip(
+                  label: 'Blue Box',
+                  selected: tones.touchToneStyle == TouchToneStyle.blue,
+                  enabled: tones.touchTonesEnabled,
+                  onTap: () {
+                    tones.setTouchToneStyle(TouchToneStyle.blue);
+                    setMenuState(() {});
+                  },
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 44,
+        child: StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setMenuState) {
+            return Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Call waiting tone',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  height: 24,
+                  child: Switch(
+                    value: tones.callWaitingEnabled,
+                    activeThumbColor: AppColors.accent,
+                    onChanged: (bool v) {
+                      tones.setCallWaitingEnabled(v);
+                      setMenuState(() {});
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 32,
+        child: StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setMenuState) {
+            return _announceSubCheckbox(
+              label: 'Allow Agent to announce',
+              enabled: tones.callWaitingEnabled,
+              value: tones.callWaitingAnnounce,
+              onChanged: (bool v) {
+                tones.setCallWaitingAnnounce(v);
+                setMenuState(() {});
+              },
+            );
+          },
+        ),
+      ),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 44,
+        child: StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setMenuState) {
+            return Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Call ended tone',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  height: 24,
+                  child: Switch(
+                    value: tones.callEndedEnabled,
+                    activeThumbColor: AppColors.accent,
+                    onChanged: (bool v) {
+                      tones.setCallEndedEnabled(v);
+                      setMenuState(() {});
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+      PopupMenuItem<String>(
+        enabled: false,
+        height: 32,
+        child: StatefulBuilder(
+          builder: (BuildContext ctx, StateSetter setMenuState) {
+            return _announceSubCheckbox(
+              label: 'Allow Agent to announce',
+              enabled: tones.callEndedEnabled,
+              value: tones.callEndedAnnounce,
+              onChanged: (bool v) {
+                tones.setCallEndedAnnounce(v);
+                setMenuState(() {});
+              },
+            );
+          },
+        ),
+      ),
+    ];
+  }
+
+  Widget _toneStyleChip({
+    required String label,
+    required bool selected,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    final Color border = selected
+        ? AppColors.accent.withValues(alpha: 0.6)
+        : AppColors.border.withValues(alpha: 0.5);
+    final Color fill = selected
+        ? AppColors.accent.withValues(alpha: 0.15)
+        : Colors.transparent;
+    final Color text = !enabled
+        ? AppColors.textTertiary
+        : selected
+            ? AppColors.accent
+            : AppColors.textSecondary;
+    return HoverButton(
+      onTap: enabled ? onTap : () {},
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: border, width: 0.6),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: text,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _announceSubCheckbox({
+    required String label,
+    required bool enabled,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    final Color labelColor =
+        enabled ? AppColors.textSecondary : AppColors.textTertiary;
+    return Row(
+      children: <Widget>[
+        const SizedBox(width: 18),
+        SizedBox(
+          width: 22,
+          height: 22,
+          child: Checkbox(
+            value: value,
+            activeColor: AppColors.accent,
+            onChanged: enabled
+                ? (bool? v) => onChanged(v ?? false)
+                : null,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 11, color: labelColor),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildMessagesButton(BuildContext context) {
@@ -2186,6 +2479,9 @@ class _MyDialPadWidget extends State<DialPadWidget>
                             title: label.keys.first,
                             subTitle: label.values.first,
                             onPressed: () => _handleNum(label.keys.first),
+                            onPressDown: () =>
+                                _handleNumDown(label.keys.first),
+                            onPressUp: () => _handleNumUp(label.keys.first),
                             number: true,
                           ))
                       .toList(),
@@ -2328,6 +2624,11 @@ class _MyDialPadWidget extends State<DialPadWidget>
             // the first caller's experience and is jarring for the operator.
             // The visual toast (plus the agent panel highlight) is the
             // notification surface for a second inbound while on a call.
+            //
+            // Instead, fire the short "call waiting" tone (2 beeps) so
+            // there's an audible cue mixed into the in-progress call, and
+            // optionally let the agent announce the new caller out loud.
+            _emitCallWaitingTone(call);
             context
                 .read<InboundCallRouter>()
                 .onInboundInitiation(call, hasExistingCall: true);
@@ -2377,6 +2678,18 @@ class _MyDialPadWidget extends State<DialPadWidget>
       case CallStateEnum.FAILED:
       case CallStateEnum.ENDED:
         _cancelConferenceTimeout(call.id!);
+
+        // Audible "call ended" cue — only when the REMOTE hung up while
+        // exactly one call was live. (Local hangup, or a leg dropping out
+        // of a multi-call session, would just spam the operator with
+        // teardown beeps.)
+        final bool remoteEndedSoloCall = callState.state == CallStateEnum.ENDED &&
+            callState.originator == Originator.remote &&
+            _calls.length == 1 &&
+            _inboundRingCaller == null;
+        if (remoteEndedSoloCall) {
+          _emitCallEndedTone(call);
+        }
 
         // Notify the router so it can clear any toast pointing at this call
         // and queue held-hangup records for auto-callback.
@@ -2670,6 +2983,66 @@ class _MyDialPadWidget extends State<DialPadWidget>
     try {
       context.read<RingtoneService>().stopRinging();
     } catch (_) {}
+  }
+
+  /// Audible cue for a second inbound call arriving while one is in
+  /// progress. Plays the 2-beep tone if enabled in user settings, and
+  /// optionally has the agent announce the caller out loud (off by
+  /// default, but useful when the operator is the agent's manager and
+  /// not looking at the screen).
+  void _emitCallWaitingTone(Call inbound) {
+    try {
+      final ToneService tones = context.read<ToneService>();
+      tones.playCallWaiting();
+
+      final AgentService agent = context.read<AgentService>();
+      // Per spec: "Allow Agent to announce" defaults ON whenever the
+      // active call is with the configured manager, since the manager
+      // needs to be told about inbound traffic out loud.
+      final bool shouldAnnounce =
+          tones.callWaitingAnnounce || agent.isCurrentRemoteAgentManager;
+      if (shouldAnnounce) {
+        final String who = (inbound.remote_display_name?.trim().isNotEmpty == true
+                ? inbound.remote_display_name
+                : inbound.remote_identity) ??
+            'an unknown caller';
+        agent.announceToManager(
+          'SYSTEM: A second inbound call is ringing from $who. '
+          'Briefly tell the manager an inbound call is waiting and ask '
+          'whether to answer, ignore, or send to voicemail.',
+        );
+      }
+    } catch (e) {
+      debugPrint('[Dialpad] _emitCallWaitingTone failed: $e');
+    }
+  }
+
+  /// Audible cue when the remote party hangs up the (sole) connected
+  /// call. Plays the 3-beep tone if enabled and optionally lets the
+  /// agent announce the disconnect out loud.
+  void _emitCallEndedTone(Call ended) {
+    try {
+      final ToneService tones = context.read<ToneService>();
+      tones.playCallEnded();
+
+      final AgentService agent = context.read<AgentService>();
+      // Default-on when the manager is on the call (see _emitCallWaitingTone
+      // for rationale).
+      final bool shouldAnnounce =
+          tones.callEndedAnnounce || agent.isCurrentRemoteAgentManager;
+      if (shouldAnnounce) {
+        final String who = (ended.remote_display_name?.trim().isNotEmpty == true
+                ? ended.remote_display_name
+                : ended.remote_identity) ??
+            'the caller';
+        agent.announceToManager(
+          'SYSTEM: $who has ended the call. '
+          'Briefly tell the manager the call has ended.',
+        );
+      }
+    } catch (e) {
+      debugPrint('[Dialpad] _emitCallEndedTone failed: $e');
+    }
   }
 
   static String _normalizeCaller(String raw) {

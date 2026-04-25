@@ -11,6 +11,7 @@ import 'agent_config_service.dart';
 import 'conference/conference_config.dart';
 import 'conference/conference_service.dart';
 import 'theme_provider.dart';
+import 'tone_service.dart';
 import 'widgets/agent_settings_tab.dart';
 import 'widgets/user_settings_tab.dart';
 
@@ -337,6 +338,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   _buildStatusCard(),
                   const SizedBox(height: 20),
                   _buildSection('Connection', [
+                    if (!kIsWeb) _buildTransportRow(),
                     if (_selectedTransport == TransportType.WS)
                       _buildField('WebSocket URL', _wsUriController,
                           placeholder: 'wss://sip.example.com:7443'),
@@ -344,6 +346,7 @@ class _MyRegisterWidget extends State<RegisterWidget>
                       _buildField('Port', _portController, placeholder: '5060'),
                     _buildField('SIP URI', _sipUriController,
                         placeholder: 'user@sip.example.com'),
+                    _buildTestConnectionRow(),
                   ]),
                   const SizedBox(height: 16),
                   _buildSection('Authentication', [
@@ -360,12 +363,8 @@ class _MyRegisterWidget extends State<RegisterWidget>
                   _buildHdCodecCard(),
                   const SizedBox(height: 16),
                   _buildCallRecordingCard(),
-                  if (!kIsWeb) ...[
-                    const SizedBox(height: 16),
-                    _buildTransportSelector(),
-                  ],
-                  const SizedBox(height: 24),
-                  _buildRegisterButton(),
+                  const SizedBox(height: 16),
+                  _buildTonesCard(),
                   const SizedBox(height: 40),
                 ],
               ),
@@ -860,18 +859,312 @@ class _MyRegisterWidget extends State<RegisterWidget>
     );
   }
 
-  Widget _buildTransportSelector() {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border, width: 0.5),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+  // ───── Tones (touchtones / call-waiting / call-ended) ─────
+
+  Widget _buildTonesCard() {
+    final ToneService tones = context.watch<ToneService>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'TONES',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 0.5),
+          ),
+          child: Column(
+            children: [
+              _buildTonesHeaderRow(),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              _buildToneToggleRow(
+                title: 'Touchtone playback',
+                subtitle:
+                    'Plays a tone when you press a digit on the dialer keypad.',
+                value: tones.touchTonesEnabled,
+                onChanged: (v) => tones.setTouchTonesEnabled(v),
+              ),
+              if (tones.touchTonesEnabled) ...[
+                Divider(
+                    height: 0.5,
+                    color: AppColors.border.withValues(alpha: 0.5)),
+                _buildTouchToneStyleRow(tones),
+              ],
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              _buildToneToggleRow(
+                title: 'Call-waiting tone',
+                subtitle:
+                    'Two short beeps when an inbound call arrives during another call.',
+                value: tones.callWaitingEnabled,
+                onChanged: (v) => tones.setCallWaitingEnabled(v),
+              ),
+              _buildToneAnnounceRow(
+                enabled: tones.callWaitingEnabled,
+                value: tones.callWaitingAnnounce,
+                onChanged: (v) => tones.setCallWaitingAnnounce(v),
+              ),
+              Divider(
+                  height: 0.5,
+                  color: AppColors.border.withValues(alpha: 0.5)),
+              _buildToneToggleRow(
+                title: 'Call-ended tone',
+                subtitle:
+                    'Three short beeps when the remote party hangs up the only active call.',
+                value: tones.callEndedEnabled,
+                onChanged: (v) => tones.setCallEndedEnabled(v),
+              ),
+              _buildToneAnnounceRow(
+                enabled: tones.callEndedEnabled,
+                value: tones.callEndedAnnounce,
+                onChanged: (v) => tones.setCallEndedAnnounce(v),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTonesHeaderRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          _transportChip('TCP', TransportType.TCP),
-          _transportChip('WebSocket', TransportType.WS),
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: AppColors.accent.withValues(alpha: 0.12),
+            ),
+            child: Icon(Icons.dialpad_rounded,
+                size: 17, color: AppColors.accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Phone Tones',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Local cue sounds — never mixed into the outbound call audio.',
+                  style: TextStyle(
+                      fontSize: 11, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToneToggleRow({
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                      fontSize: 11, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            height: 24,
+            child: Switch(
+              value: value,
+              activeThumbColor: AppColors.accent,
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTouchToneStyleRow(ToneService tones) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              'Style',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _toneStyleChoice(
+                  label: 'DTMF',
+                  selected: tones.touchToneStyle == TouchToneStyle.dtmf,
+                  onTap: () => tones.setTouchToneStyle(TouchToneStyle.dtmf),
+                ),
+                _toneStyleChoice(
+                  label: 'Blue Box (MF)',
+                  selected: tones.touchToneStyle == TouchToneStyle.blue,
+                  onTap: () => tones.setTouchToneStyle(TouchToneStyle.blue),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toneStyleChoice({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.accent.withValues(alpha: 0.15)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: selected
+                ? AppColors.accent.withValues(alpha: 0.6)
+                : AppColors.border.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            color: selected ? AppColors.accent : AppColors.textPrimary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToneAnnounceRow({
+    required bool enabled,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(36, 0, 16, 8),
+      child: Row(
+        children: [
+          SizedBox(
+            height: 22,
+            width: 22,
+            child: Checkbox(
+              value: value,
+              onChanged: enabled ? (v) => onChanged(v ?? false) : null,
+              activeColor: AppColors.accent,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Allow Agent to announce',
+              style: TextStyle(
+                fontSize: 12,
+                color: enabled
+                    ? AppColors.textSecondary
+                    : AppColors.textTertiary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransportRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              'Transport',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: AppColors.border.withValues(alpha: 0.5),
+                    width: 0.5),
+              ),
+              padding: const EdgeInsets.all(3),
+              child: Row(
+                children: [
+                  _transportChip('TCP', TransportType.TCP),
+                  _transportChip('WebSocket', TransportType.WS),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -882,19 +1175,29 @@ class _MyRegisterWidget extends State<RegisterWidget>
     return Expanded(
       child: HoverButton(
         onTap: () => setState(() => _selectedTransport = type),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 7),
           decoration: BoxDecoration(
             color: selected ? AppColors.accent : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(7),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.accent.withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
           child: Center(
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
                 color: selected ? AppColors.onAccent : AppColors.textTertiary,
               ),
             ),
@@ -904,23 +1207,59 @@ class _MyRegisterWidget extends State<RegisterWidget>
     );
   }
 
-  Widget _buildRegisterButton() {
-    return SizedBox(
-      height: 48,
-      child: ElevatedButton(
-        onPressed: () => _register(context),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.accent,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        child: Text(
-          'Register',
-          style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: AppColors.onAccent),
-        ),
+  Widget _buildTestConnectionRow() {
+    final isRegistered = _registerState.state == RegistrationStateEnum.REGISTERED;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Test Connection',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isRegistered
+                      ? 'Re-register with the current settings to verify.'
+                      : 'Apply these settings and register with the SIP server.',
+                  style: TextStyle(
+                      fontSize: 11, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            height: 32,
+            child: ElevatedButton(
+              onPressed: () => _register(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: AppColors.onAccent,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+              child: Text(
+                isRegistered ? 'Retest' : 'Test',
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

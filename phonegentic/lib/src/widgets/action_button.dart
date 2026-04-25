@@ -12,6 +12,8 @@ class ActionButton extends StatefulWidget {
   final TextStyle? titleStyle;
   final Function()? onPressed;
   final Function()? onLongPress;
+  final Function()? onPressDown;
+  final Function()? onPressUp;
 
   const ActionButton({
     super.key,
@@ -21,6 +23,8 @@ class ActionButton extends StatefulWidget {
     this.iconWidget,
     this.onPressed,
     this.onLongPress,
+    this.onPressDown,
+    this.onPressUp,
     this.checked = false,
     this.number = false,
     this.fillColor,
@@ -35,9 +39,20 @@ class _ActionButtonState extends State<ActionButton> {
   bool _pressed = false;
   bool _hovered = false;
 
-  void _onDown(TapDownDetails _) => setState(() => _pressed = true);
-  void _onUp(TapUpDetails _) => setState(() => _pressed = false);
-  void _onCancel() => setState(() => _pressed = false);
+  void _onDown(TapDownDetails _) {
+    setState(() => _pressed = true);
+    widget.onPressDown?.call();
+  }
+
+  void _onUp(TapUpDetails _) {
+    setState(() => _pressed = false);
+    widget.onPressUp?.call();
+  }
+
+  void _onCancel() {
+    setState(() => _pressed = false);
+    widget.onPressUp?.call();
+  }
 
   @override
   Widget build(BuildContext context) {

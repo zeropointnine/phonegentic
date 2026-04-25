@@ -40,6 +40,22 @@ class AudioTapChannel: NSObject {
 
     private func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
+        case "playToneStart":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let key = args["key"] as? String ?? ""
+            let style = args["style"] as? String ?? "dtmf"
+            ToneGenerator.shared.startTone(key: key, style: style)
+            result(nil)
+        case "playToneStop":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let key = args["key"] as? String ?? ""
+            ToneGenerator.shared.stopTone(key: key)
+            result(nil)
+        case "playToneEvent":
+            let args = call.arguments as? [String: Any] ?? [:]
+            let event = args["event"] as? String ?? ""
+            ToneGenerator.shared.playEvent(event)
+            result(nil)
         case "startAudioTap",
              "stopAudioTap",
              "enterCallMode",
@@ -79,5 +95,6 @@ class AudioTapChannel: NSObject {
 
     func cleanup() {
         beepDetector.reset()
+        ToneGenerator.shared.stopAll()
     }
 }

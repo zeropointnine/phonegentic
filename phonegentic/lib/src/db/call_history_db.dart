@@ -37,7 +37,7 @@ class CallHistoryDb {
     final db = await databaseFactoryFfi.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 24,
+        version: 25,
         onCreate: _onCreate,
         onUpgrade: _onUpgrade,
       ),
@@ -81,7 +81,9 @@ class CallHistoryDb {
         recording_path TEXT,
         parent_call_id INTEGER REFERENCES call_records(id),
         notes TEXT,
-        job_function_id INTEGER REFERENCES job_functions(id)
+        job_function_id INTEGER REFERENCES job_functions(id),
+        manager_reported_at TEXT,
+        agent_handled_at TEXT
       )
     ''');
 
@@ -307,6 +309,30 @@ class CallHistoryDb {
           'ALTER TABLE agent_reminders ADD COLUMN contact_phone TEXT');
       await db.execute(
           'CREATE INDEX IF NOT EXISTS idx_ar_calendar_event ON agent_reminders(calendar_event_id)');
+    }
+
+    if (oldVersion < 25) {
+      // Notification follow-through tracking. Two independent timestamps per
+      // row let us tell apart "the agent has surfaced this to the manager"
+      // (manager_reported_at) and "the agent has acted on this" (e.g. replied
+      // by SMS or placed a callback — agent_handled_at). Both are nullable;
+      // a non-null value is treated as "done".
+      await db.execute(
+          'ALTER TABLE sms_messages ADD COLUMN manager_reported_at TEXT');
+      await db.execute(
+          'ALTER TABLE sms_messages ADD COLUMN agent_handled_at TEXT');
+      await db.execute(
+          'ALTER TABLE call_records ADD COLUMN manager_reported_at TEXT');
+      await db.execute(
+          'ALTER TABLE call_records ADD COLUMN agent_handled_at TEXT');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_sms_reported ON sms_messages(manager_reported_at)');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_sms_handled ON sms_messages(agent_handled_at)');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_call_reported ON call_records(manager_reported_at)');
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_call_handled ON call_records(agent_handled_at)');
     }
   }
 
@@ -1610,7 +1636,9 @@ class CallHistoryDb {
         reply_to_provider_id TEXT,
         reply_to_local_id INTEGER,
         created_at TEXT NOT NULL,
-        updated_at TEXT
+        updated_at TEXT,
+        manager_reported_at TEXT,
+        agent_handled_at TEXT
       )
     ''');
     await db.execute(
@@ -1619,6 +1647,10 @@ class CallHistoryDb {
         'CREATE INDEX IF NOT EXISTS idx_sms_created ON sms_messages(created_at)');
     await db.execute(
         'CREATE INDEX IF NOT EXISTS idx_sms_read ON sms_messages(is_read)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sms_reported ON sms_messages(manager_reported_at)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_sms_handled ON sms_messages(agent_handled_at)');
     await db.execute(
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_provider ON sms_messages(provider_id, provider_type)');
   }
@@ -1738,6 +1770,93 @@ class CallHistoryDb {
     );
   }
 
+  /// Stamp `manager_reported_at` on a specific SMS row. Used after the agent
+  /// has surfaced an unanswered text to the manager (live or via startup
+  /// reconciliation) so we don't keep re-announcing the same item.
+  static Future<void> markSmsManagerReported(int id, {DateTime? at}) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {
+        'manager_reported_at':
+            (at ?? DateTime.now()).toUtc().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ? AND manager_reported_at IS NULL',
+      whereArgs: [id],
+    );
+  }
+
+  /// Stamp `manager_reported_at` on every unanswered inbound SMS in a thread.
+  /// Cheaper than per-row updates when the agent has just briefed the manager
+  /// about an entire conversation.
+  static Future<void> markThreadManagerReported(String remotePhone,
+      {DateTime? at}) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {
+        'manager_reported_at':
+            (at ?? DateTime.now()).toUtc().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where:
+          'remote_phone = ? AND direction = ? AND manager_reported_at IS NULL',
+      whereArgs: [remotePhone, 'inbound'],
+    );
+  }
+
+  /// Stamp `agent_handled_at` on every unanswered inbound SMS in a thread.
+  /// Called when the agent acts on the thread (sends a reply, places a
+  /// callback) — those messages are now resolved, not "missed".
+  static Future<void> markThreadAgentHandled(String remotePhone,
+      {DateTime? at}) async {
+    final db = await database;
+    await db.update(
+      'sms_messages',
+      {
+        'agent_handled_at':
+            (at ?? DateTime.now()).toUtc().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where:
+          'remote_phone = ? AND direction = ? AND agent_handled_at IS NULL',
+      whereArgs: [remotePhone, 'inbound'],
+    );
+  }
+
+  /// Stamp `manager_reported_at` on a missed-call row.
+  static Future<void> markCallManagerReported(int id, {DateTime? at}) async {
+    final db = await database;
+    await db.update(
+      'call_records',
+      {
+        'manager_reported_at':
+            (at ?? DateTime.now()).toUtc().toIso8601String(),
+      },
+      where: 'id = ? AND manager_reported_at IS NULL',
+      whereArgs: [id],
+    );
+  }
+
+  /// Stamp `agent_handled_at` on every still-unhandled missed-call row from
+  /// a particular remote number. Used when the agent calls them back or
+  /// otherwise resolves the missed call.
+  static Future<void> markCallsAgentHandledByRemote(String remoteIdentity,
+      {DateTime? at}) async {
+    final db = await database;
+    await db.update(
+      'call_records',
+      {
+        'agent_handled_at':
+            (at ?? DateTime.now()).toUtc().toIso8601String(),
+      },
+      where:
+          'remote_identity = ? AND direction = ? AND status = ? AND agent_handled_at IS NULL',
+      whereArgs: [remoteIdentity, 'inbound', 'missed'],
+    );
+  }
+
   static Future<void> softDeleteSmsMessage(int id) async {
     final db = await database;
     await db.update(
@@ -1790,6 +1909,8 @@ class CallHistoryDb {
         AND m.is_deleted = 0
         AND m.created_at >= ?
         AND m.created_at > COALESCE(d.deleted_at, '')
+        AND m.manager_reported_at IS NULL
+        AND m.agent_handled_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM sms_messages o
           WHERE o.remote_phone = m.remote_phone

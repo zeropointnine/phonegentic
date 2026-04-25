@@ -1764,6 +1764,55 @@ class AgentService extends ChangeNotifier {
         'Decide internally whether to send an SMS reply, call a tool, or '
         'just let the event land in history for later.\n');
 
+    buf.write(
+        '\n### Tool calls are silent — do NOT narrate them\n'
+        'When you decide to use a tool (`send_sms`, `make_call`, '
+        '`create_reminder`, `read_logs`, `get_call_summary`, …) the tool '
+        'runs invisibly. Your spoken / TTS output is heard by whoever is '
+        'on the active call. Do NOT say things like:\n'
+        '  • "Let me send that text now."\n'
+        '  • "Calling them back."\n'
+        '  • "One moment, I\'ll check the logs."\n'
+        '  • "I\'m looking that up."\n'
+        '  • "Got it, sending the SMS."\n'
+        'These are internal stage directions — they do NOT belong in TTS.\n'
+        '\n'
+        'The right pattern is:\n'
+        '  1. Speak only words that belong in the live conversation '
+        '(answers to the caller, questions you actually need answered).\n'
+        '  2. Invoke the tool. Say nothing about invoking it.\n'
+        '  3. When the tool result arrives, decide whether anything in it '
+        'is worth saying TO THE CURRENT AUDIENCE. If yes, say only the '
+        'human-relevant fact — never the tool output, never "the tool '
+        'returned…", never "according to the data…". If no, stay silent '
+        'and continue the conversation.\n'
+        '\n'
+        'During an active phone call, default to silence over self-narration. '
+        'The caller does not need to hear what you are doing — they need to '
+        'hear what they care about. If you catch yourself about to say '
+        '"I\'m about to…", "I\'ll just…", or "Let me…", stop and just do '
+        'it instead.\n'
+        '\n'
+        'Same rule when $managerLabel is the audience: take the action, '
+        'then report the outcome briefly ("done — texted Bob") instead of '
+        'announcing the action up-front and then reporting again.\n');
+
+    buf.write(
+        '\n### Internal context blocks are messages to YOURSELF, not lines '
+        'to read out\n'
+        'Anything the system delivers that is wrapped in `[SYSTEM]`, '
+        '`[SYSTEM EVENT]`, `SYSTEM CONTEXT`, `SYSTEM CATCH-UP`, '
+        '`MANAGER-AUTHORIZED COMMANDS`, `[Host Message]`, '
+        '`AUTHORIZATION`, `OUTPUT RULES`, `COMMON CASES`, or any other '
+        'all-caps SYSTEM-prefixed header is a private note from the '
+        'platform to you. Treat it as the briefing on a sticky note that '
+        'only you can see. NEVER read these blocks aloud or quote them, '
+        'NEVER summarize them with phrases like "the system told me…" or '
+        '"I just got an instruction to…", and NEVER mention bracketed '
+        'metadata (e.g. `[MANAGER — pre-authorized]`, '
+        '`[handled as Sam — IT Helpdesk]`) on a call. Use the information '
+        'inside them silently to choose what to do or say next.\n');
+
     return buf.toString();
   }
 
@@ -5025,7 +5074,37 @@ class AgentService extends ChangeNotifier {
           '${unansweredRows.length} unanswered SMS, '
           '${overdueRows.length} overdue reminder(s)');
 
+      // If any of the unanswered SMS is from the manager themselves, that
+      // text is itself pre-authorization — flip the manager-auth flag so
+      // the `make_call` guard lets the agent place a callback without
+      // demanding extra confirmation.
+      final managerHasUnanswered = unansweredRows.any((row) {
+        final from = row['remote_phone'] as String?;
+        return from != null && _isManagerNumber(from);
+      });
+      if (managerHasUnanswered) {
+        _managerAuthActive = true;
+        _idleCallConfirmed = true;
+        _lastManagerAuthAt = DateTime.now();
+        debugPrint('[AgentService] Reconcile: manager has unanswered SMS '
+            '— activating manager auth so callback is not gated.');
+      }
+
       sendSystemEvent(summary, requireResponse: true);
+
+      // Stamp `manager_reported_at` on every row we just surfaced. Future
+      // reconciliations + live recap queries will skip these so the agent
+      // doesn't keep re-announcing items the manager has already heard about
+      // once. The agent can still act on them (place a callback, reply by
+      // SMS) — that flips `agent_handled_at` instead.
+      final reportedAt = DateTime.now();
+      for (final row in unansweredRows) {
+        final id = row['id'] as int?;
+        if (id != null) {
+          unawaited(
+              CallHistoryDb.markSmsManagerReported(id, at: reportedAt));
+        }
+      }
     } catch (e) {
       debugPrint('[AgentService] Reconcile failed: $e');
     }
@@ -5048,12 +5127,33 @@ class AgentService extends ChangeNotifier {
       return 'just now';
     }
 
+    // Are any of the unanswered texts from the manager themselves? Those
+    // are pre-authorized commands, not "things that need confirmation".
+    final managerUnanswered = unanswered.where((row) {
+      final from = row['remote_phone'] as String?;
+      return from != null && _isManagerNumber(from);
+    }).toList();
+    final hasManagerCommand = managerUnanswered.isNotEmpty;
+
     final buf = StringBuffer();
     buf.write('[SYSTEM CATCH-UP] While the agent was offline since ');
     buf.write(relAgo(since));
     buf.write(', the following items accumulated. Brief the manager now: '
         'acknowledge what arrived, offer to act on anything that clearly '
-        'needs a reply, and DO NOT auto-send replies without confirmation.');
+        'needs a reply, and DO NOT auto-send replies to third parties '
+        'without confirmation.');
+
+    if (hasManagerCommand) {
+      final mgrPhone = ensureE164(_agentManagerConfig.phoneNumber);
+      buf.writeln();
+      buf.writeln();
+      buf.write('MANAGER-AUTHORIZED COMMANDS — One or more of the unanswered '
+          'texts below was sent BY the manager from their own cell phone '
+          '($mgrPhone). Treat those as pre-authorized direct commands. If '
+          'the manager said "call me" / "ring me" etc., execute make_call '
+          'to $mgrPhone immediately — do NOT ask "want me to call you?". '
+          'Same for any other actionable verb (text X, remind me, etc.).');
+    }
 
     if (unanswered.isNotEmpty) {
       buf.writeln();
@@ -5064,8 +5164,11 @@ class AgentService extends ChangeNotifier {
         final from = row['remote_phone'] as String? ?? 'unknown';
         final contact = contactService?.lookupByPhone(from);
         final name = (contact?['display_name'] as String?)?.trim();
-        final label =
-            (name != null && name.isNotEmpty) ? '$name ($from)' : from;
+        final isFromManager = _isManagerNumber(from);
+        final managerTag = isFromManager ? ' [MANAGER — pre-authorized]' : '';
+        final label = (name != null && name.isNotEmpty)
+            ? '$name ($from)$managerTag'
+            : '$from$managerTag';
         final bodyRaw = (row['body'] as String?)?.trim() ?? '';
         final body = bodyRaw.length > 160
             ? '${bodyRaw.substring(0, 160)}…'
@@ -5240,11 +5343,44 @@ class AgentService extends ChangeNotifier {
       }
     }
 
-    buf.write(
-        'SYSTEM EVENT — New inbound SMS received on the manager\'s phone '
-        'from $senderLabel: "$preview" — This text was sent to the manager. '
-        'Use send_sms to reply to ${msg.from} on the manager\'s behalf if '
-        'appropriate.');
+    if (fromManager) {
+      // The SMS was sent by the manager themselves from their own cell.
+      // Their text IS the authorization — do not ask for confirmation,
+      // just execute. Especially: "call me" / "ring me" / "phone me"
+      // means place a make_call to the manager's number right now.
+      final mgrPhone = ensureE164(_agentManagerConfig.phoneNumber);
+      buf.write(
+          'SYSTEM EVENT — The MANAGER themselves just texted you from their '
+          'own cell phone ($senderLabel): "$preview"\n'
+          '\n'
+          'AUTHORIZATION: This message is the manager speaking directly to '
+          'you. Any actionable request in it is PRE-AUTHORIZED — execute it '
+          'immediately with the appropriate tool. Do NOT ask the manager '
+          'for confirmation, do NOT say "want me to…?", do NOT reply with '
+          'a question. Just do it.\n'
+          '\n'
+          'COMMON CASES:\n'
+          '  • "call me" / "ring me" / "phone me" / "give me a call" → '
+          'invoke make_call with to="$mgrPhone" (the manager\'s number) '
+          'RIGHT NOW. No confirmation needed. After the call connects you '
+          'can greet them by voice.\n'
+          '  • "text/SMS X …" → use send_sms to that recipient.\n'
+          '  • "remind me to …" → use create_reminder.\n'
+          '  • Any other direct instruction → carry it out using the '
+          'appropriate tool.\n'
+          '\n'
+          'Only reply with words (instead of executing a tool) if the '
+          'manager asked a question or made small-talk that has no '
+          'actionable verb.');
+    } else {
+      buf.write(
+          'SYSTEM EVENT — New inbound SMS received on the manager\'s phone '
+          'from $senderLabel: "$preview" — This text was sent to the '
+          'manager (NOT from the manager). Use send_sms to reply to '
+          '${msg.from} on the manager\'s behalf if appropriate. Do not '
+          'place outbound calls on behalf of a third-party SMS without '
+          'manager confirmation.');
+    }
 
     final contextLine = buf.toString();
 
@@ -5257,6 +5393,17 @@ class AgentService extends ChangeNotifier {
       _textAgent!.sendUserMessage(contextLine);
     } else if (_active) {
       _whisper.sendTextMessage(contextLine);
+    }
+
+    // Once the SMS body has been delivered into the LLM context, treat it as
+    // "reported to the manager" — the agent has now seen it once. Future
+    // recap queries (`get_call_summary`, startup reconcile) will skip it so
+    // the agent doesn't keep re-announcing the same text. If the agent acts
+    // on it, `agent_handled_at` will also be stamped via the send_sms /
+    // make_call handlers below.
+    final smsId = msg.localId;
+    if (smsId != null) {
+      unawaited(CallHistoryDb.markSmsManagerReported(smsId));
     }
   }
 
@@ -5427,6 +5574,11 @@ class AgentService extends ChangeNotifier {
         smsLocalId: msg.localId,
       ));
       notifyListeners();
+      // Replying to the thread closes the loop on every prior unanswered
+      // inbound text from the same number. Stamp them as agent-handled so
+      // they stop showing up in catch-up summaries / `get_call_summary`
+      // recap output.
+      unawaited(CallHistoryDb.markThreadAgentHandled(normalizedTo));
       return _smsSentResult(displayTo, contactName);
     }
     return 'Failed to send message.';
@@ -6421,6 +6573,11 @@ class AgentService extends ChangeNotifier {
       final displayNum = (demoModeService?.enabled ?? false)
           ? demoModeService!.maskPhone(number)
           : number;
+      // Calling someone back closes the loop on any unanswered SMS / missed
+      // call from that number — flip both follow-through flags so future
+      // recap queries don't keep flagging them as still-pending.
+      unawaited(CallHistoryDb.markThreadAgentHandled(number));
+      unawaited(CallHistoryDb.markCallsAgentHandledByRemote(number));
       return 'Call initiated to $displayNum';
     } catch (e) {
       return 'Failed to make call: $e';
@@ -7462,6 +7619,17 @@ class AgentService extends ChangeNotifier {
   bool get _isCallerAgentManager {
     if (!_agentManagerConfig.isConfigured) return false;
     if (!_callPhase.isActive || _isOutbound) return false;
+    final remote = _remoteIdentity;
+    if (remote == null || remote.isEmpty) return false;
+    return _isManagerNumber(remote);
+  }
+
+  /// Public read of "the current active call's remote party is the
+  /// configured agent manager". Used by tone playback to force-on the
+  /// "Allow Agent to announce" sub-toggle when the manager is on the line
+  /// and therefore needs spoken cues for inbound/ended events.
+  bool get isCurrentRemoteAgentManager {
+    if (!_agentManagerConfig.isConfigured) return false;
     final remote = _remoteIdentity;
     if (remote == null || remote.isEmpty) return false;
     return _isManagerNumber(remote);

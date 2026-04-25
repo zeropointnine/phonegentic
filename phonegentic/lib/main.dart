@@ -23,6 +23,7 @@ import 'package:phonegentic/src/messaging/messaging_service.dart';
 import 'package:phonegentic/src/comfort_noise_service.dart';
 import 'package:phonegentic/src/ringtone_service.dart';
 import 'package:phonegentic/src/tear_sheet_service.dart';
+import 'package:phonegentic/src/tone_service.dart';
 import 'package:phonegentic/src/theme_provider.dart';
 import 'package:phonegentic/src/user_state/sip_user_cubit.dart';
 import 'dart:ui';
@@ -123,6 +124,9 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider<RingtoneService>(
           create: (_) => RingtoneService()..load(),
+        ),
+        ChangeNotifierProvider<ToneService>(
+          create: (_) => ToneService()..load(),
         ),
         ChangeNotifierProvider<ComfortNoiseService>(
           create: (_) => ComfortNoiseService()..load(),

@@ -1089,7 +1089,22 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
     }
   }
 
-  void _handleDtmf(String tone) => call!.sendDTMF(tone);
+  /// In-call DTMF press — local touchtone synthesis is intentionally not
+  /// performed here; only the main pre-call dialer triggers the
+  /// `ToneGenerator`. This keeps the in-call audio path free of
+  /// locally-synthesised tones (the SIP RFC2833 DTMF the carrier sends
+  /// back is what the operator typically hears) and avoids any chance
+  /// of the local tone leaking into the outbound mix on platforms
+  /// where call audio is rendered through the same engine.
+  void _handleDtmf(String tone) {
+    if (call != null) {
+      try {
+        call!.sendDTMF(tone);
+      } catch (e) {
+        debugPrint('[CallScreen] sendDTMF($tone) failed: $e');
+      }
+    }
+  }
 
   void _handleKeyPad() => setState(() => _showNumPad = !_showNumPad);
 
