@@ -10737,7 +10737,19 @@ class AgentService extends ChangeNotifier {
       // conversation history injected (and it can confuse different contexts).
       final priorRid = remoteIdentity ?? _remoteIdentity;
       if (!_isOutbound && priorRid != null && priorRid.isNotEmpty) {
-        _fetchPriorCallTranscript(priorRid);
+        // Chain the pre-warm so the LLM call uses the prior transcript as
+        // context. Without `then(...)`, _firePreGreeting would race ahead
+        // of the (very fast, but still async) DB load and miss the
+        // history. On `ringing` we want this to happen ASAP — even a
+        // 200 ms head start meaningfully shrinks the time-to-greeting.
+        _fetchPriorCallTranscript(priorRid).then((_) {
+          if (phase == CallPhase.ringing) {
+            _maybePreWarmInboundGreeting();
+          }
+        });
+      } else if (!_isOutbound && phase == CallPhase.ringing) {
+        // No prior history to load — fire the pre-warm immediately.
+        _maybePreWarmInboundGreeting();
       }
 
       // Persona continuity for callbacks: if we recently spoke with this
@@ -11081,8 +11093,17 @@ class AgentService extends ChangeNotifier {
     // Pre-generate the greeting during settle so LLM + TTS latency is
     // absorbed by the settle window. Safe for both directions: inbound
     // callers are real humans (no IVR risk), outbound may hit voicemail.
+    //
+    // Inbound calls may have already fired the pre-greeting on ringing
+    // (see _maybePreWarmInboundGreeting). Skip the redundant trigger so
+    // we don't wastefully spend tokens on a duplicate LLM round-trip.
     if (_splitPipeline && _textAgent != null) {
-      _firePreGreeting();
+      if (_preGreetInFlight || _preGreetReady) {
+        debugPrint(
+            '[AgentService] Pre-greeting already pre-warmed (inFlight=$_preGreetInFlight ready=$_preGreetReady) — skipping settle trigger');
+      } else {
+        _firePreGreeting();
+      }
     }
   }
 
@@ -11410,10 +11431,19 @@ class AgentService extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
-  // Pre-greeting: fire LLM during settle, flush on connect
+  // Pre-greeting: fire LLM during settle (or earlier on ringing for inbound),
+  // flush on connect.
+  //
+  // Trigger points:
+  //   • `ringing` (inbound only) — fires the LLM the instant the INVITE
+  //     arrives, before we even send 200 OK. Buys ~1.5–2 s of warm-up
+  //     during the auto-answer delay + SDP negotiation, so the greeting
+  //     audio is ready (or nearly ready) by the time the call confirms.
+  //   • `settling` — the original trigger point, fallback for outbound
+  //     calls and for inbound flows that skip the ringing pre-warm.
   // ---------------------------------------------------------------------------
 
-  void _firePreGreeting() {
+  void _firePreGreeting({String trigger = 'settle'}) {
     // Cancel any in-flight LLM response (e.g. from a make_call tool result
     // that is being suppressed by _callDialPending). Without this, the
     // sendUserMessage below may queue behind the stale response and never
@@ -11440,7 +11470,31 @@ class AgentService extends ChangeNotifier {
 
     final prompt = _buildGreetingPrompt();
     _textAgent!.sendUserMessage(prompt);
-    debugPrint('[AgentService] Pre-greeting fired during settle (${_isOutbound ? "outbound" : "inbound"}${_isConferenceLeg ? ", conference leg" : ""})');
+    debugPrint('[AgentService] Pre-greeting fired during $trigger (${_isOutbound ? "outbound" : "inbound"}${_isConferenceLeg ? ", conference leg" : ""})');
+  }
+
+  /// Pre-warm the inbound greeting LLM call as soon as the INVITE arrives,
+  /// before we accept the call. The buffered response will flush
+  /// automatically once the call promotes to `connected`.
+  ///
+  /// Only fires for inbound, split-pipeline calls with a known remote
+  /// identity. Idempotent — `_startSettleTimer` will detect the in-flight
+  /// pre-greeting and skip its own trigger.
+  void _maybePreWarmInboundGreeting() {
+    if (_isOutbound) return;
+    if (!_splitPipeline || _textAgent == null) return;
+    if (_callPhase == CallPhase.ended ||
+        _callPhase == CallPhase.failed ||
+        _callPhase == CallPhase.idle) {
+      return;
+    }
+    if (_callPhase == CallPhase.connected) {
+      // Too late — the normal connected-greeting path will handle it.
+      return;
+    }
+    if (_preGreetInFlight || _preGreetReady) return;
+    if (_remoteIdentity == null || _remoteIdentity!.isEmpty) return;
+    _firePreGreeting(trigger: 'ringing');
   }
 
   /// Builds the system prompt that nudges the LLM to produce the opening
