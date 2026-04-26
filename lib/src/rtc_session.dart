@@ -2634,7 +2634,18 @@ class RTCSession extends EventManager implements Owner {
       }
 
       logger.d('emit "sdp"');
-      String? processedAnswer = _ensureRtcpMux(response.body);
+      // Align answer MIDs and BUNDLE to our outgoing offer (see _ensureRtcpMux).
+      final RTCSessionDescription? localOffer183 =
+          await _connection?.getLocalDescription();
+      final List<String> offerMids183 =
+          _extractMidsFromSdp(localOffer183?.sdp);
+      final List<String> offerBundleMids183 =
+          _extractBundleMidsFromSdp(localOffer183?.sdp);
+      String? processedAnswer = _ensureRtcpMux(
+        response.body,
+        offerMids: offerMids183,
+        offerBundleMids: offerBundleMids183,
+      );
       emit(EventSdp(
           originator: Originator.remote,
           type: SdpType.answer,
@@ -2694,7 +2705,18 @@ class RTCSession extends EventManager implements Owner {
       }
 
       logger.d('emit "sdp"');
-      String? processedAnswer = _ensureRtcpMux(response.body);
+      // Align answer MIDs and BUNDLE to our outgoing offer (see _ensureRtcpMux).
+      final RTCSessionDescription? localOffer2xx =
+          await _connection?.getLocalDescription();
+      final List<String> offerMids2xx =
+          _extractMidsFromSdp(localOffer2xx?.sdp);
+      final List<String> offerBundleMids2xx =
+          _extractBundleMidsFromSdp(localOffer2xx?.sdp);
+      String? processedAnswer = _ensureRtcpMux(
+        response.body,
+        offerMids: offerMids2xx,
+        offerBundleMids: offerBundleMids2xx,
+      );
       emit(EventSdp(
           originator: Originator.remote,
           type: SdpType.answer,
@@ -2811,7 +2833,22 @@ class RTCSession extends EventManager implements Owner {
       }
 
       logger.d('emit "sdp"');
-      String? processedAnswer = _ensureRtcpMux(response.body);
+      // Pull MIDs and BUNDLE group from our outgoing offer so the answer
+      // aligns correctly. Telnyx omits a=mid: on rejected port-0 m-lines
+      // AND omits a=group:BUNDLE entirely; without aligning to the offer
+      // we'd synthesize a BUNDLE that contains rejected m-lines, which
+      // WebRTC rejects as "BUNDLE group in answer contains a MID that was
+      // not in the offered group" → BYE the call as "Hold Failed".
+      final RTCSessionDescription? localOffer =
+          await _connection?.getLocalDescription();
+      final List<String> offerMids = _extractMidsFromSdp(localOffer?.sdp);
+      final List<String> offerBundleMids =
+          _extractBundleMidsFromSdp(localOffer?.sdp);
+      String? processedAnswer = _ensureRtcpMux(
+        response.body,
+        offerMids: offerMids,
+        offerBundleMids: offerBundleMids,
+      );
       emit(EventSdp(
         originator: Originator.remote,
         type: SdpType.answer,
@@ -2979,7 +3016,17 @@ class RTCSession extends EventManager implements Owner {
       }
 
       logger.d('emit "sdp"');
-      String? processedAnswer = _ensureRtcpMux(response.body);
+      // Align answer MIDs and BUNDLE to our outgoing offer (see _ensureRtcpMux).
+      final RTCSessionDescription? localOffer =
+          await _connection?.getLocalDescription();
+      final List<String> offerMids = _extractMidsFromSdp(localOffer?.sdp);
+      final List<String> offerBundleMids =
+          _extractBundleMidsFromSdp(localOffer?.sdp);
+      String? processedAnswer = _ensureRtcpMux(
+        response.body,
+        offerMids: offerMids,
+        offerBundleMids: offerBundleMids,
+      );
       emit(EventSdp(
           originator: Originator.remote,
           type: SdpType.answer,
@@ -3090,7 +3137,17 @@ class RTCSession extends EventManager implements Owner {
         }
 
         logger.d('emit "sdp"');
-        String? processedAnswer = _ensureRtcpMux(response.body);
+        // Align answer MIDs and BUNDLE to our outgoing offer (see _ensureRtcpMux).
+        final RTCSessionDescription? localOffer =
+            await _connection?.getLocalDescription();
+        final List<String> offerMids = _extractMidsFromSdp(localOffer?.sdp);
+        final List<String> offerBundleMids =
+            _extractBundleMidsFromSdp(localOffer?.sdp);
+        String? processedAnswer = _ensureRtcpMux(
+          response.body,
+          offerMids: offerMids,
+          offerBundleMids: offerBundleMids,
+        );
         emit(EventSdp(
             originator: Originator.remote,
             type: SdpType.answer,
@@ -3248,6 +3305,55 @@ class RTCSession extends EventManager implements Owner {
     return sdpInput.replaceAllMapped(directionLine, replaceDirection);
   }
 
+  /// Extract the ordered list of `a=mid:` values from an SDP. Falls back to
+  /// the positional index for media sections that lack an explicit MID.
+  /// Used to align an answer's MIDs to the original offer when the remote
+  /// SIP endpoint omits `a=mid:` on rejected (port-0) media sections.
+  List<String> _extractMidsFromSdp(String? sdpInput) {
+    final List<String> out = <String>[];
+    if (sdpInput == null || sdpInput.isEmpty) return out;
+    final List<String> lines = sdpInput.split(RegExp(r'\r?\n'));
+    int sectionIdx = -1;
+    String? currentMid;
+    for (final String line in lines) {
+      if (line.startsWith('m=')) {
+        if (sectionIdx >= 0) {
+          out.add(currentMid ?? '$sectionIdx');
+        }
+        sectionIdx++;
+        currentMid = null;
+      } else if (line.startsWith('a=mid:') && sectionIdx >= 0) {
+        currentMid = line.substring(6).trim();
+      }
+    }
+    if (sectionIdx >= 0) {
+      out.add(currentMid ?? '$sectionIdx');
+    }
+    return out;
+  }
+
+  /// Extract the MIDs listed in the FIRST `a=group:BUNDLE …` line of an SDP.
+  /// Returns an empty list if no BUNDLE group is present (e.g. legacy SIP
+  /// endpoints) or if the line has no MIDs after `BUNDLE`. Used to constrain
+  /// a synthesized BUNDLE group on an answer to match the offer's exactly,
+  /// since WebRTC requires the answer's BUNDLE to be a subset of the offer's.
+  List<String> _extractBundleMidsFromSdp(String? sdpInput) {
+    final List<String> out = <String>[];
+    if (sdpInput == null || sdpInput.isEmpty) return out;
+    final List<String> lines = sdpInput.split(RegExp(r'\r?\n'));
+    for (final String line in lines) {
+      if (line.startsWith('a=group:BUNDLE')) {
+        final String tail = line.substring('a=group:BUNDLE'.length).trim();
+        if (tail.isEmpty) return out;
+        for (final String mid in tail.split(RegExp(r'\s+'))) {
+          if (mid.isNotEmpty) out.add(mid);
+        }
+        return out;
+      }
+    }
+    return out;
+  }
+
   /// Make a traditional SIP SDP compatible with WebRTC unified-plan.
   ///
   /// Some SIP endpoints (e.g. Telnyx FreeSWITCH) return SDPs that lack
@@ -3256,8 +3362,21 @@ class RTCSession extends EventManager implements Owner {
   ///   - `a=mid:N`      (required by unified-plan for BUNDLE)
   ///   - `a=group:BUNDLE ...` (required by unified-plan at session level)
   ///
+  /// When [offerMids] is supplied (i.e. we're processing an answer to one of
+  /// our own offers), missing MIDs are taken positionally from the offer
+  /// rather than synthesized as `'0'`, `'1'`, ... — this is required for
+  /// WebRTC's strict m-line/MID matching: if our offer used `a=mid:video`
+  /// for a rejected video section and the remote answer omits `a=mid:`,
+  /// inserting `a=mid:1` would make WebRTC reject the answer with "order
+  /// of m-lines in answer doesn't match order in offer" (which manifests
+  /// as a fatal "Hold Failed" BYE on a hold re-INVITE).
+  ///
   /// Uses string manipulation to avoid sdp_transform round-trip issues.
-  String? _ensureRtcpMux(String? sdpInput) {
+  String? _ensureRtcpMux(
+    String? sdpInput, {
+    List<String>? offerMids,
+    List<String>? offerBundleMids,
+  }) {
     if (sdpInput == null || sdpInput.isEmpty) {
       return sdpInput;
     }
@@ -3278,6 +3397,11 @@ class RTCSession extends EventManager implements Owner {
     final List<bool> mediaSectionHasMid = <bool>[];
     final List<bool> mediaSectionHasRtcpMux = <bool>[];
     final List<String?> mediaSectionMids = <String?>[];
+    // Track each media section's transport port so we can exclude rejected
+    // (port=0) sections from a synthesized BUNDLE group. WebRTC requires
+    // the answer's BUNDLE to be a strict subset of the offer's, and rejected
+    // m-lines must never appear in the BUNDLE.
+    final List<int> mediaSectionPorts = <int>[];
 
     for (final String line in lines) {
       if (line.startsWith('a=group:BUNDLE')) {
@@ -3288,6 +3412,13 @@ class RTCSession extends EventManager implements Owner {
         mediaSectionHasMid.add(false);
         mediaSectionHasRtcpMux.add(false);
         mediaSectionMids.add(null);
+        // Parse the port from `m=<media> <port> <proto> ...`
+        int port = 0;
+        final List<String> mParts = line.split(RegExp(r'\s+'));
+        if (mParts.length >= 2) {
+          port = int.tryParse(mParts[1]) ?? 0;
+        }
+        mediaSectionPorts.add(port);
       }
       if (mediaCount > 0) {
         if (line.trim() == 'a=rtcp-mux') {
@@ -3300,11 +3431,44 @@ class RTCSession extends EventManager implements Owner {
       }
     }
 
-    // Determine mid values to use for sections that lack them
+    // Determine mid values to use for sections that lack them.
+    // When we have the offer's MIDs (answer-side processing), align each
+    // missing MID to the offer's positional MID so WebRTC's strict
+    // BUNDLE/MID matching is satisfied. Otherwise fall back to the index.
     for (int i = 0; i < mediaCount; i++) {
       if (mediaSectionMids[i] == null) {
-        mediaSectionMids[i] = '$i';
+        if (offerMids != null && i < offerMids.length) {
+          mediaSectionMids[i] = offerMids[i];
+        } else {
+          mediaSectionMids[i] = '$i';
+        }
       }
+    }
+
+    // Compute the BUNDLE group MIDs to synthesize when missing. WebRTC
+    // requires the answer's BUNDLE group to be a subset of the offer's.
+    // Prefer the offer's exact bundle list; otherwise default to all
+    // non-rejected (port>0) media sections.
+    String synthesizedBundleMids;
+    if (offerBundleMids != null && offerBundleMids.isNotEmpty) {
+      // Intersect with MIDs present in this answer (in case the answer is
+      // missing a section that was bundled in the offer).
+      final Set<String?> answerMids = mediaSectionMids.toSet();
+      final List<String> filtered = offerBundleMids
+          .where((String mid) => answerMids.contains(mid))
+          .toList();
+      synthesizedBundleMids =
+          filtered.isNotEmpty ? filtered.join(' ') : offerBundleMids.join(' ');
+    } else {
+      final List<String> activeMids = <String>[];
+      for (int i = 0; i < mediaCount; i++) {
+        if (mediaSectionPorts[i] != 0) {
+          activeMids.add(mediaSectionMids[i] ?? '$i');
+        }
+      }
+      synthesizedBundleMids = activeMids.isNotEmpty
+          ? activeMids.join(' ')
+          : mediaSectionMids.join(' ');
     }
 
     // Second pass: rebuild SDP with missing attributes
@@ -3332,7 +3496,7 @@ class RTCSession extends EventManager implements Owner {
           currentMedia == 0 &&
           !hasBundleGroup &&
           mediaCount > 0) {
-        result.add('a=group:BUNDLE ${mediaSectionMids.join(' ')}');
+        result.add('a=group:BUNDLE $synthesizedBundleMids');
       }
 
       result.add(line);

@@ -72,6 +72,19 @@ class TextAgentConfig {
   final String customModel;
   final String systemPrompt;
 
+  // Fallback ("smarter") models used by the stuck-detection escalation
+  // path. When the agent is detected to be stalling (asking the same
+  // question, no tool use, terse non-progress replies), the next LLM
+  // request is one-shot retargeted at the fallback model with a nudge
+  // appended to the system prompt. Empty string disables escalation
+  // for that provider.
+  final String openaiFallbackModel;
+  final String claudeFallbackModel;
+  final String customFallbackModel;
+
+  /// Master switch — when off, the stuck detector is disabled entirely.
+  final bool stuckEscalationEnabled;
+
   const TextAgentConfig({
     this.enabled = false,
     this.provider = TextAgentProvider.openai,
@@ -83,6 +96,10 @@ class TextAgentConfig {
     this.customEndpointUrl = '',
     this.customModel = '',
     this.systemPrompt = '',
+    this.openaiFallbackModel = 'gpt-5.5',
+    this.claudeFallbackModel = 'claude-sonnet-4-20250514',
+    this.customFallbackModel = '',
+    this.stuckEscalationEnabled = true,
   });
 
   bool get isConfigured {
@@ -118,6 +135,27 @@ class TextAgentConfig {
     }
   }
 
+  /// Active "smarter" fallback model for the current provider, or empty
+  /// string when none is configured (disables escalation).
+  String get activeFallbackModel {
+    switch (provider) {
+      case TextAgentProvider.openai:
+        return openaiFallbackModel.trim();
+      case TextAgentProvider.claude:
+        return claudeFallbackModel.trim();
+      case TextAgentProvider.custom:
+        return customFallbackModel.trim();
+    }
+  }
+
+  /// True when escalation is enabled AND a distinct fallback model is
+  /// configured (i.e. we'd actually swap to a different model).
+  bool get canEscalate {
+    if (!stuckEscalationEnabled) return false;
+    final fb = activeFallbackModel;
+    return fb.isNotEmpty && fb != activeModel;
+  }
+
   TextAgentConfig copyWith({
     bool? enabled,
     TextAgentProvider? provider,
@@ -129,6 +167,10 @@ class TextAgentConfig {
     String? customEndpointUrl,
     String? customModel,
     String? systemPrompt,
+    String? openaiFallbackModel,
+    String? claudeFallbackModel,
+    String? customFallbackModel,
+    bool? stuckEscalationEnabled,
   }) {
     return TextAgentConfig(
       enabled: enabled ?? this.enabled,
@@ -141,6 +183,11 @@ class TextAgentConfig {
       customEndpointUrl: customEndpointUrl ?? this.customEndpointUrl,
       customModel: customModel ?? this.customModel,
       systemPrompt: systemPrompt ?? this.systemPrompt,
+      openaiFallbackModel: openaiFallbackModel ?? this.openaiFallbackModel,
+      claudeFallbackModel: claudeFallbackModel ?? this.claudeFallbackModel,
+      customFallbackModel: customFallbackModel ?? this.customFallbackModel,
+      stuckEscalationEnabled:
+          stuckEscalationEnabled ?? this.stuckEscalationEnabled,
     );
   }
 }
@@ -357,6 +404,16 @@ class AgentConfigService {
           prefs.getString('${_prefix}text_custom_endpoint') ?? '',
       customModel: prefs.getString('${_prefix}text_custom_model') ?? '',
       systemPrompt: prefs.getString('${_prefix}text_system_prompt') ?? '',
+      openaiFallbackModel:
+          prefs.getString('${_prefix}text_openai_fallback_model') ??
+              'gpt-5.5',
+      claudeFallbackModel:
+          prefs.getString('${_prefix}text_claude_fallback_model') ??
+              'claude-sonnet-4-20250514',
+      customFallbackModel:
+          prefs.getString('${_prefix}text_custom_fallback_model') ?? '',
+      stuckEscalationEnabled:
+          prefs.getBool('${_prefix}text_stuck_escalation_enabled') ?? true,
     );
   }
 
@@ -374,6 +431,14 @@ class AgentConfigService {
     await prefs.setString('${_prefix}text_custom_model', config.customModel);
     await prefs.setString(
         '${_prefix}text_system_prompt', config.systemPrompt);
+    await prefs.setString('${_prefix}text_openai_fallback_model',
+        config.openaiFallbackModel);
+    await prefs.setString('${_prefix}text_claude_fallback_model',
+        config.claudeFallbackModel);
+    await prefs.setString('${_prefix}text_custom_fallback_model',
+        config.customFallbackModel);
+    await prefs.setBool('${_prefix}text_stuck_escalation_enabled',
+        config.stuckEscalationEnabled);
   }
 
   static Future<TtsConfig> loadTtsConfig() async {

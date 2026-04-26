@@ -223,6 +223,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
   void _syncCallState() {
     if (call == null) return;
     final s = call!.state;
+    // _enterCallMode is idempotent at the audio layer — calling it twice
+    // bumps the native refCount but no longer toggles APM conference mode
+    // (that's now driven by AgentService._applyConferenceModeForCallCount
+    // based on real leg count). _pushCallPhase is also idempotent for the
+    // same agent.callPhase, so no duplicate-greeting risk.
     if (s == CallStateEnum.CONFIRMED || s == CallStateEnum.ACCEPTED) {
       _state = s;
       _callConfirmed = true;
@@ -442,6 +447,11 @@ class _MyCallScreenWidget extends State<CallScreenWidget>
         _state = callState.state;
         _callConfirmTimer?.cancel();
         setState(() => _callConfirmed = true);
+        // Always enter call mode here. _enterCallMode is idempotent at the
+        // audio layer — duplicate calls bump the native refCount but APM
+        // conference mode is no longer driven by refCount (that's controlled
+        // by AgentService._applyConferenceModeForCallCount based on real leg
+        // count), so the second call is harmless.
         _enterCallMode();
         _maybeAutoRecord();
         _startAddCallGrace();

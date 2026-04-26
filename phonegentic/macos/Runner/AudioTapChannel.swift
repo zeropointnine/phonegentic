@@ -385,9 +385,13 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func enterCallMode() {
         callModeRefCount += 1
         NSLog("[AudioTap] enterCallMode refCount=%d", callModeRefCount)
-        if callModeRefCount > 1 {
-            setAPMConferenceMode(true)
-        }
+        // NOTE: Conference APM mode (AEC/NS/AGC off) is intentionally NOT
+        // toggled here. RefCount > 1 does NOT imply a real multi-leg
+        // conference — it can also mean a single leg got entered twice
+        // (e.g. dialpad auto-answer-safety entered, then CallScreen's SIP
+        // listener also entered). Disabling AEC in that case produces echo.
+        // Conference mode is now driven explicitly from Flutter via
+        // setConferenceMode(active:) when the call truly has > 1 SIP leg.
         guard !inCallMode else { return }
         inCallMode = true
 
@@ -422,7 +426,12 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     private func exitCallMode() {
         callModeRefCount = max(0, callModeRefCount - 1)
         NSLog("[AudioTap] exitCallMode refCount=%d", callModeRefCount)
-        if callModeRefCount <= 1 {
+        // Belt-and-suspenders: when the last leg's enterCallMode is undone,
+        // force conference mode off so AEC/NS/AGC are restored before the
+        // next call. The Flutter side normally drives this explicitly, but
+        // this guards against teardown ordering bugs (caller exits before
+        // calling setConferenceMode(false)) leaving APM in a degraded state.
+        if callModeRefCount == 0 {
             setAPMConferenceMode(false)
         }
         guard callModeRefCount == 0 else { return }
@@ -455,30 +464,37 @@ class AudioTapChannel: NSObject, FlutterStreamHandler {
     }
 
     /// Toggle WebRTC APM features that degrade audio with multiple peer connections.
-    /// AEC and NS operate on a single-stream assumption; with two connections the
-    /// reference signal is wrong and NS over-suppresses, producing a "wind tunnel."
+    ///
+    /// IMPORTANT: AEC must stay ON even in conference mode. AEC cancels the local
+    /// speaker→mic loopback (your own voice playing through your speakers and
+    /// being recaptured by the mic). That loop exists regardless of how many
+    /// remote legs are mixed at the renderer — the AEC reference is whatever
+    /// WebRTC outputs to the speaker, which is the mixed downlink. Disabling AEC
+    /// in conference mode produces an audible self-echo (Patrick hears his own
+    /// voice come back).
+    ///
+    /// What DOES degrade with multiple downlinks is NS (over-suppression of the
+    /// mixed reference, "wind tunnel") and AGC (gain pumping when one leg is
+    /// loud). So we leave AEC + HPF on and only disable NS/AGC.
     private func setAPMConferenceMode(_ conference: Bool) {
         WebRTCAudioProcessor.shared.conferenceMode = conference
 
         let apm = AudioManager.sharedInstance().audioProcessingModule
         let cfg = RTCAudioProcessingConfig()
+        cfg.isEchoCancellationEnabled = true
+        cfg.isHighpassFilterEnabled = true
         if conference {
-            cfg.isEchoCancellationEnabled = false
             cfg.isNoiseSuppressionEnabled = false
             cfg.isAutoGainControl1Enabled = false
             cfg.isAutoGainControl2Enabled = false
-            cfg.isHighpassFilterEnabled = false
         } else {
-            cfg.isEchoCancellationEnabled = true
             cfg.isNoiseSuppressionEnabled = true
             cfg.isAutoGainControl1Enabled = true
             cfg.isAutoGainControl2Enabled = true
-            cfg.isHighpassFilterEnabled = true
         }
         apm.config = cfg
-        NSLog("[AudioTap] APM conference mode %@: AEC=%@ NS=%@ AGC=%@",
+        NSLog("[AudioTap] APM conference mode %@: AEC=on NS=%@ AGC=%@ (HPF=on)",
               conference ? "ON" : "OFF",
-              conference ? "off" : "on",
               conference ? "off" : "on",
               conference ? "off" : "on")
     }

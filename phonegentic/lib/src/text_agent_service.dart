@@ -43,6 +43,14 @@ class TextAgentService {
   bool _cancelRequested = false;
   final Set<String> _pendingToolUseIds = {};
 
+  // One-shot escalation overrides set by AgentService's stuck tracker.
+  // When non-null, the next LLM request runs against `_oneShotModel`
+  // (instead of `_config.activeModel`) and appends `_oneShotSystemSuffix`
+  // to the system instructions. Both are cleared after that request
+  // completes (or is cancelled), so they never leak across turns.
+  String? _oneShotModel;
+  String? _oneShotSystemSuffix;
+
   static const _responseTimeoutSecs = 45;
 
   final _responseController = StreamController<ResponseTextEvent>.broadcast();
@@ -96,6 +104,22 @@ class TextAgentService {
   /// has time to accumulate before the LLM fires a response.
   set inCallMode(bool value) =>
       _debounceMs = value ? _inCallDebounceMs : _defaultDebounceMs;
+
+  /// Arm a one-shot escalation for the next LLM request only. When [model]
+  /// is non-null, the next request runs against that model instead of the
+  /// configured one (used by AgentService's stuck-detector to swap in a
+  /// smarter fallback). When [systemSuffix] is non-null, that text is
+  /// appended to the system prompt for the next request only — used to
+  /// inject a "you've stalled, act decisively" nudge without polluting
+  /// the cached prompt prefix or the persistent system instructions.
+  void armNextRequestEscalation({String? model, String? systemSuffix}) {
+    _oneShotModel = model;
+    _oneShotSystemSuffix = systemSuffix;
+  }
+
+  /// True if a one-shot escalation is currently armed (peek-only).
+  bool get hasArmedEscalation =>
+      _oneShotModel != null || _oneShotSystemSuffix != null;
 
   /// Buffer a transcript line; triggers a debounced flush → LLM call.
   void addTranscript(String speakerLabel, String text) {
@@ -862,10 +886,30 @@ class TextAgentService {
     if (_history.isEmpty) return;
 
     final merged = _mergedHistory();
+
+    // Consume any one-shot escalation arming. The override is intentionally
+    // cleared BEFORE the network call so that a retry within _respond()'s
+    // loop or any concurrent re-arm doesn't double-apply the same nudge.
+    final overrideModel = _oneShotModel;
+    final overrideSuffix = _oneShotSystemSuffix;
+    _oneShotModel = null;
+    _oneShotSystemSuffix = null;
+
+    final effectiveModel = overrideModel ?? _config.activeModel;
+    final effectiveInstructions = overrideSuffix == null
+        ? _systemInstructions
+        : '$_systemInstructions\n\n$overrideSuffix';
+
+    if (overrideModel != null || overrideSuffix != null) {
+      debugPrint('[TextAgent] Escalation armed for this request — '
+          'model=${overrideModel ?? "(unchanged)"} '
+          'nudge=${overrideSuffix == null ? "no" : "yes"}');
+    }
+
     final req = LlmRequest(
       apiKey: _config.activeApiKey,
-      model: _config.activeModel,
-      systemInstructions: _systemInstructions,
+      model: effectiveModel,
+      systemInstructions: effectiveInstructions,
       messages: merged,
       tools: _allTools,
     );
@@ -1205,6 +1249,8 @@ class TextAgentService {
     _cancelRequested = false;
     _debounceMs = _defaultDebounceMs;
     _hasTranscriptPending = false;
+    _oneShotModel = null;
+    _oneShotSystemSuffix = null;
   }
 
   void dispose() {

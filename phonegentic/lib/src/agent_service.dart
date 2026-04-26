@@ -577,6 +577,37 @@ class AgentService extends ChangeNotifier {
     return filler;
   }
 
+  /// Stuck-detection escalation infrastructure. When the agent's reply
+  /// looks like it's stalling (passive question-only output, no tool use,
+  /// repetition of a previous reply, or the user is showing frustration),
+  /// `_stuckTracker` arms a one-shot escalation: the next LLM request runs
+  /// against the configured fallback (smarter, slower) model with a
+  /// system-prompt nudge. Because the fallback model is slower, we also
+  /// queue an interstitial filler ("one second, my screen froze…") to
+  /// play right before that request fires so the line doesn't go silent
+  /// during the longer round-trip.
+  final _StuckTracker _stuckTracker = _StuckTracker();
+  int _toolCallsThisTurn = 0;
+  bool _pendingEscalationFiller = false;
+
+  /// Fillers spoken when an escalated (slower) request is about to fire.
+  /// The user explicitly asked for "frozen screen" flavor here — these
+  /// imply we're slowing down to think rather than running a tool.
+  static const _escalationFillers = <String>[
+    'One second, my screen froze for a moment.',
+    'Hold on a sec, let me think this through.',
+    'Just a moment, I need to look at that again.',
+    'One sec, let me pull this up properly.',
+  ];
+  int _escalationFillerCursor = 0;
+
+  String _nextEscalationFiller() {
+    final f = _escalationFillers[
+        _escalationFillerCursor % _escalationFillers.length];
+    _escalationFillerCursor++;
+    return f;
+  }
+
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
 
@@ -1877,6 +1908,67 @@ class AgentService extends ChangeNotifier {
         'Same rule when $managerLabel is the audience: take the action, '
         'then report the outcome briefly ("done — texted Bob") instead of '
         'announcing the action up-front and then reporting again.\n');
+
+    buf.write(
+        '\n### Dictated phone numbers: read back BEFORE dialing\n'
+        'When someone gives you a phone number out loud, you are reading it '
+        'through Whisper STT, which routinely chops digits, swaps tail '
+        'digits, splits a single number across multiple transcripts, or '
+        'merges adjacent words into the digit string. Do NOT dial '
+        'a speech-derived number until you have read the digits back to '
+        'the caller and they confirm. Pattern:\n'
+        '  • Caller: "Conference in 1-800-221-1212"\n'
+        '  • You: "Got it — 1-800-221-1212, correct?" (digits spoken '
+        'individually, with a pause-marker like "one — eight hundred — two '
+        'two one — one two one two")\n'
+        '  • Caller confirms → invoke the right tool (see next section).\n'
+        '  • Caller corrects → use the corrected version, do NOT dial '
+        'until they confirm.\n'
+        'Two specific failure modes to watch for:\n'
+        '  • Whisper emitting a partial like "1-800-" or "221-1217." — '
+        'these are not full numbers, ASK for the rest, never dial a '
+        'partial.\n'
+        '  • Whisper emitting numbers as part of a sentence or fragment '
+        'flagged as a hallucination — do not silently incorporate those '
+        'digits, ask the caller to repeat.\n'
+        'Numbers from your contact directory or call history (i.e. ones '
+        'you didn\'t hear off the wire) do NOT need read-back.\n');
+
+    buf.write(
+        '\n### Picking the right dial tool: `make_call` vs '
+        '`add_conference_participant`\n'
+        'These are NOT interchangeable.\n'
+        '  • `make_call(number)` — places a brand-new outbound call when '
+        'NOTHING else is on the line. Use this only when the platform is '
+        'idle (no live call). If you call `make_call` while already on a '
+        'call, the existing party stays on the line in the background, '
+        'their audio mixes with the new leg into one transcript stream, '
+        'and the result is unintelligible chaos.\n'
+        '  • `add_conference_participant(number)` — use this whenever you '
+        'are ALREADY on a call and the user wants you to dial somebody '
+        'else. The current party is automatically put on hold while the '
+        'new leg rings; once it answers, follow up with '
+        '`merge_conference` to bridge them together. ANY phrasing like '
+        '"conference in X", "make a conference call", "add Y to the '
+        'call", "loop in Z", "three-way Z", or even "call X" while '
+        'you\'re already in a conversation maps to '
+        '`add_conference_participant`, NOT `make_call`.\n'
+        'Quick test: if there\'s already a person you can hear or talk '
+        'to, the answer is `add_conference_participant`. Period.\n');
+
+    buf.write(
+        '\n### "End the call" mid-conference: drop the right leg\n'
+        'In a conference / multi-leg scenario, when an outbound dial fails '
+        '(IVR errors, "the number you have dialed is not in service", '
+        'rapid disconnect, etc.) and you decide to give up, calling '
+        '`end_call` with no `call_id` is interpreted by the platform as '
+        '"abort the leg I just tried to add" — your established primary '
+        'connection is preserved automatically. Don\'t worry about which '
+        'leg to specify; the platform protects the host/manager line.\n'
+        'Then briefly tell the manager what happened ("that number didn\'t '
+        'go through — bad digits or out of service — what would you like '
+        'to try?") and wait for their next instruction. Do NOT silently '
+        'redial or hang up the whole session.\n');
 
     buf.write(
         '\n### Internal context blocks are messages to YOURSELF, not lines '
@@ -4166,34 +4258,43 @@ class AgentService extends ChangeNotifier {
 
     final lowConfidence = confidence > 0.0 && confidence < 0.5;
 
-    // If voiceprint identified a name with reasonable confidence and the
-    // speaker doesn't have one yet, update the label.  A threshold of 0.65
-    // avoids false positives from ambient audio or dissimilar voices.
+    // Voiceprint → speaker label policy (Option A: clamp to multi-party).
     //
-    // For the remote speaker, only apply voiceprint naming when the call's
-    // remote identity already resolved to a contact (i.e. the contact lookup
-    // set the name first).  Otherwise a false-positive voice match labels a
-    // stranger with a known contact's name.  This applies to both inbound
-    // and outbound calls.
-    final skipVoiceprint = isRemote &&
-        speaker.name.isEmpty &&
-        _remoteIdentity != null &&
-        contactService?.lookupByPhone(_remoteIdentity!) == null;
+    // Phone-number identity is the source of truth for who's on a 1:1 call:
+    //  • remote: SIP `from` → contact / manager match (set in
+    //    _claimRemoteSpeakerNameFromPhone() when _remoteIdentity is known).
+    //  • host:   the local device owner.
+    //
+    // Voiceprint adds value only when phone-number identity is *ambiguous*:
+    //  • Multiple humans on one SIP leg (`_partyCount > 2`), e.g. someone
+    //    handed the phone to a friend or a speakerphone has multiple people
+    //    in the room.
+    //  • At idle (no active call): the local mic might pick up a different
+    //    person — voiceprint is the only signal we have.
+    //
+    // For a normal 1:1 in-call utterance, voiceprint is skipped entirely so
+    // it cannot race against (or overwrite) the phone-derived label. The
+    // _saveRemoteVoiceprint() path still runs at end-of-call so we keep
+    // building the voiceprint database for future multi-party scenarios.
+    final inActiveCall = _callPhase != CallPhase.idle;
+    final isMultiParty = _partyCount > 2;
+    final voiceprintEligible = isMultiParty || !inActiveCall;
+    final skipVoiceprint = !voiceprintEligible;
 
     if (voiceprintName.isNotEmpty && speaker.name.isEmpty && !skipVoiceprint) {
       if (confidence >= 0.65) {
         speaker.name = voiceprintName;
         _pushInstructionsIfLive();
         debugPrint(
-            '[AgentService] Voiceprint accepted: "$voiceprintName" (confidence=$confidence)');
+            '[AgentService] Voiceprint accepted: "$voiceprintName" (confidence=$confidence, parties=$_partyCount)');
       } else {
         debugPrint(
             '[AgentService] Voiceprint rejected: "$voiceprintName" (confidence=$confidence < 0.65)');
       }
-    } else if (skipVoiceprint && voiceprintName.isNotEmpty) {
+    } else if (skipVoiceprint && voiceprintName.isNotEmpty && speaker.name.isEmpty) {
       debugPrint(
-          '[AgentService] Voiceprint skipped for remote caller audio: '
-          '"$voiceprintName" (confidence=$confidence)');
+          '[AgentService] Voiceprint skipped (1:1 call, phone-number identity authoritative): '
+          '"$voiceprintName" (confidence=$confidence, parties=$_partyCount)');
     }
 
     _addOrMergeTranscript(role, text, speakerName: speaker.label);
@@ -4248,8 +4349,24 @@ class AgentService extends ChangeNotifier {
     // New turn → reset the "agent already said something" gate so the
     // tool-call filler can fire if the LLM jumps straight to a tool.
     _agentSpokeThisTurn = false;
+    _toolCallsThisTurn = 0;
+
+    // Feed the user transcript to the stuck tracker BEFORE we ship it to
+    // the LLM. Frustration cues ("I told you", "you already") raise the
+    // score immediately so we can escalate even on the first repeat.
+    _stuckTracker.onUserTurn(text);
 
     _textAgent?.addTranscript(label, text);
+
+    // If the previous agent reply armed an escalation, this user turn is
+    // what actually triggers the slower fallback-model request. Drop a
+    // short interstitial filler now so the user doesn't sit through
+    // dead air during the longer round-trip. Gates mirror the regular
+    // tool-call filler — same suppression rules during pre-connect / IVR.
+    if (_pendingEscalationFiller) {
+      _pendingEscalationFiller = false;
+      _maybeSpeakEscalationFiller();
+    }
 
     if (!_thinking) {
       _thinking = true;
@@ -4561,6 +4678,12 @@ class AgentService extends ChangeNotifier {
             _recentAgentTexts.removeAt(0);
           }
           callHistory?.addTranscript(role: 'agent', text: finalText);
+
+          // Score this agent turn for stuck-detection. We feed the post-
+          // duplicate-check `finalText` so identical repeats already
+          // suppressed upstream don't double-count, but near-duplicates
+          // (the model rephrasing the same passive question) still do.
+          _evaluateStuckSignals(finalText);
 
           if (_voiceHoldUntilFirstPcm) {
             // PCM hasn't arrived yet — keep the hold so text stays hidden
@@ -4922,9 +5045,116 @@ class AgentService extends ChangeNotifier {
     _agentSpokeThisTurn = true;
   }
 
+  /// Speak the "I'm thinking harder, hang on" filler immediately before
+  /// an escalated (slower fallback-model) LLM request fires. Skipped when
+  /// TTS is muted, the call is in pre-connect/settling, or the loop-
+  /// breaker has already engaged.
+  void _maybeSpeakEscalationFiller() {
+    if (_ttsMuted || _muted) return;
+    if (!_hasTts) return;
+    final suppressTts = _callDialPending ||
+        ((_callPhase.isPreConnect ||
+                _callPhase == CallPhase.answered ||
+                _callPhase == CallPhase.settling) &&
+            _callPhase != CallPhase.idle);
+    if (suppressTts) return;
+    if (_consecutiveAgentResponses >= _maxConsecutiveAgentResponses) return;
+
+    final filler = _nextEscalationFiller();
+    debugPrint('[AgentService] Escalation filler: "$filler"');
+    _activeTtsStartGeneration();
+    _activeTtsSendText(filler);
+    _activeTtsEndGeneration();
+    _agentSpokeThisTurn = true;
+  }
+
+  /// Score the just-finished agent turn and, if the tracker decides we're
+  /// stuck, arm the next LLM request with a prompt nudge and (when a
+  /// distinct fallback model is configured) a model swap. The actual
+  /// arming happens via [TextAgentService.armNextRequestEscalation],
+  /// consumed exactly once on the next call.
+  void _evaluateStuckSignals(String agentText) {
+    if (_textAgent == null) return;
+    final cfg = _textAgentConfig;
+    if (cfg == null) return;
+    if (!cfg.stuckEscalationEnabled) return;
+
+    _stuckTracker.onAgentTurn(
+      text: agentText,
+      toolCallsThisTurn: _toolCallsThisTurn,
+      recentAgentTexts: _recentAgentTexts,
+    );
+
+    final wantEscalate = _stuckTracker.consumeEscalateArmed();
+    final wantNudge = _stuckTracker.consumeNudgeArmed();
+
+    if (!wantEscalate && !wantNudge) return;
+
+    // Decide whether we can actually swap models for this provider.
+    final canEscalate = wantEscalate && cfg.canEscalate;
+    final fallbackModel = canEscalate ? cfg.activeFallbackModel : null;
+
+    // Build a focused, ephemeral nudge. Kept short to avoid bloating the
+    // request and to avoid drift in the cached prompt prefix on the
+    // primary model — this only ever lands on the one-shot request.
+    const nudge =
+        '⚠ STUCK-DETECTOR ENGAGED. The previous reply was passive '
+        '(asking the user for information you can infer or look up '
+        'yourself, repeating the same question, or stalling without '
+        'progress). For THIS reply only: act decisively. If a tool '
+        'can answer the user\'s underlying request, call it now '
+        'instead of asking another clarifying question. Map common '
+        'city names to airport codes yourself (Charlotte=CLT, '
+        'Portland=PDX, NYC=JFK, Chicago=ORD, etc.). Do NOT ask the '
+        'user for codes, IDs, or details you can reasonably look up. '
+        'Keep the spoken reply to one sentence; let the tool result '
+        'speak for itself.';
+
+    if (canEscalate && fallbackModel != null && fallbackModel.isNotEmpty) {
+      debugPrint('[AgentService] Stuck detected — escalating next '
+          'request: model=$fallbackModel');
+      _textAgent!.armNextRequestEscalation(
+        model: fallbackModel,
+        systemSuffix: nudge,
+      );
+      // Queue the interstitial filler for the moment the next user turn
+      // actually fires the slow request. We don't speak it now — the
+      // user might still be talking, and the silence we're filling is
+      // the LLM round-trip, not the gap before the user replies.
+      _pendingEscalationFiller = true;
+    } else if (wantNudge || wantEscalate) {
+      // Either a soft nudge OR escalation was wanted but no fallback is
+      // configured. Either way, give the current model the nudge — it's
+      // free and often sufficient on its own.
+      debugPrint('[AgentService] Stuck detected — nudging next request '
+          '(no model swap)');
+      _textAgent!.armNextRequestEscalation(systemSuffix: nudge);
+    }
+  }
+
+  /// Clear all stuck-tracking state. Called on call boundaries and other
+  /// "fresh start" points where carrying over a stale score would cause
+  /// false escalation on the very first reply of a new conversation.
+  void _resetStuckTracking() {
+    _stuckTracker.reset();
+    _toolCallsThisTurn = 0;
+    _pendingEscalationFiller = false;
+    _textAgent?.armNextRequestEscalation();
+  }
+
   Future<void> _onTextAgentToolCall(ToolCallRequest req) async {
     debugPrint(
         '[AgentService] Text-agent tool: ${req.name} args=${req.arguments}');
+
+    // Tool call = the LLM is actually doing something concrete. Reset the
+    // stuck-tracker score so we don't escalate on a turn that produced
+    // real work, and clear any pending escalation arm/filler.
+    _toolCallsThisTurn++;
+    _stuckTracker.onToolCall();
+    if (_pendingEscalationFiller) {
+      _pendingEscalationFiller = false;
+      _textAgent?.armNextRequestEscalation();
+    }
 
     // If the LLM jumped straight into a tool call without speaking first,
     // drop a short filler ("just a sec…", "one moment…") so the user
@@ -5488,6 +5718,10 @@ class AgentService extends ChangeNotifier {
       _idleCallConfirmed = false;
       _managerAuthActive = false;
     }
+    // Fresh inbound SMS is a session boundary — drop any stale stuck-
+    // tracker state from a prior conversation so we don't escalate on
+    // the agent's first reply to the new thread.
+    _resetStuckTracking();
 
     String? contactName;
     if (contactService != null) {
@@ -6766,6 +7000,24 @@ class AgentService extends ChangeNotifier {
 
     number = ensureE164(number);
 
+    // Safety net: if a call is already alive, the LLM should be using
+    // `add_conference_participant`, not `make_call`. Picking `make_call` here
+    // creates a parallel SIP leg with no hold/merge — Whisper then mixes the
+    // two leg audio streams together, the user hears the new leg's IVR
+    // bleeding through, and `end_call` ambiguity drops the wrong leg.
+    // Reroute silently so the user gets the intended behavior (existing
+    // party stays on line, new party gets dialed and is mergeable).
+    final activeForReroute = sipHelper!.activeCall;
+    final hasLiveLeg = activeForReroute != null &&
+        activeForReroute.state != CallStateEnum.ENDED &&
+        activeForReroute.state != CallStateEnum.FAILED;
+    if (hasLiveLeg) {
+      debugPrint('[AgentService] make_call rerouted → '
+          'add_conference_participant (existing leg alive: '
+          '${activeForReroute.state})');
+      return _handleAddConferenceParticipant({'number': number});
+    }
+
     try {
       final mediaConstraints = <String, dynamic>{
         'audio': true,
@@ -6814,9 +7066,75 @@ class AgentService extends ChangeNotifier {
     return helper.activeCall;
   }
 
+  /// Resolve which leg `end_call` should act on. When the model passes
+  /// `call_id`, defer to it. Otherwise apply this priority order:
+  ///
+  ///   1. A leg that is currently *failing* or in early/transient state
+  ///      (CONNECTING, PROGRESS, FAILED) — the agent almost certainly means
+  ///      "abort that thing I just tried to add".
+  ///   2. If multiple CONFIRMED legs exist (true conference), the
+  ///      most-recently-added leg.
+  ///   3. The single active call if there's only one.
+  ///
+  /// Crucially: when there are 2+ legs and one of them is the original
+  /// inbound primary (oldest, CONFIRMED), we prefer dropping a newer leg
+  /// over it. This prevents the bug where a failed outbound conference
+  /// dial caused `end_call` to BYE the manager-host's leg.
+  Call? _resolveEndCallTarget(Map<String, dynamic> args) {
+    final helper = sipHelper;
+    if (helper == null) return null;
+
+    final raw = args['call_id'];
+    final id = raw is String ? raw.trim() : null;
+    if (id != null && id.isNotEmpty) {
+      final found = helper.findCall(id);
+      if (found != null) return found;
+      debugPrint(
+          '[AgentService] _resolveEndCallTarget: call_id="$id" not found, '
+          'falling back to heuristic');
+    }
+
+    final all = helper.calls.toList();
+    if (all.isEmpty) return null;
+    if (all.length == 1) return all.first;
+
+    bool isTransient(Call c) {
+      final s = c.state;
+      return s == CallStateEnum.CALL_INITIATION ||
+          s == CallStateEnum.CONNECTING ||
+          s == CallStateEnum.PROGRESS ||
+          s == CallStateEnum.FAILED ||
+          s == CallStateEnum.ENDED;
+    }
+
+    final transient = all.where(isTransient).toList();
+    if (transient.isNotEmpty) {
+      final pick = transient.last;
+      debugPrint(
+          '[AgentService] _resolveEndCallTarget: dropping transient leg '
+          '${pick.id} (state=${pick.state}) instead of established primary '
+          '— ${all.length} legs total');
+      return pick;
+    }
+
+    final pick = all.last;
+    debugPrint(
+        '[AgentService] _resolveEndCallTarget: multiple confirmed legs '
+        '(${all.length}), dropping newest ${pick.id}');
+    return pick;
+  }
+
   Future<String> _handleEndCall([Map<String, dynamic>? args]) async {
     if (sipHelper == null) return 'SIP helper not available.';
-    final target = _resolveTargetCall(args ?? const {});
+    final effectiveArgs = args ?? const <String, dynamic>{};
+    // Multi-leg disambiguation: if the LLM didn't pin a specific call_id and
+    // there are multiple SIP legs, prefer the *newest* leg over the oldest.
+    // The natural meaning of "end the call" mid-conference-attempt is "abort
+    // the leg I just tried to add", NOT "drop my established primary line".
+    // Without this, _resolveTargetCall falls back to activeCall (the FIRST
+    // call inserted) and BYEs the manager-host's leg instead of the failed
+    // outbound dial.
+    Call? target = _resolveEndCallTarget(effectiveArgs);
     if (target == null) return 'No active call to end.';
 
     if (_connectedAt != null) {
@@ -6952,6 +7270,10 @@ class AgentService extends ChangeNotifier {
       final success =
           await sipHelper!.call(cleaned, voiceOnly: true, mediaStream: stream);
       if (success) {
+        // Real conference: a second SIP leg now exists. Flip APM into
+        // conference mode so AEC/NS/AGC don't misbehave with two reference
+        // streams. Single-leg calls keep AEC on (no echo).
+        _applyConferenceModeForCallCount();
         return 'Dialing $cleaned as conference participant. '
             'Use merge_conference once connected to bridge all parties.';
       }
@@ -7175,6 +7497,26 @@ class AgentService extends ChangeNotifier {
     final reason = args['reason'] as String? ?? 'Caller requested a transfer.';
     final target = args['requested_target'] as String?;
 
+    // Manager short-circuit: if the inbound caller IS the configured agent
+    // manager (their phone number matches), they already have host
+    // authority — never route them through the SMS-approval round-trip.
+    // The LLM should just call `transfer_call` directly. Returning a
+    // self-correcting tool result is more reliable than relying on the
+    // system prompt alone, because tool outputs are explicitly fed back
+    // into the next LLM turn and tend to be acted on faithfully.
+    if (_isCallerAgentManager) {
+      final managerName = _agentManagerConfig.name;
+      final who = managerName.isNotEmpty ? managerName : 'the manager';
+      final targetClause = (target != null && target.isNotEmpty)
+          ? ' Use `transfer_call` with target "$target" now.'
+          : ' Ask which number to transfer to and then call `transfer_call`.';
+      debugPrint(
+          '[AgentService] request_transfer_approval bypassed — caller is manager');
+      return 'No approval needed — the caller IS $who (the configured '
+          'manager). They already have host authority.$targetClause '
+          'Do NOT send an SMS approval request to yourself.';
+    }
+
     final callerName = _resolveCallerName() ?? _remoteIdentity ?? 'Unknown';
     final targetDesc =
         target != null && target.isNotEmpty ? ' to $target' : '';
@@ -7222,6 +7564,20 @@ class AgentService extends ChangeNotifier {
     if (!_callPhase.isActive) {
       return 'No active call. A conference requires an active call to '
           'conference the manager into.';
+    }
+
+    // Manager short-circuit: the caller IS the manager — the whole "ask the
+    // manager to join" flow is meaningless. They are already on the line.
+    // If they are asking to bring a third party in, they want
+    // `add_conference_participant`, not a self-addressed SMS.
+    if (_isCallerAgentManager) {
+      debugPrint(
+          '[AgentService] request_manager_conference bypassed — caller is manager');
+      return 'The caller IS the configured manager — they are already on '
+          'the call, so conferencing the manager in does not apply. If '
+          'they want to add a THIRD party, use `add_conference_participant` '
+          'with that party\'s number. If they want to transfer the call, '
+          'use `transfer_call`.';
     }
 
     final reason =
@@ -7811,9 +8167,13 @@ class AgentService extends ChangeNotifier {
   String? _resolveCallerName() {
     // Prefer the speaker label if it was set (e.g. from contacts or voiceprint).
     if (remoteSpeaker.name.isNotEmpty) return remoteSpeaker.name;
-    // Fall back to the SIP display name.
+    // Fall back to the SIP display name — but reject pure-numeric values
+    // (Telnyx often puts the phone number itself in the display-name field,
+    // which is not a name and pollutes greetings).
     if (_remoteDisplayName != null && _remoteDisplayName!.isNotEmpty) {
-      return _remoteDisplayName;
+      final dn = _remoteDisplayName!.trim();
+      final isNumericLike = RegExp(r'^[\+\d\s\-\(\)\.]+$').hasMatch(dn);
+      if (!isNumericLike) return dn;
     }
     // Try a contact lookup by phone.
     final rid = _remoteIdentity;
@@ -7825,11 +8185,63 @@ class AgentService extends ChangeNotifier {
     return null;
   }
 
+  /// Claim the remote speaker's display label from the inbound phone number
+  /// — manager match first (so calls from the manager's number are tagged
+  /// with the manager's name immediately), then a contact-directory lookup.
+  /// Phone-number identity is treated as more authoritative than any
+  /// voiceprint match: voiceprint will not overwrite a name set here.
+  void _claimRemoteSpeakerNameFromPhone() {
+    final rid = _remoteIdentity;
+    if (rid == null || rid.isEmpty) return;
+
+    String? claimed;
+
+    // 1. Manager number → manager's configured display name.
+    if (_isManagerNumber(rid)) {
+      final mgr = _agentManagerConfig.name.trim();
+      if (mgr.isNotEmpty) claimed = mgr;
+    }
+
+    // 2. Contact directory.
+    if (claimed == null) {
+      final contact = contactService?.lookupByPhone(rid);
+      final cname = contact?['display_name'] as String?;
+      if (cname != null && cname.isNotEmpty && cname != rid) {
+        claimed = cname;
+      }
+    }
+
+    if (claimed == null) return;
+    if (remoteSpeaker.name == claimed) return;
+
+    // Overwrite even if the slot was already filled — phone-number identity
+    // is the source of truth for this call. (e.g. a stray voiceprint
+    // pre-claim on the very first transcript should yield to the contact.)
+    remoteSpeaker.name = claimed;
+    debugPrint(
+        '[AgentService] Remote speaker claimed by phone: "$claimed" (rid=$rid)');
+    _pushInstructionsIfLive();
+  }
+
   /// True when the current inbound caller matches the configured agent manager
   /// phone number — this caller should be treated with host-level privileges.
+  ///
+  /// Includes settling/connecting phases so the pre-greeting (which fires
+  /// during settling) and the manager-context block (which is built when the
+  /// session prompt is rebuilt at any phase) both see the caller-is-manager
+  /// signal as soon as the remote identity is known. Outbound calls are
+  /// always excluded — the manager isn't on the receiving end of those.
   bool get _isCallerAgentManager {
     if (!_agentManagerConfig.isConfigured) return false;
-    if (!_callPhase.isActive || _isOutbound) return false;
+    if (_isOutbound) return false;
+    final phase = _callPhase;
+    final eligiblePhase = phase == CallPhase.connected ||
+        phase == CallPhase.settling ||
+        phase == CallPhase.answered ||
+        phase == CallPhase.connecting ||
+        phase == CallPhase.ringing ||
+        phase == CallPhase.onHold;
+    if (!eligiblePhase) return false;
     final remote = _remoteIdentity;
     if (remote == null || remote.isEmpty) return false;
     return _isManagerNumber(remote);
@@ -8325,6 +8737,9 @@ class AgentService extends ChangeNotifier {
     // agent reply will be suppressed by `_consecutiveAgentResponses`.
     _consecutiveAgentResponses = 0;
     _userInputSinceLastFinal = true;
+    // Host typed input is also a fresh, deliberate user signal — wipe stuck
+    // state so we don't escalate on the model's first reply to it.
+    _resetStuckTracking();
 
     // Typing in the local chat panel is, by definition, the manager — only
     // they have access to the device's UI. Flip the manager-auth flag so the
@@ -9675,12 +10090,30 @@ class AgentService extends ChangeNotifier {
     if (localIdentity != null) _localIdentity = localIdentity;
     if (outbound != null) _isOutbound = outbound;
 
+    // Authoritative speaker labeling: phone number trumps voiceprint.
+    // The instant we know the remote identity, claim the speaker label
+    // from the configured manager (if the number matches) or from the
+    // contact directory. Voiceprint can still refine a label later, but
+    // it can never overwrite a name that's already been set this way —
+    // see the `speaker.name.isEmpty` guard in _processTranscript.
+    if (_remoteIdentity != null && _remoteIdentity!.isNotEmpty) {
+      _claimRemoteSpeakerNameFromPhone();
+    }
+
     // Auto-mute/unmute based on policy
     _applyMutePolicy(phase);
 
     // Refresh text agent instructions when call state changes so that
     // context like agent-manager elevation is present during the call.
-    if (phase == CallPhase.initiating || phase == CallPhase.ended ||
+    // We must rebuild on `settling` and `connected` too — that's when
+    // _remoteIdentity is known and `_isCallerAgentManager` can finally
+    // return true. Without this, the manager-context block would be
+    // missing for the entire call and the LLM would route normal manager
+    // requests through the SMS-approval round-trip.
+    if (phase == CallPhase.initiating ||
+        phase == CallPhase.settling ||
+        phase == CallPhase.connected ||
+        phase == CallPhase.ended ||
         phase == CallPhase.failed) {
       _textAgent?.updateInstructions(_buildTextAgentInstructions());
     }
@@ -9822,8 +10255,44 @@ class AgentService extends ChangeNotifier {
       _cancelConnectedGreeting();
     }
 
+    // Drive APM conference mode based on REAL multi-leg state. This used to
+    // be auto-toggled in native enterCallMode() based on refCount > 1, which
+    // misfired any time a single leg got entered twice (dialpad
+    // auto-answer-safety + CallScreen catch-up) → AEC disabled → echo.
+    _applyConferenceModeForCallCount();
+
     debugPrint(
         '[AgentService] Call phase: ${phase.name} parties=$partyCount remote=$_remoteIdentity');
+  }
+
+  /// Turn APM conference mode (AEC/NS/AGC off) on iff there are 2+ active
+  /// SIP call legs at the SAME time. Single-leg calls always run with AEC
+  /// on, otherwise the user's voice loops back as echo. Idempotent — only
+  /// hits the channel when the desired state changes.
+  bool _conferenceModeApplied = false;
+  void _applyConferenceModeForCallCount() {
+    final helper = sipHelper;
+    if (helper == null) return;
+    // Count only legs that are not in a terminal state. Telnyx leaves ENDED
+    // calls in the map briefly during teardown; treating those as "active"
+    // would keep AEC off after a failed conference attempt.
+    int liveLegs = 0;
+    for (final c in helper.calls) {
+      final s = c.state;
+      if (s == CallStateEnum.ENDED || s == CallStateEnum.FAILED) continue;
+      liveLegs++;
+    }
+    final desired = liveLegs >= 2;
+    if (desired == _conferenceModeApplied) return;
+    _conferenceModeApplied = desired;
+    debugPrint('[AgentService] APM conference mode → '
+        '${desired ? "ON" : "OFF"} (liveLegs=$liveLegs)');
+    _tapChannel.invokeMethod('setConferenceMode', {
+      'active': desired,
+      'slotCount': liveLegs.clamp(2, 10),
+    }).catchError((e) {
+      debugPrint('[AgentService] setConferenceMode failed: $e');
+    });
   }
 
   /// Idempotent call-end teardown.  Callable from `notifyCallPhase`, the SIP
@@ -10381,6 +10850,17 @@ class AgentService extends ChangeNotifier {
 
     _whisperPriorTranscriptOnce();
 
+    // Re-claim the speaker name from the phone number RIGHT before greeting,
+    // and force-rebuild the system prompt so the manager-context block is
+    // present in this LLM call. The phase-change rebuild may not have hit
+    // yet (pre-greeting can fire ahead of the official settling transition
+    // when auto-answer-safety jumps the gun), so we make it deterministic
+    // here.
+    if (_remoteIdentity != null && _remoteIdentity!.isNotEmpty) {
+      _claimRemoteSpeakerNameFromPhone();
+    }
+    _textAgent?.updateInstructions(_buildTextAgentInstructions());
+
     final prompt = _buildGreetingPrompt();
     _textAgent!.sendUserMessage(prompt);
     debugPrint('[AgentService] Pre-greeting fired during settle (${_isOutbound ? "outbound" : "inbound"}${_isConferenceLeg ? ", conference leg" : ""})');
@@ -10430,6 +10910,25 @@ class AgentService extends ChangeNotifier {
           'If you hit voicemail later you can leave a message, but right '
           'now act as if a person picked up.\n\n$outputRules';
     }
+    // Manager calling in to their own agent: greet them naturally as the
+    // boss/host they are — do NOT use a "thanks for calling Phonegentic"
+    // form, that frames them as an external customer and pushes the LLM
+    // toward routing manager requests through SMS approval round-trips.
+    if (_isCallerAgentManager) {
+      final mgr = _agentManagerConfig.name.trim();
+      final nameClause = mgr.isNotEmpty
+          ? 'You are speaking with $mgr — your configured manager. '
+          : 'You are speaking with your configured manager. ';
+      return '[SYSTEM] An incoming call has connected from the manager\'s '
+          'own number — they have host authority for this entire call.\n\n'
+          '${nameClause}Greet them briefly and naturally (e.g. "Hey '
+          '${mgr.isNotEmpty ? mgr : "boss"}, what do you need?") and ask '
+          'what they want done. Do NOT thank them for calling Phonegentic '
+          '— this is their own assistant. Do NOT use SMS approval '
+          'round-trips for any of their requests; just execute them with '
+          'the appropriate tool.\n\n$outputRules';
+    }
+
     final callerName = _resolveCallerName();
     final nameClause = callerName != null
         ? 'The caller is $callerName — address them by name. '
@@ -10970,6 +11469,9 @@ class AgentService extends ChangeNotifier {
     _ttsInterrupted = false;
     _consecutiveAgentResponses = 0;
     _userInputSinceLastFinal = false;
+    _stuckTracker.reset();
+    _toolCallsThisTurn = 0;
+    _pendingEscalationFiller = false;
     _userMuteOverride = false;
     _awayMuteSaved = false;
     _callPhase = CallPhase.idle;
@@ -11120,4 +11622,135 @@ class _SearchSection {
         body: '',
         rows: const [],
       );
+}
+
+/// Lightweight scoring tracker that decides when the agent has stalled
+/// and should escalate the next request to a stronger fallback model.
+///
+/// Signals (each adds 1 to [_score], cumulative across turns until a
+/// tool call resets):
+///   • Agent reply is a short clarifying question with no tool call
+///     (passive-question pattern — the model is hand-balling work back).
+///   • Agent reply is near-identical to a previous reply (rephrased
+///     repetition — the model is not making progress).
+///   • User turn contains a frustration cue ("I told you", "you already",
+///     "I said", "listen…") — adds 2 directly, since the user is
+///     telling us we're broken.
+///
+/// Outputs (consumed exactly once):
+///   • [consumeNudgeArmed] returns true at score ≥ 2 → inject a system
+///     prompt nudge into the next request.
+///   • [consumeEscalateArmed] returns true at score ≥ 3 → also swap the
+///     model to the configured fallback (and [consumeNudgeArmed]).
+///
+/// A successful tool call clears the score because tools represent
+/// concrete progress; carrying over stuck-ness across a productive turn
+/// would punish the model for finally doing the right thing.
+class _StuckTracker {
+  int _score = 0;
+  bool _nudgeArmed = false;
+  bool _escalateArmed = false;
+
+  static final _frustrationRe = RegExp(
+    r'\b(i told you|i already (?:said|told)|you already|i said|listen,?|are you (?:listening|kidding)|come on|just (?:do|use|call|book|find))\b',
+    caseSensitive: false,
+  );
+
+  /// Whitespace + punctuation normalizer used for similarity. Keeps
+  /// the comparison cheap (substring + length ratio) without dragging
+  /// in a full edit-distance impl.
+  static String _norm(String s) =>
+      s.toLowerCase().replaceAll(RegExp(r'[^\w\s]'), ' ').replaceAll(
+          RegExp(r'\s+'), ' ').trim();
+
+  static bool _similar(String a, String b) {
+    if (a.isEmpty || b.isEmpty) return false;
+    final na = _norm(a);
+    final nb = _norm(b);
+    if (na == nb) return true;
+    final shorter = na.length <= nb.length ? na : nb;
+    final longer = na.length <= nb.length ? nb : na;
+    if (shorter.length < 12) return false;
+    if (longer.contains(shorter)) return true;
+    // Token overlap: ≥ 70% of the shorter set's tokens appear in the longer.
+    final ta = na.split(' ').where((w) => w.length > 2).toSet();
+    final tb = nb.split(' ').where((w) => w.length > 2).toSet();
+    if (ta.isEmpty || tb.isEmpty) return false;
+    final overlap = ta.intersection(tb).length;
+    final smaller = ta.length <= tb.length ? ta.length : tb.length;
+    return smaller > 0 && overlap / smaller >= 0.7;
+  }
+
+  void onUserTurn(String text) {
+    if (_frustrationRe.hasMatch(text)) {
+      _score += 2;
+    }
+  }
+
+  void onToolCall() {
+    _score = 0;
+    _nudgeArmed = false;
+    _escalateArmed = false;
+  }
+
+  void onAgentTurn({
+    required String text,
+    required int toolCallsThisTurn,
+    required List<String> recentAgentTexts,
+  }) {
+    final t = text.trim();
+    if (t.isEmpty) return;
+
+    final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final isShort = words.length < 14;
+    final endsWithQuestion = t.endsWith('?');
+
+    // Passive-question signal: short clarifying question with no tool use.
+    if (toolCallsThisTurn == 0 && endsWithQuestion && isShort) {
+      _score++;
+    }
+
+    // Rephrased-repetition signal: the *previous* agent reply (not this
+    // one — the new one is already at the tail of recentAgentTexts) was
+    // similar to the current reply.
+    if (recentAgentTexts.length >= 2) {
+      final prev = recentAgentTexts[recentAgentTexts.length - 2];
+      if (_similar(prev, t)) {
+        _score++;
+      }
+    }
+
+    // Decide what to arm. Escalation implies the nudge so we always run
+    // both flags through the same threshold ladder.
+    if (_score >= 3) {
+      _escalateArmed = true;
+      _nudgeArmed = true;
+    } else if (_score >= 2) {
+      _nudgeArmed = true;
+    }
+  }
+
+  bool consumeNudgeArmed() {
+    final v = _nudgeArmed;
+    _nudgeArmed = false;
+    return v;
+  }
+
+  bool consumeEscalateArmed() {
+    final v = _escalateArmed;
+    if (v) {
+      // Used our escalation shot — drop the score so we don't immediately
+      // re-escalate on the very next reply (give the bigger model a turn
+      // to work).
+      _score = 0;
+    }
+    _escalateArmed = false;
+    return v;
+  }
+
+  void reset() {
+    _score = 0;
+    _nudgeArmed = false;
+    _escalateArmed = false;
+  }
 }

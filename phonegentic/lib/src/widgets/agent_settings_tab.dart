@@ -52,6 +52,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   final _textCustomKeyCtrl = TextEditingController();
   final _textCustomEndpointCtrl = TextEditingController();
   final _textCustomModelCtrl = TextEditingController();
+  final _textCustomFallbackModelCtrl = TextEditingController();
   final _systemPromptCtrl = TextEditingController();
   final _ttsApiKeyCtrl = TextEditingController();
   final _ttsVoiceIdCtrl = TextEditingController();
@@ -98,6 +99,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     _textCustomKeyCtrl.dispose();
     _textCustomEndpointCtrl.dispose();
     _textCustomModelCtrl.dispose();
+    _textCustomFallbackModelCtrl.dispose();
     _systemPromptCtrl.dispose();
     _ttsApiKeyCtrl.dispose();
     _ttsVoiceIdCtrl.dispose();
@@ -131,6 +133,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _textCustomKeyCtrl.text = t.customApiKey;
       _textCustomEndpointCtrl.text = t.customEndpointUrl;
       _textCustomModelCtrl.text = t.customModel;
+      _textCustomFallbackModelCtrl.text = t.customFallbackModel;
       _systemPromptCtrl.text = t.systemPrompt;
       _ttsApiKeyCtrl.text = tts.elevenLabsApiKey;
       _ttsVoiceIdCtrl.text = tts.elevenLabsVoiceId;
@@ -1140,6 +1143,18 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           },
           (v) => _updateText(_text.copyWith(openaiModel: v)),
         ),
+        _divider(),
+        _buildDropdown<String>(
+          'Fallback',
+          _normalizeOpenaiFallback(_text.openaiFallbackModel),
+          const {
+            '': 'Disabled',
+            'gpt-5.4-mini': 'GPT-5.4 Mini',
+            'gpt-5.5': 'GPT-5.5 (recommended)',
+            'gpt-4o': 'GPT-4o',
+          },
+          (v) => _updateText(_text.copyWith(openaiFallbackModel: v)),
+        ),
       ] else if (isClaude) ...[
         _buildKeyField('API Key', _textClaudeKeyCtrl, (val) {
           _updateText(_text.copyWith(claudeApiKey: val));
@@ -1153,6 +1168,17 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
             'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
           },
           (v) => _updateText(_text.copyWith(claudeModel: v)),
+        ),
+        _divider(),
+        _buildDropdown<String>(
+          'Fallback',
+          _normalizeClaudeFallback(_text.claudeFallbackModel),
+          const {
+            '': 'Disabled',
+            'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+            'claude-sonnet-4-20250514': 'Claude Sonnet 4 (recommended)',
+          },
+          (v) => _updateText(_text.copyWith(claudeFallbackModel: v)),
         ),
       ] else if (isCustom) ...[
         _buildKeyField('API Key', _textCustomKeyCtrl, (val) {
@@ -1173,8 +1199,51 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           hint: 'e.g. meta-llama/llama-3.3-70b-instruct',
           onChanged: (val) => _updateText(_text.copyWith(customModel: val)),
         ),
+        _divider(),
+        _buildTextField(
+          'Fallback',
+          _textCustomFallbackModelCtrl,
+          hint: 'leave blank to disable escalation',
+          onChanged: (val) =>
+              _updateText(_text.copyWith(customFallbackModel: val)),
+        ),
       ],
+      _divider(),
+      // Master switch — when off the stuck-detector is fully disabled.
+      // Sits at the bottom so it applies to whichever provider is active.
+      SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        dense: true,
+        title: const Text('Auto-escalate when stuck',
+            style: TextStyle(fontSize: 13)),
+        subtitle: Text(
+          'Detect passive replies / repetition and retry once on the '
+          'fallback model with a focused nudge.',
+          style: TextStyle(
+              fontSize: 11, color: AppColors.textTertiary),
+        ),
+        value: _text.stuckEscalationEnabled,
+        onChanged: (v) =>
+            _updateText(_text.copyWith(stuckEscalationEnabled: v)),
+      ),
     ];
+  }
+
+  /// Coerce a stored OpenAI fallback model into one of the dropdown's
+  /// known options. Anything we don't recognise falls back to the empty
+  /// "Disabled" entry rather than crashing the dropdown widget.
+  String _normalizeOpenaiFallback(String stored) {
+    const known = {'', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-4o'};
+    return known.contains(stored) ? stored : '';
+  }
+
+  String _normalizeClaudeFallback(String stored) {
+    const known = {
+      '',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-20250514',
+    };
+    return known.contains(stored) ? stored : '';
   }
 
   // ───── TTS Expanded Content ─────

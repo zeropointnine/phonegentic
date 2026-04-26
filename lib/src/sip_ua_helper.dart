@@ -127,6 +127,12 @@ class SIPUAHelper extends EventManager {
   /// The current active call, if any (first call in the calls map).
   Call? get activeCall => _calls.isEmpty ? null : _calls.values.first;
 
+  /// Enumerate all currently-tracked calls in insertion order (oldest first,
+  /// newest last). Used by callers that need to disambiguate between legs of
+  /// a multi-call/conference scenario (e.g. choosing which leg to BYE when
+  /// the agent says "end the call").
+  Iterable<Call> get calls => _calls.values;
+
   Future<void> renegotiate({
     required Call call,
     required bool voiceOnly,
