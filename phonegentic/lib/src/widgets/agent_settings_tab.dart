@@ -38,6 +38,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   TextAgentConfig _text = const TextAgentConfig();
   TtsConfig _tts = const TtsConfig();
   SttConfig _stt = const SttConfig();
+  VadConfig _vad = const VadConfig();
   AgentMutePolicy _mutePolicy = AgentMutePolicy.autoToggle;
   ComfortNoiseConfig _comfortNoise = const ComfortNoiseConfig();
   _PipelineSection _expandedSection = _PipelineSection.none;
@@ -116,6 +117,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final t = await AgentConfigService.loadTextConfig();
     final tts = await AgentConfigService.loadTtsConfig();
     final stt = await AgentConfigService.loadSttConfig();
+    final vad = await AgentConfigService.loadVadConfig();
     final mp = await AgentConfigService.loadMutePolicy();
     final cn = await AgentConfigService.loadComfortNoiseConfig();
     if (!mounted) return;
@@ -124,6 +126,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _text = t;
       _tts = tts;
       _stt = stt;
+      _vad = vad;
       _mutePolicy = mp;
       _comfortNoise = cn;
       _voiceKeyCtrl.text = v.apiKey;
@@ -981,7 +984,239 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           ),
         ],
       ],
+      ..._buildVadContent(),
     ];
+  }
+
+  /// Voice-activity & hallucination controls. Always visible because the
+  /// Realtime API path needs the turn-detection knobs even when the user
+  /// hasn't chosen WhisperKit. WhisperKit-only knobs are gated below.
+  List<Widget> _buildVadContent() {
+    final showRealtimeManual =
+        _vad.realtimeProfile == RealtimeVadProfile.manual;
+    final whisperVisible = BuildConfig.onDeviceModelsSupported &&
+        _stt.provider == SttProvider.whisperKit;
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+        child: Text('TURN DETECTION',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textTertiary,
+              letterSpacing: 0.5,
+            )),
+      ),
+      _buildVadProfileChips(),
+      if (showRealtimeManual) ...[
+        _divider(),
+        _buildVadSlider(
+          label: 'Threshold',
+          value: _vad.realtimeThreshold,
+          min: 0.3,
+          max: 0.95,
+          divisions: 13,
+          format: (v) => v.toStringAsFixed(2),
+          onChanged: (v) =>
+              _updateVad(_vad.copyWith(realtimeThreshold: v)),
+        ),
+        _divider(),
+        _buildVadSlider(
+          label: 'Silence',
+          value: _vad.realtimeSilenceDurationMs.toDouble(),
+          min: 200,
+          max: 3000,
+          divisions: 28,
+          format: (v) => '${v.round()}ms',
+          onChanged: (v) => _updateVad(
+              _vad.copyWith(realtimeSilenceDurationMs: v.round())),
+        ),
+        _divider(),
+        _buildVadSlider(
+          label: 'Prefix',
+          value: _vad.realtimePrefixPaddingMs.toDouble(),
+          min: 100,
+          max: 600,
+          divisions: 10,
+          format: (v) => '${v.round()}ms',
+          onChanged: (v) => _updateVad(
+              _vad.copyWith(realtimePrefixPaddingMs: v.round())),
+        ),
+      ],
+      if (whisperVisible) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Text('NOISE GATE (WHISPERKIT)',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              )),
+        ),
+        SwitchListTile.adaptive(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          dense: true,
+          title: const Text('Adaptive noise floor',
+              style: TextStyle(fontSize: 13)),
+          subtitle: Text(
+            'Auto-tune the gate from a rolling estimate of room ambient. '
+            'Falls back to the manual gate during the first ~15 seconds '
+            'of a new call.',
+            style:
+                TextStyle(fontSize: 11, color: AppColors.textTertiary),
+          ),
+          value: _vad.adaptiveNoiseFloor,
+          onChanged: (b) =>
+              _updateVad(_vad.copyWith(adaptiveNoiseFloor: b)),
+        ),
+        if (!_vad.adaptiveNoiseFloor) ...[
+          _divider(),
+          _buildVadSlider(
+            label: 'Manual gate',
+            value: _vad.rmsNoiseGate,
+            min: 0.0,
+            max: 0.05,
+            divisions: 50,
+            format: (v) => v.toStringAsFixed(3),
+            onChanged: (v) =>
+                _updateVad(_vad.copyWith(rmsNoiseGate: v)),
+          ),
+        ],
+        _divider(),
+        _buildVadSlider(
+          label: 'No-speech',
+          value: _vad.noSpeechThreshold,
+          min: 0.1,
+          max: 0.9,
+          divisions: 16,
+          format: (v) => v.toStringAsFixed(2),
+          onChanged: (v) =>
+              _updateVad(_vad.copyWith(noSpeechThreshold: v)),
+        ),
+        _divider(),
+        _buildVadSlider(
+          label: 'LogProb',
+          value: _vad.logProbThreshold,
+          min: -2.0,
+          max: 0.0,
+          divisions: 20,
+          format: (v) => v.toStringAsFixed(2),
+          onChanged: (v) =>
+              _updateVad(_vad.copyWith(logProbThreshold: v)),
+        ),
+        _divider(),
+        _buildVadSlider(
+          label: 'Compression',
+          value: _vad.compressionRatioThreshold,
+          min: 1.0,
+          max: 3.0,
+          divisions: 20,
+          format: (v) => v.toStringAsFixed(2),
+          onChanged: (v) => _updateVad(
+              _vad.copyWith(compressionRatioThreshold: v)),
+        ),
+      ],
+    ];
+  }
+
+  Widget _buildVadProfileChips() {
+    const labels = <RealtimeVadProfile, String>{
+      RealtimeVadProfile.snappy: 'Snappy',
+      RealtimeVadProfile.natural: 'Natural',
+      RealtimeVadProfile.patient: 'Patient',
+      RealtimeVadProfile.manual: 'Manual',
+      RealtimeVadProfile.semanticLow: 'Semantic·Low',
+      RealtimeVadProfile.semanticMedium: 'Semantic·Med',
+      RealtimeVadProfile.semanticHigh: 'Semantic·High',
+      RealtimeVadProfile.semanticAuto: 'Semantic·Auto',
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Profile',
+                  style: TextStyle(
+                      fontSize: 13, color: AppColors.textSecondary)),
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final entry in labels.entries)
+                  ChoiceChip(
+                    label: Text(entry.value,
+                        style: const TextStyle(fontSize: 12)),
+                    selected: _vad.realtimeProfile == entry.key,
+                    onSelected: (_) => _updateVad(
+                        _vad.copyWith(realtimeProfile: entry.key)),
+                    selectedColor:
+                        AppColors.accent.withValues(alpha: 0.2),
+                    backgroundColor: AppColors.card,
+                    side: BorderSide(
+                      color: _vad.realtimeProfile == entry.key
+                          ? AppColors.accent
+                          : AppColors.border.withValues(alpha: 0.5),
+                      width: 0.5,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVadSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String Function(double) format,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 13, color: AppColors.textSecondary)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              divisions: divisions,
+              activeColor: AppColors.accent,
+              inactiveColor: AppColors.textTertiary.withValues(alpha: 0.2),
+              onChanged: onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 60,
+            child: Text(
+              format(value),
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSttProviderChips() {
@@ -2084,6 +2319,16 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     setState(() => _stt = s);
     AgentConfigService.saveSttConfig(s);
     _dirty = true;
+  }
+
+  /// Persist VAD changes and push them straight into the live agent so
+  /// sliders take effect without forcing a reconnect on close. We
+  /// intentionally don't flip `_dirty` because `applyVadConfig` already
+  /// updates both the WhisperKit native channel and any active Realtime
+  /// session — `reconnect()` on dispose would just churn for nothing.
+  void _updateVad(VadConfig v) {
+    setState(() => _vad = v);
+    _agent?.applyVadConfig(v);
   }
 
   Widget _buildVoiceSelector() {

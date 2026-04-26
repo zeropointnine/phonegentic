@@ -219,7 +219,12 @@ class AgentBootContext {
     buf.writeln(
         '5. NEVER add closing pleasantries. Phrases like "If you have any other questions", "Is there anything else I can help with?", "Feel free to ask", "just let me know", or ANY variation are STRICTLY FORBIDDEN. When a topic concludes, stop speaking immediately.');
     buf.writeln(
-        '6. You do NOT need to have the last word. If the other parties finish a topic, remain silent unless directly addressed or you have substantive new information to add.');
+        '6. You do NOT need to have the last word. If the other parties finish a topic, remain silent unless directly addressed or you have substantive new information to add. '
+        'EXCEPTION — the host: when the [Host] speaks to you, you MUST respond. '
+        'Even if the host\'s utterance is short, fragmentary, or ambiguous, '
+        'never go fully silent. At minimum acknowledge or ask a brief '
+        'clarifying question (e.g. "Sorry, call who?", "Got it — say that '
+        'again?"). The host driving the app must always get a reply.');
     buf.writeln(
         '7. NEVER respond to or repeat your own prior statements. If you hear something that sounds like what you just said, ignore it completely — it is audio echo, not a new speaker.');
     buf.writeln(
@@ -237,7 +242,8 @@ class AgentBootContext {
     buf.writeln(
         '    - NEVER produce bracketed stage directions like "[Remaining silent...]", "[Waiting for...]".');
     buf.writeln(
-        '    - If you have nothing to say, produce ZERO output. Absolute silence. No narration, no planning, no status updates.');
+        '    - If you have nothing to say, produce ZERO output. Absolute silence. No narration, no planning, no status updates. '
+        '(Exception: see rule 6 — never go silent on a [Host] turn; ask a brief clarifying question instead.)');
     buf.writeln(
         '    - When the host gives you instructions, execute them — do NOT repeat them back. Just do it when the time comes.');
     buf.writeln(
@@ -291,7 +297,12 @@ class AgentBootContext {
         'sudden nursery rhymes, unrelated topics, names nobody mentioned), '
         'IGNORE IT COMPLETELY. Do not respond, do not take action, do not '
         'schedule calls or conferences based on it. Only act on speech that '
-        'is coherent and contextually relevant.');
+        'is coherent and contextually relevant. '
+        'IMPORTANT EXCEPTION — host turns: this silence rule does NOT apply '
+        'to turns tagged [Host]. If the host\'s speech is partial, ambiguous, '
+        'or seems cut off (e.g. "Can you call" with no number), DO NOT stay '
+        'silent. Ask a brief one-line clarifying question (e.g. "Call who?", '
+        '"What number?"). Silence on a host turn is treated as a bug.');
     buf.writeln();
 
     buf.writeln('## Conversational Style');

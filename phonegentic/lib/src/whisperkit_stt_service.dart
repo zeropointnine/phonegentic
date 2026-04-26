@@ -165,6 +165,26 @@ class WhisperKitSttService {
     }
   }
 
+  /// Push the user's VAD / hallucination thresholds to the native
+  /// channel. Safe to call before `initialize()` — the channel persists
+  /// values regardless of model state, so the very first transcription
+  /// already runs with the right gate.
+  Future<void> applyVadConfig(VadConfig vad) async {
+    try {
+      await _channel.invokeMethod('setVadConfig', {
+        'adaptiveNoiseFloor': vad.adaptiveNoiseFloor,
+        'rmsNoiseGate': vad.rmsNoiseGate,
+        'noSpeechThreshold': vad.noSpeechThreshold,
+        'logProbThreshold': vad.logProbThreshold,
+        'compressionRatioThreshold': vad.compressionRatioThreshold,
+      });
+    } on PlatformException catch (e) {
+      debugPrint('[WhisperKit] applyVadConfig failed: ${e.message}');
+    } on MissingPluginException {
+      // Non-Apple build — channel isn't registered. Silently ignore.
+    }
+  }
+
   /// Pause or resume the native transcription timer without tearing down
   /// WhisperKit's loaded CoreML model. Use this between calls so silence
   /// doesn't drive the hallucination loop — processing resumes on the

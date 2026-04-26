@@ -55,32 +55,61 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     private static let minSamplesForTranscription = 16000 // 1s at 16kHz
 
     // ─────────────────────────────────────────────────────────────────────────
-    // AMBIENT NOISE FILTERING — tune these to reduce hallucinated transcriptions
+    // AMBIENT NOISE FILTERING — runtime-tunable via setVadConfig method call.
     //
-    // rmsNoiseGateThreshold: audio chunks whose RMS energy is below this value
-    //   are silently dropped before WhisperKit ever sees them.  Typical speech
-    //   sits in the 0.02–0.10 range; AC hum and ambient room noise is usually
-    //   below 0.005.  Raise this if you're still getting hallucinations; lower
-    //   it if soft speech is being clipped.  TODO: expose in Settings > Agents.
-    private static let rmsNoiseGateThreshold: Float = 0.01  // 0.0 = disabled; 0.01 gates typical ambient/room noise that otherwise produces "you" hallucinations
+    // Defaults below match the legacy hard-coded values that shipped before
+    // VAD got exposed in `Settings > Agents > VAD`. Dart pushes the user's
+    // configuration in once the AgentService finishes loading prefs; the
+    // values stay live for the lifetime of the process and are updated on
+    // every settings change without a reconnect.
+    //
+    // rmsNoiseGate: audio chunks whose RMS energy is below this are dropped
+    //   before WhisperKit ever sees them. Typical speech sits in 0.02–0.10;
+    //   AC hum and room noise is usually <0.005.  When `adaptiveNoiseFloor`
+    //   is on the *effective* gate is auto-tuned from a rolling percentile
+    //   estimator (see `currentNoiseFloor()`), and this manual value is
+    //   used only as a hard floor.
+    private var rmsNoiseGate: Float = 0.01
+    /// Adaptive estimator master switch. When true, [currentNoiseFloor]
+    /// returns a rolling-percentile-based dynamic threshold; otherwise it
+    /// returns [rmsNoiseGate] verbatim.
+    private var adaptiveNoiseFloor: Bool = true
+
+    /// Rolling history of recent RMS samples (one per `processBufferedAudio`
+    /// tick == ~1.5s). Capped at `noiseHistoryCap`. Used to estimate the
+    /// quiet ambient floor without baking-in a fixed assumption about the
+    /// user's room. Speech samples (RMS > speech detection bound) are
+    /// excluded so a long sentence can't drag the floor up.
+    private var noiseRmsHistory: [Float] = []
+    private static let noiseHistoryCap = 200 // ~5min at 1.5s cadence
+    /// RMS samples above this cap are assumed to be speech and skipped
+    /// when updating the noise history. Anything below is treated as
+    /// ambient regardless of whether speech was actually present.
+    private static let noiseSpeechCutoff: Float = 0.05
+    /// Floor / ceiling for the adaptive estimator so a hot mic can't gate
+    /// out real speech and a dead-quiet room can't underflow.
+    private static let adaptiveFloorMin: Float = 0.005
+    private static let adaptiveFloorMax: Float = 0.04
+    /// Multiplier applied to the 70th-percentile of the ambient RMS
+    /// history. 70th gives a robust quiet-bed estimate; 2.5× lifts the
+    /// gate above typical dynamic range without clipping soft speech.
+    private static let adaptiveFloorMultiplier: Float = 2.5
 
     // WhisperKit DecodingOptions — applied even when audio passes the RMS gate.
     // These let the model's own confidence scores reject bad transcriptions.
     //
-    // noSpeechThreshold: model's no-speech probability above which the result is
-    //   discarded.  Lower = stricter (default WhisperKit: 0.6).
-    //   TODO: expose in Settings > Agents.
-    private static let noSpeechThreshold: Float? = 0.4  // stricter than default 0.6 — silence produces "Thank God" hallucinations
-    //
-    // logProbThreshold: average token log-probability below which the result is
-    //   discarded.  Higher (less negative) = stricter (default WhisperKit: -1.0).
-    //   TODO: expose in Settings > Agents.
-    private static let logProbThreshold: Float? = -0.6  // stricter than default -1.0 — hallucinations have low avg log-prob
-    //
+    // noSpeechThreshold: model's no-speech probability above which the result
+    //   is discarded. Lower = stricter (default WhisperKit: 0.6).
+    private var noSpeechThreshold: Float? = 0.4
+
+    // logProbThreshold: average token log-probability below which the result
+    //   is discarded. Higher (less negative) = stricter (default WhisperKit: -1.0).
+    private var logProbThreshold: Float? = -0.6
+
     // compressionRatioThreshold: repetition ratio above which the result is
-    //   discarded (catches looping hallucinations).  Lower = stricter
-    //   (default WhisperKit: 2.4).  TODO: expose in Settings > Agents.
-    private static let compressionRatioThreshold: Float? = 1.8  // stricter than default 2.4 — "Thank God. Thank God." has very high compression ratio
+    //   discarded (catches looping hallucinations). Lower = stricter
+    //   (default WhisperKit: 2.4).
+    private var compressionRatioThreshold: Float? = 1.8
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Tail of the previous transcription buffer, prepended to the next buffer
@@ -182,6 +211,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             let args = call.arguments as? [String: Any] ?? [:]
             let paused = args["paused"] as? Bool ?? false
             handleSetProcessingPaused(paused: paused, result: result)
+        case "setVadConfig":
+            let args = call.arguments as? [String: Any] ?? [:]
+            handleSetVadConfig(args: args, result: result)
         case "dispose":
             handleDispose(result: result)
         default:
@@ -288,6 +320,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         isProcessing = false
         consecutiveAneFailures = 0
         lastTranscriptText = ""
+        // Drop any ambient samples carried over from a previous session —
+        // microphone, room, and speaker setup may all have changed since.
+        noiseRmsHistory.removeAll(keepingCapacity: true)
         bufferLock.lock()
         audioBuffer = Data()
         carryOverBuffer = Data()
@@ -397,7 +432,11 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         }
 
         let rms = sqrt(floatSamples.reduce(0) { $0 + $1 * $1 } / Float(floatSamples.count))
-        guard rms >= WhisperKitChannel.rmsNoiseGateThreshold else { return }
+        // Feed the rolling estimator first so the effective floor tracks
+        // ambient even when we end up dropping the chunk.
+        recordNoiseSample(rms)
+        let effectiveFloor = currentNoiseFloor()
+        guard rms >= effectiveFloor else { return }
 
         // Save the tail as carry-over for the next cycle.
         let co = WhisperKitChannel.carryOverBytes
@@ -413,9 +452,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
             Task {
                 do {
                     let options = DecodingOptions(
-                        compressionRatioThreshold: WhisperKitChannel.compressionRatioThreshold,
-                        logProbThreshold: WhisperKitChannel.logProbThreshold,
-                        noSpeechThreshold: WhisperKitChannel.noSpeechThreshold
+                        compressionRatioThreshold: self.compressionRatioThreshold,
+                        logProbThreshold: self.logProbThreshold,
+                        noSpeechThreshold: self.noSpeechThreshold
                     )
                     let results = try await kit.transcribe(audioArray: floatSamples, decodeOptions: options)
                     let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -613,6 +652,78 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
         let remaining = Array(origWords.dropFirst(overlapLen)).joined(separator: " ")
         NSLog("[WhisperKit] Carry-over dedup: stripped %d overlapping words", overlapLen)
         return remaining
+    }
+
+    // MARK: - VAD configuration
+
+    /// Apply VAD knobs pushed from the Dart side. Optional values keep
+    /// existing settings on the native side, so partial updates work.
+    /// Called both at startup (after AgentService loads `VadConfig`) and
+    /// every time the user tweaks a slider in `Settings > Agents > VAD`.
+    private func handleSetVadConfig(args: [String: Any], result: @escaping FlutterResult) {
+        if let v = args["adaptiveNoiseFloor"] as? Bool {
+            adaptiveNoiseFloor = v
+        }
+        if let v = args["rmsNoiseGate"] as? Double {
+            rmsNoiseGate = Float(v)
+        }
+        if let v = args["noSpeechThreshold"] as? Double {
+            noSpeechThreshold = Float(v)
+        }
+        if let v = args["logProbThreshold"] as? Double {
+            logProbThreshold = Float(v)
+        }
+        if let v = args["compressionRatioThreshold"] as? Double {
+            compressionRatioThreshold = Float(v)
+        }
+        // When toggling adaptive mode off we want the manual gate to
+        // apply immediately rather than waiting for the rolling history
+        // to drain. Clearing the history forces `currentNoiseFloor()` to
+        // fall back to `rmsNoiseGate` until enough samples re-accumulate.
+        if !adaptiveNoiseFloor {
+            noiseRmsHistory.removeAll(keepingCapacity: true)
+        }
+        let floor = currentNoiseFloor()
+        NSLog("[WhisperKit] VAD config: adaptive=%@ manualGate=%.4f effFloor=%.4f noSpeech=%@ logProb=%@ compRatio=%@",
+              adaptiveNoiseFloor ? "on" : "off",
+              rmsNoiseGate, floor,
+              noSpeechThreshold.map { String(format: "%.2f", $0) } ?? "nil",
+              logProbThreshold.map { String(format: "%.2f", $0) } ?? "nil",
+              compressionRatioThreshold.map { String(format: "%.2f", $0) } ?? "nil")
+        result(nil)
+    }
+
+    /// Append `rms` to the ambient-noise history, dropping samples that
+    /// look like speech so we measure the floor and not the ceiling.
+    /// O(1) amortised — uses a simple capped append + shift.
+    private func recordNoiseSample(_ rms: Float) {
+        guard rms < WhisperKitChannel.noiseSpeechCutoff else { return }
+        noiseRmsHistory.append(rms)
+        if noiseRmsHistory.count > WhisperKitChannel.noiseHistoryCap {
+            noiseRmsHistory.removeFirst(
+                noiseRmsHistory.count - WhisperKitChannel.noiseHistoryCap)
+        }
+    }
+
+    /// Return the effective noise floor used by `processBufferedAudio`.
+    /// In adaptive mode this is `clamp(p70(history) * multiplier, min, max)`,
+    /// and we still respect the user-set `rmsNoiseGate` as a hard lower
+    /// bound so the gate never drops below what they explicitly asked
+    /// for. In manual mode it's just `rmsNoiseGate` verbatim.
+    private func currentNoiseFloor() -> Float {
+        guard adaptiveNoiseFloor else { return rmsNoiseGate }
+        // Need a minimum sample count before we trust the estimator.
+        // Until then fall back to the manual gate to avoid a cold-start
+        // window where everything either gets through or gets dropped.
+        guard noiseRmsHistory.count >= 12 else { return rmsNoiseGate }
+        let sorted = noiseRmsHistory.sorted()
+        let idx = min(sorted.count - 1, Int(Float(sorted.count) * 0.7))
+        let p70 = sorted[idx]
+        let dynamic = p70 * WhisperKitChannel.adaptiveFloorMultiplier
+        let clamped = max(
+            WhisperKitChannel.adaptiveFloorMin,
+            min(WhisperKitChannel.adaptiveFloorMax, dynamic))
+        return max(clamped, rmsNoiseGate)
     }
 
     private func handleStopTranscription(result: @escaping FlutterResult) {

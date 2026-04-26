@@ -277,6 +277,160 @@ class SttConfig {
   }
 }
 
+/// Voice-activity / turn-detection profile for the OpenAI Realtime API.
+///
+/// `server_vad` profiles map to a (threshold, silenceMs) tuple — `manual`
+/// hands control off to the user-tunable values on [VadConfig]. The
+/// `semantic*` entries switch to `semantic_vad` and pin a specific
+/// `eagerness` so the model decides turn ends contextually.
+enum RealtimeVadProfile {
+  snappy,
+  natural,
+  patient,
+  manual,
+  semanticLow,
+  semanticMedium,
+  semanticHigh,
+  semanticAuto,
+}
+
+/// VAD / turn-detection / hallucination knobs.
+///
+/// Two domains live here intentionally:
+///   1. WhisperKit on-device thresholds (`adaptiveNoiseFloor`,
+///      `rmsNoiseGate`, `noSpeechThreshold`, `logProbThreshold`,
+///      `compressionRatioThreshold`). These get pushed to native
+///      `WhisperKitChannel` over a method channel.
+///   2. OpenAI Realtime turn-detection (`realtimeProfile` plus the
+///      `realtime*` overrides used in `manual` mode). These flow into
+///      the `session.update` payload sent to the Realtime API.
+///
+/// Both pipelines are wired so the user can tune them live from
+/// `Settings > Agents > VAD` without restarting the agent.
+class VadConfig {
+  // ── WhisperKit (on-device) ──
+  /// When true, the native side runs a rolling-percentile estimator and
+  /// auto-tunes the RMS noise gate to whatever quiet ambient sits at —
+  /// keeps the gate firmly above HVAC / fan hum without clipping soft
+  /// speech. When false, [rmsNoiseGate] is used verbatim.
+  final bool adaptiveNoiseFloor;
+
+  /// Manual RMS gate when [adaptiveNoiseFloor] is off. Typical speech
+  /// sits in 0.02–0.10; ambient room noise usually <0.005. Default 0.01
+  /// matches the legacy hard-coded value in `WhisperKitChannel.swift`.
+  final double rmsNoiseGate;
+
+  /// WhisperKit `DecodingOptions.noSpeechThreshold` — model's
+  /// no-speech probability above which the result is dropped. Lower =
+  /// stricter. Default 0.4 (vs. WhisperKit upstream 0.6).
+  final double noSpeechThreshold;
+
+  /// WhisperKit `DecodingOptions.logProbThreshold` — average token
+  /// log-probability below which the result is dropped. Higher (less
+  /// negative) = stricter. Default -0.6 (vs. upstream -1.0).
+  final double logProbThreshold;
+
+  /// WhisperKit `DecodingOptions.compressionRatioThreshold` — repetition
+  /// ratio above which the result is dropped. Lower = stricter. Default
+  /// 1.8 (vs. upstream 2.4).
+  final double compressionRatioThreshold;
+
+  // ── OpenAI Realtime API ──
+  final RealtimeVadProfile realtimeProfile;
+
+  /// Manual `server_vad` threshold (ignored unless profile == manual).
+  final double realtimeThreshold;
+
+  /// Manual `server_vad` silence_duration_ms (ignored unless manual).
+  final int realtimeSilenceDurationMs;
+
+  /// Manual `server_vad` prefix_padding_ms (ignored unless manual).
+  final int realtimePrefixPaddingMs;
+
+  const VadConfig({
+    this.adaptiveNoiseFloor = true,
+    this.rmsNoiseGate = 0.01,
+    this.noSpeechThreshold = 0.4,
+    this.logProbThreshold = -0.6,
+    this.compressionRatioThreshold = 1.8,
+    this.realtimeProfile = RealtimeVadProfile.patient,
+    this.realtimeThreshold = 0.8,
+    this.realtimeSilenceDurationMs = 1800,
+    this.realtimePrefixPaddingMs = 300,
+  });
+
+  /// Resolve the profile to a payload suitable for the Realtime API
+  /// `session.update.turn_detection` field. Manual mode honours the
+  /// `realtime*` fields verbatim.
+  Map<String, dynamic> toTurnDetection() {
+    switch (realtimeProfile) {
+      case RealtimeVadProfile.snappy:
+        return {
+          'type': 'server_vad',
+          'threshold': 0.5,
+          'prefix_padding_ms': 300,
+          'silence_duration_ms': 500,
+        };
+      case RealtimeVadProfile.natural:
+        return {
+          'type': 'server_vad',
+          'threshold': 0.6,
+          'prefix_padding_ms': 300,
+          'silence_duration_ms': 1000,
+        };
+      case RealtimeVadProfile.patient:
+        return {
+          'type': 'server_vad',
+          'threshold': 0.8,
+          'prefix_padding_ms': 300,
+          'silence_duration_ms': 1800,
+        };
+      case RealtimeVadProfile.manual:
+        return {
+          'type': 'server_vad',
+          'threshold': realtimeThreshold,
+          'prefix_padding_ms': realtimePrefixPaddingMs,
+          'silence_duration_ms': realtimeSilenceDurationMs,
+        };
+      case RealtimeVadProfile.semanticLow:
+        return {'type': 'semantic_vad', 'eagerness': 'low'};
+      case RealtimeVadProfile.semanticMedium:
+        return {'type': 'semantic_vad', 'eagerness': 'medium'};
+      case RealtimeVadProfile.semanticHigh:
+        return {'type': 'semantic_vad', 'eagerness': 'high'};
+      case RealtimeVadProfile.semanticAuto:
+        return {'type': 'semantic_vad', 'eagerness': 'auto'};
+    }
+  }
+
+  VadConfig copyWith({
+    bool? adaptiveNoiseFloor,
+    double? rmsNoiseGate,
+    double? noSpeechThreshold,
+    double? logProbThreshold,
+    double? compressionRatioThreshold,
+    RealtimeVadProfile? realtimeProfile,
+    double? realtimeThreshold,
+    int? realtimeSilenceDurationMs,
+    int? realtimePrefixPaddingMs,
+  }) {
+    return VadConfig(
+      adaptiveNoiseFloor: adaptiveNoiseFloor ?? this.adaptiveNoiseFloor,
+      rmsNoiseGate: rmsNoiseGate ?? this.rmsNoiseGate,
+      noSpeechThreshold: noSpeechThreshold ?? this.noSpeechThreshold,
+      logProbThreshold: logProbThreshold ?? this.logProbThreshold,
+      compressionRatioThreshold:
+          compressionRatioThreshold ?? this.compressionRatioThreshold,
+      realtimeProfile: realtimeProfile ?? this.realtimeProfile,
+      realtimeThreshold: realtimeThreshold ?? this.realtimeThreshold,
+      realtimeSilenceDurationMs:
+          realtimeSilenceDurationMs ?? this.realtimeSilenceDurationMs,
+      realtimePrefixPaddingMs:
+          realtimePrefixPaddingMs ?? this.realtimePrefixPaddingMs,
+    );
+  }
+}
+
 class CallRecordingConfig {
   final bool autoRecord;
 
@@ -530,6 +684,55 @@ class AgentConfigService {
   static Future<void> saveMutePolicy(AgentMutePolicy policy) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('${_prefix}mute_policy', policy.index);
+  }
+
+  // -- VAD / turn-detection / hallucination thresholds -----------------------
+
+  static Future<VadConfig> loadVadConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final profileIdx = prefs.getInt('${_prefix}vad_realtime_profile') ??
+        RealtimeVadProfile.patient.index;
+    return VadConfig(
+      adaptiveNoiseFloor:
+          prefs.getBool('${_prefix}vad_adaptive_noise_floor') ?? true,
+      rmsNoiseGate: prefs.getDouble('${_prefix}vad_rms_noise_gate') ?? 0.01,
+      noSpeechThreshold:
+          prefs.getDouble('${_prefix}vad_no_speech_threshold') ?? 0.4,
+      logProbThreshold:
+          prefs.getDouble('${_prefix}vad_log_prob_threshold') ?? -0.6,
+      compressionRatioThreshold:
+          prefs.getDouble('${_prefix}vad_compression_ratio_threshold') ?? 1.8,
+      realtimeProfile: RealtimeVadProfile.values[
+          profileIdx.clamp(0, RealtimeVadProfile.values.length - 1)],
+      realtimeThreshold:
+          prefs.getDouble('${_prefix}vad_realtime_threshold') ?? 0.8,
+      realtimeSilenceDurationMs:
+          prefs.getInt('${_prefix}vad_realtime_silence_ms') ?? 1800,
+      realtimePrefixPaddingMs:
+          prefs.getInt('${_prefix}vad_realtime_prefix_ms') ?? 300,
+    );
+  }
+
+  static Future<void> saveVadConfig(VadConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(
+        '${_prefix}vad_adaptive_noise_floor', config.adaptiveNoiseFloor);
+    await prefs.setDouble(
+        '${_prefix}vad_rms_noise_gate', config.rmsNoiseGate);
+    await prefs.setDouble(
+        '${_prefix}vad_no_speech_threshold', config.noSpeechThreshold);
+    await prefs.setDouble(
+        '${_prefix}vad_log_prob_threshold', config.logProbThreshold);
+    await prefs.setDouble('${_prefix}vad_compression_ratio_threshold',
+        config.compressionRatioThreshold);
+    await prefs.setInt(
+        '${_prefix}vad_realtime_profile', config.realtimeProfile.index);
+    await prefs.setDouble(
+        '${_prefix}vad_realtime_threshold', config.realtimeThreshold);
+    await prefs.setInt('${_prefix}vad_realtime_silence_ms',
+        config.realtimeSilenceDurationMs);
+    await prefs.setInt('${_prefix}vad_realtime_prefix_ms',
+        config.realtimePrefixPaddingMs);
   }
 
   // -- Comfort noise config ---------------------------------------------------

@@ -7,6 +7,8 @@ import 'package:logger/logger.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'agent_config_service.dart';
+
 class TranscriptionEvent {
   final String text;
   final bool isFinal;
@@ -79,6 +81,11 @@ class WhisperRealtimeService {
   /// When true, the native layer strips mic echo and sends remote-only audio
   /// during TTS playback, so Flutter-level suppression is unnecessary.
   bool inCallMode = false;
+
+  /// VAD / turn-detection configuration applied to every Realtime session.
+  /// Mutated live by `applyVadConfig`; defaults reproduce the legacy
+  /// hard-coded `server_vad` settings until the user opens Settings.
+  VadConfig _vadConfig = const VadConfig();
 
   final _transcriptionController =
       StreamController<TranscriptionEvent>.broadcast();
@@ -335,12 +342,7 @@ class WhisperRealtimeService {
       'input_audio_transcription': {
         'model': 'gpt-4o-mini-transcribe',
       },
-      'turn_detection': {
-        'type': 'server_vad',
-        'threshold': 0.8,
-        'prefix_padding_ms': 300,
-        'silence_duration_ms': 1800,
-      },
+      'turn_detection': _vadConfig.toTurnDetection(),
     };
 
     if (instructions.isNotEmpty) {
@@ -1285,6 +1287,22 @@ class WhisperRealtimeService {
         'instructions': instructions,
       },
     });
+  }
+
+  /// Update the active session's `turn_detection` block live. Used when
+  /// the user changes the VAD profile / sliders in Settings — avoids
+  /// having to drop the websocket and re-handshake. Cached locally so
+  /// the next reconnect uses the same payload.
+  void applyVadConfig(VadConfig vad) {
+    _vadConfig = vad;
+    if (!_connected || _ws == null) return;
+    _send({
+      'type': 'session.update',
+      'session': {
+        'turn_detection': vad.toTurnDetection(),
+      },
+    });
+    _logger.i('Realtime turn_detection updated: ${vad.realtimeProfile.name}');
   }
 
   void sendFunctionCallOutput({

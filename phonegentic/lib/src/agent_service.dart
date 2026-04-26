@@ -160,6 +160,52 @@ class AgentService extends ChangeNotifier {
   String? _lastDialedNumber;
   String? _priorCallTranscript;
 
+  /// SIP `Call.id` of the most recent leg dialed via
+  /// `add_conference_participant` that is still in flight (PROGRESS / ringing
+  /// / CONFIRMED-but-not-yet-merged). While this is non-null:
+  ///   • Remote-source transcripts arriving on the host's primary leg while
+  ///     it's on hold are *bleed-through* from the dialing leg's audio
+  ///     (Whisper transcribes them and falsely attributes them to the
+  ///     primary caller). They get suppressed in `_onTranscript`.
+  ///   • When the leg reaches CONFIRMED, `_AgentSipListener` auto-unholds
+  ///     the primary call so the manager + new participant are bridged
+  ///     without requiring a follow-up `merge_conference` tool call.
+  ///   • If the leg fails before connecting, the primary is taken off
+  ///     hold automatically as well.
+  String? _pendingConferenceLegCallId;
+  /// Number we dialed for the pending conference leg, recorded so the
+  /// auto-unhold path can log it and the LLM-facing tool result can
+  /// reference it consistently.
+  String? _pendingConferenceLegNumber;
+  /// SIP `Call.id` of the *primary* leg (the one that was active before the
+  /// pending conference dial). We snapshot this in
+  /// `_handleAddConferenceParticipant` so the auto-merge code can find and
+  /// `unhold()` exactly the right call even if `helper.activeCall` has
+  /// shifted to point at the newly-dialed leg by the time CONFIRMED fires.
+  String? _primaryConferenceCallId;
+
+  /// True once we've issued `active.hold()` on the primary call as part of an
+  /// `add_conference_participant` flow. The dart_sip_ua library has a quirk
+  /// where it emits a spurious `STREAM` callback right after the hold
+  /// re-INVITE completes, which flips `Call.state` away from `HOLD` even
+  /// though the negotiated SDP still has us as sendonly/recvonly. Relying on
+  /// `Call.state == HOLD` therefore mis-skips the auto-unhold. We track the
+  /// fact ourselves so `_handleConferenceLegConnected` always knows whether
+  /// to unhold the primary regardless of the (lying) call-state enum.
+  bool _primaryHeldForConference = false;
+
+  /// Friendly display label for the pending / active secondary conference
+  /// leg (e.g. "Delta Airlines" from a contact match, "Acme IVR" from SIP
+  /// display name, or the formatted phone number as a last resort). Used by
+  /// `_onTranscript` to attribute remote audio that arrives during conference
+  /// setup (manager held) or on a multi-leg bridged call to the *correct*
+  /// speaker rather than mis-tagging it as the primary remote (e.g. Patrick).
+  ///
+  /// Cleared in `_handleConferenceLegConnected` / `_handleConferenceLegDropped`
+  /// after the value has been migrated into `ConferenceCallLeg.displayName`,
+  /// which is the durable source for `_resolveSecondaryLegLabel()`.
+  String? _pendingConferenceLegLabel;
+
   /// Timestamp when `forkCoalescing` was last flipped true. Used to cap how
   /// long the flag may suppress `ended`/`failed` — a missed CONFIRMED can
   /// otherwise latch state forever (see `notifyCallPhase`).
@@ -306,6 +352,11 @@ class AgentService extends ChangeNotifier {
 
   // Local STT (WhisperKit / whisper.cpp) — active when SttProvider.whisperKit.
   SttConfig? _sttConfig;
+  /// VAD / turn-detection / hallucination thresholds. Loaded once at boot
+  /// and refreshed live by [applyVadConfig] when the user tweaks Settings.
+  /// Initial value is the same defaults `VadConfig()` would give us, so
+  /// reads before [_init] runs still produce sane output.
+  VadConfig _vadConfig = const VadConfig();
   WhisperKitSttService? _whisperKitStt;
   StreamSubscription<Uint8List>? _localAudioSub;
   StreamSubscription<ResponseTextEvent>? _textAgentSub;
@@ -850,6 +901,30 @@ class AgentService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Read-only view of the active VAD / turn-detection config. Settings
+  /// UI calls this to mirror state when first showing the panel without
+  /// needing its own SharedPreferences read.
+  VadConfig get vadConfig => _vadConfig;
+
+  /// Push a new VAD config to all live STT consumers (WhisperKit native
+  /// channel + OpenAI Realtime session). Persists to SharedPreferences
+  /// so the next launch picks up the same values, and avoids a full
+  /// `reconnect()` so the user can A/B sliders without dropping the
+  /// active call.
+  Future<void> applyVadConfig(VadConfig vad) async {
+    _vadConfig = vad;
+    await AgentConfigService.saveVadConfig(vad);
+    _whisper.applyVadConfig(vad);
+    final stt = _whisperKitStt;
+    if (stt != null) {
+      await stt.applyVadConfig(vad);
+    }
+    debugPrint('[AgentService] VAD updated: '
+        'adaptive=${vad.adaptiveNoiseFloor} '
+        'gate=${vad.rmsNoiseGate.toStringAsFixed(4)} '
+        'profile=${vad.realtimeProfile.name}');
+  }
+
   void _syncBootContextFromJobFunction() {
     final selected = _jobFunctionService?.selected;
     if (selected == null) return;
@@ -960,6 +1035,11 @@ class AgentService extends ChangeNotifier {
       _globalMutePolicy = await AgentConfigService.loadMutePolicy();
 
       _sttConfig = await AgentConfigService.loadSttConfig();
+      _vadConfig = await AgentConfigService.loadVadConfig();
+      // Push VAD straight into the realtime service so its first
+      // session.update carries the user's profile rather than the
+      // legacy defaults.
+      _whisper.applyVadConfig(_vadConfig);
       final config = await AgentConfigService.loadVoiceConfig();
       _echoGuardMs = config.echoGuardMs;
       _textAgentConfig = await AgentConfigService.loadTextConfig();
@@ -1385,6 +1465,9 @@ class AgentService extends ChangeNotifier {
     try {
       _whisperKitStt = WhisperKitSttService(config: _sttConfig!);
       await _whisperKitStt!.initialize();
+      // Apply VAD knobs once the channel exists. Safe even if init
+      // failed — the call no-ops on missing-plugin / platform errors.
+      await _whisperKitStt!.applyVadConfig(_vadConfig);
 
       if (!_whisperKitStt!.isInitialized) {
         _statusText = 'STT model not found';
@@ -3577,6 +3660,28 @@ class AgentService extends ChangeNotifier {
     return matched / words.length >= 0.85;
   }
 
+  /// Number-word vocabulary used to recognize when a "repeated word" pattern
+  /// is actually someone reading a phone number / digits aloud (e.g.
+  /// "one two one two", "five five five", "zero zero zero zero"). These are
+  /// legitimate user speech and MUST NOT be flagged as hallucinations.
+  static const _digitWordVocab = <String>{
+    'zero', 'oh', 'one', 'two', 'three', 'four', 'five',
+    'six', 'seven', 'eight', 'nine', 'ten',
+    'hundred', 'thousand', 'and',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+  };
+
+  /// Returns true if [words] is plausible spoken-digit content (a phone
+  /// number, area code, confirmation number, etc.) where heavy repetition
+  /// is normal and expected. We require ≥3 words AND ≥85% digit-word
+  /// coverage so single fillers ("yeah") don't false-positive.
+  static bool _looksLikeSpokenDigits(List<String> words) {
+    if (words.length < 3) return false;
+    final digitMatches =
+        words.where((w) => _digitWordVocab.contains(w)).length;
+    return digitMatches / words.length >= 0.85;
+  }
+
   /// Detects repeated-word hallucinations like "Good, good, good",
   /// "Perfect, perfect, perfect", or numeric loops "1, 2, 3, 1, 2, 3" —
   /// WhisperKit echoes/duplicates words when it processes overlapping
@@ -3589,6 +3694,11 @@ class AgentService extends ChangeNotifier {
         .where((w) => w.isNotEmpty)
         .toList();
     if (words.length < 3) return false;
+
+    // Whitelist: someone reading off digits aloud (e.g. a phone number).
+    // Repetition there is meaningful, not hallucinated.
+    if (_looksLikeSpokenDigits(words)) return false;
+
     final unique = words.toSet();
     if (unique.length <= 2 && words.length >= 3) return true;
     // Check for consecutive repetition: same word 3+ times in a row.
@@ -4258,7 +4368,7 @@ class AgentService extends ChangeNotifier {
 
     final lowConfidence = confidence > 0.0 && confidence < 0.5;
 
-    // Voiceprint → speaker label policy (Option A: clamp to multi-party).
+    // Voiceprint → persistent speaker.name policy.
     //
     // Phone-number identity is the source of truth for who's on a 1:1 call:
     //  • remote: SIP `from` → contact / manager match (set in
@@ -4276,9 +4386,18 @@ class AgentService extends ChangeNotifier {
     // it cannot race against (or overwrite) the phone-derived label. The
     // _saveRemoteVoiceprint() path still runs at end-of-call so we keep
     // building the voiceprint database for future multi-party scenarios.
+    //
+    // Conference-mode caveat: when multiple SIP legs are live we ALSO skip
+    // the persistent claim, because a voiceprint match against the secondary
+    // leg's speaker would otherwise overwrite `remoteSpeaker.name` (which
+    // is semantically the primary caller). In conference we instead use the
+    // voiceprint signal *per-transcript* in the reattribution block below.
     final inActiveCall = _callPhase != CallPhase.idle;
     final isMultiParty = _partyCount > 2;
-    final voiceprintEligible = isMultiParty || !inActiveCall;
+    final inConference = (sipHelper?.calls.length ?? 0) > 1 ||
+        _callPhase == CallPhase.onHold;
+    final voiceprintEligible =
+        (isMultiParty || !inActiveCall) && !inConference;
     final skipVoiceprint = !voiceprintEligible;
 
     if (voiceprintName.isNotEmpty && speaker.name.isEmpty && !skipVoiceprint) {
@@ -4297,28 +4416,140 @@ class AgentService extends ChangeNotifier {
           '"$voiceprintName" (confidence=$confidence, parties=$_partyCount)');
     }
 
-    _addOrMergeTranscript(role, text, speakerName: speaker.label);
+    // Multi-leg / conference attribution.
+    //
+    // When a second SIP leg is in play (manager held while we dial out, or
+    // both legs bridged into a real conference) WebRTC delivers the *mixed*
+    // remote bus to Whisper, so any non-mic speech transcribes through the
+    // "remote" channel — but `remoteSpeaker` only knows the primary caller's
+    // name. Without intervention, the secondary party's IVR / agent / human
+    // gets mis-tagged as the primary (e.g. "Delta's AI assistant" labeled
+    // "Patrick"), and the LLM tries to respond on the primary's behalf.
+    //
+    // Per user requirement: do NOT suppress the audio — it is real speech the
+    // model needs to hear and respond to. Instead, reattribute it to the
+    // *correct* party so the conversation panel, call history, and LLM
+    // context all show "[Delta Airlines]: ..." vs "[Patrick]: ..." with no
+    // ambiguity.
+    //
+    // Disambiguation priority (highest first):
+    //   1. Secondary-leg label resolved from a *contact match* on the dialed
+    //      number — this is the most authoritative signal we have, since the
+    //      user explicitly added that party to the conference and the number
+    //      maps to a real human-readable name in the contact DB.
+    //   2. Voiceprint diarization, BUT only if it produced a real human name
+    //      (not a generic "Speaker N" auto-ID from FluidAudio's
+    //      SpeakerManager — those are placeholders for unknown voices and
+    //      add zero semantic value over a contact-resolved label).
+    //   3. Whatever `_resolveSecondaryLegLabel` can find from SIP display
+    //      names or the raw E.164 number.
+    //   4. "Other party" as last resort.
+    //
+    // Note: this is *per-transcript* attribution only — we do NOT mutate
+    // `speaker.name` on the shared `remoteSpeaker` because that label is
+    // semantically tied to the primary leg's caller and must survive the
+    // conference.
+    String effectiveLabel = speaker.label;
+    bool reattributed = false;
+    final int liveSipCalls = sipHelper?.calls.length ?? 0;
+    final bool managerHeld = _callPhase == CallPhase.onHold;
+    final bool multiLegLive = liveSipCalls > 1;
+    final bool conferenceActive = managerHeld || multiLegLive;
+    if (isRemote && conferenceActive) {
+      final secondary = _resolveSecondaryLegLabel();
+      final bool secondaryIsContact = secondary != null &&
+          secondary.isNotEmpty &&
+          _lookupContactName(_pendingConferenceLegNumber ?? '') == secondary;
+
+      // Voiceprint hint: only useful if it produced a *real* name. Generic
+      // "Speaker N" auto-IDs from FluidAudio's SpeakerManager are
+      // placeholders for unrecognized voices — using them as a transcript
+      // label tells the LLM nothing more than "someone other than the
+      // primary spoke" while clobbering the much more informative
+      // contact-resolved label.
+      String? voiceprintHint;
+      if (voiceprintName.isNotEmpty &&
+          confidence >= 0.7 &&
+          !_isGenericSpeakerLabel(voiceprintName)) {
+        voiceprintHint = voiceprintName;
+        debugPrint(
+            '[AgentService] Voiceprint diarization hit in conference: '
+            '"$voiceprintName" (confidence=$confidence)');
+      } else if (voiceprintName.isNotEmpty &&
+          _isGenericSpeakerLabel(voiceprintName)) {
+        debugPrint(
+            '[AgentService] Voiceprint label "$voiceprintName" ignored in '
+            'conference (generic auto-ID, no semantic value over contact '
+            'lookup; secondary=${secondary ?? "<unresolved>"})');
+      }
+
+      // Pick the best label by priority.
+      if (secondaryIsContact) {
+        effectiveLabel = secondary;
+        reattributed = true;
+        debugPrint(
+            '[AgentService] Remote transcript attributed to contact-resolved '
+            'secondary "$secondary" (was "${speaker.label}", '
+            'phase=${_callPhase.name}): "$text"');
+      } else if (voiceprintHint != null) {
+        effectiveLabel = voiceprintHint;
+        reattributed = true;
+      } else if (secondary != null && secondary.isNotEmpty) {
+        effectiveLabel = secondary;
+        reattributed = true;
+        debugPrint(
+            '[AgentService] Remote transcript reattributed to secondary '
+            'leg "$secondary" (was "${speaker.label}", '
+            'phase=${_callPhase.name} sipCalls=$liveSipCalls '
+            'managerHeld=$managerHeld multiLeg=$multiLegLive): "$text"');
+      } else {
+        effectiveLabel = 'Other party';
+        reattributed = true;
+        debugPrint(
+            '[AgentService] Remote transcript reattributed to "Other party" '
+            '(secondary leg unresolved, phase=${_callPhase.name} '
+            'sipCalls=$liveSipCalls): "$text"');
+      }
+    }
+
+    _addOrMergeTranscript(role, text, speakerName: effectiveLabel);
 
     callHistory?.addTranscript(
       role: isRemote ? 'remote' : 'host',
-      speakerName: speaker.label,
+      speakerName: effectiveLabel,
       text: text,
     );
 
     // Tag low-confidence transcripts so the agent can judge whether to respond
     final label =
-        lowConfidence ? '${speaker.label} (low confidence)' : speaker.label;
+        lowConfidence ? '$effectiveLabel (low confidence)' : effectiveLabel;
 
     // Post-pre-greeting grace: the first transcript(s) after the pre-greeting
-    // flush (typically the remote party's "Hello?") are added as context only
-    // so the LLM doesn't generate a duplicate greeting.
+    // flush are intended to absorb the remote party's reflexive "Hello?" so
+    // the LLM doesn't generate a duplicate greeting in response. ONLY short
+    // remote utterances are absorbed — substantive speech (e.g. an actual
+    // command from the manager like "Conference in 800-221-1212") must
+    // pass through as a real user turn so the LLM acts on it. Without this
+    // length gate the grace window swallows the first real instruction and
+    // the agent goes mute.
     if (_preGreetGraceUntil != null &&
         DateTime.now().isBefore(_preGreetGraceUntil!)) {
+      final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+      if (isRemote && words.length < 4) {
+        _preGreetGraceUntil = null;
+        _textAgent?.addSystemContext('[$label]: $text');
+        debugPrint(
+            '[AgentService] Post-pre-greet grace: absorbed "$text" '
+            '(${words.length} words) as context only');
+        return;
+      }
+      // Substantive speech (4+ words) or local-mic speech is a real turn —
+      // clear the grace window and fall through to normal handling so the
+      // LLM responds.
       _preGreetGraceUntil = null;
-      _textAgent?.addSystemContext('[$label]: $text');
       debugPrint(
-          '[AgentService] Post-pre-greet grace: added "$text" as context only');
-      return;
+          '[AgentService] Pre-greet grace cleared by substantive speech: '
+          '"$text" (will dispatch to LLM)');
     }
 
     // Post-connected-greeting grace: short acknowledgments from the remote
@@ -4339,7 +4570,7 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] → TextAgent [$label]: "$text" '
         '(phase=${_callPhase.name} conf=${confidence.toStringAsFixed(2)} '
-        'src=$source)');
+        'src=$source reattributed=$reattributed)');
 
     // Authoritative "user spoke" signal for the loop-breaker. Anything that
     // reaches this point has cleared echo suppression, hallucination
@@ -4356,7 +4587,12 @@ class AgentService extends ChangeNotifier {
     // score immediately so we can escalate even on the first repeat.
     _stuckTracker.onUserTurn(text);
 
-    _textAgent?.addTranscript(label, text);
+    // The "host" for empty-response-retry purposes is anyone driving the
+    // app: mic-side speech OR a remote leg whose number matches the
+    // configured manager (the Patrick-calling-himself case). Both must
+    // never be answered with silence.
+    final bool turnIsHost = !isRemote || isCurrentRemoteAgentManager;
+    _textAgent?.addTranscript(label, text, isHost: turnIsHost);
 
     // If the previous agent reply armed an escalation, this user turn is
     // what actually triggers the slower fallback-model request. Drop a
@@ -7261,9 +7497,68 @@ class AgentService extends ChangeNotifier {
     final active = sipHelper!.activeCall;
     if (active == null) return 'No active call to conference with.';
 
+    // Resolve a friendly label for the secondary leg up-front so we can use
+    // it both in the spoken hold-announcement to the primary caller AND in
+    // transcript attribution during the dial/IVR window. Prefers a contact
+    // match, otherwise falls back to the raw dialed number.
+    _pendingConferenceLegLabel = _lookupContactName(cleaned) ?? cleaned;
+
+    // Announce the hold to the primary caller so they're not surprised by
+    // the audio going quiet. Must complete BEFORE we issue `active.hold()`
+    // — once the SIP hold re-INVITE lands the remote party stops receiving
+    // media, which would clip the announcement mid-sentence.
+    //
+    // `speakToCurrentCaller` blocks until TTS drains (or 5s elapses, in
+    // case the model balks at the directive). Worst case the manager sits
+    // through a couple of extra seconds of audio; far better than landing
+    // them in dead silence with no warning.
+    if (active.state != CallStateEnum.HOLD) {
+      final dialeeForSpeech = _pendingConferenceLegLabel!;
+      final holdAnnouncement =
+          'One moment — I\'m going to put you on a brief hold while I '
+          'connect $dialeeForSpeech.';
+      try {
+        await speakToCurrentCaller(
+          holdAnnouncement,
+          timeout: const Duration(seconds: 5),
+        );
+      } catch (e) {
+        // Speaking is best-effort — never block the dial on a TTS failure.
+        debugPrint(
+            '[AgentService] Hold announcement failed (continuing): $e');
+      }
+    }
+
     if (active.state != CallStateEnum.HOLD) {
       active.hold();
+      _primaryHeldForConference = true;
+    } else {
+      // Already on hold from a prior action — the auto-unhold path should
+      // still take it off hold once the new leg connects.
+      _primaryHeldForConference = true;
     }
+    // Remember the primary leg's id + number so the auto-unhold path can
+    // target it exactly even after `helper.activeCall` flips to the new leg.
+    _primaryConferenceCallId = active.id;
+    _pendingConferenceLegNumber = cleaned;
+    // Tell the LLM who's being dialed so the model has unambiguous context
+    // for the upcoming bridged conversation.
+    _textAgent?.addSystemContext(
+        '[system]: Dialing $_pendingConferenceLegLabel ($cleaned) to add as '
+        'a conference participant. Audio from this party will be tagged with '
+        'their name in subsequent transcripts.');
+    // Reset any stale id from a prior failed dial — the SIP listener will
+    // capture the new leg's call.id as soon as the first state change fires.
+    _pendingConferenceLegCallId = null;
+    // Snapshot existing call ids so we can identify which leg the dial
+    // produces. `sipHelper!.call()` returns a bool, not the new Call, so
+    // diffing helper.calls before/after is one way to capture the newly-
+    // spawned leg's SIP Call-ID. We also have a fallback in the listener
+    // that catches any call.id that isn't the primary while pending.
+    final preCallIds = <String>{
+      for (final c in sipHelper!.calls)
+        if (c.id != null) c.id!,
+    };
     try {
       final stream = await navigator.mediaDevices
           .getUserMedia(<String, dynamic>{'audio': true, 'video': false});
@@ -7274,13 +7569,177 @@ class AgentService extends ChangeNotifier {
         // conference mode so AEC/NS/AGC don't misbehave with two reference
         // streams. Single-leg calls keep AEC on (no echo).
         _applyConferenceModeForCallCount();
-        return 'Dialing $cleaned as conference participant. '
-            'Use merge_conference once connected to bridge all parties.';
+        // Find the new Call by diffing (best-effort — listener fallback
+        // covers cases where helper.calls hasn't updated yet).
+        Call? newLeg;
+        for (final c in sipHelper!.calls) {
+          if (c.id != null && !preCallIds.contains(c.id)) {
+            newLeg = c;
+            break;
+          }
+        }
+        if (newLeg?.id != null) {
+          _pendingConferenceLegCallId = newLeg!.id;
+          debugPrint(
+              '[AgentService] Conference leg pending: id=${newLeg.id} '
+              'number=$cleaned (will auto-unhold primary on CONFIRMED)');
+        } else {
+          debugPrint(
+              '[AgentService] Conference leg dial succeeded; SIP listener '
+              'will capture the new call.id on first state change '
+              '(number=$cleaned)');
+        }
+        return 'Dialing $cleaned. The system will automatically bring the '
+            'primary caller off hold and bridge everyone together once the '
+            'new party answers — do NOT call merge_conference yourself, '
+            'and do NOT ask the manager to confirm the merge. Just wait '
+            'silently; if the dial fails the platform will restore the '
+            'original call and surface an error.';
       }
+      _pendingConferenceLegNumber = null;
+      _pendingConferenceLegLabel = null;
+      _primaryConferenceCallId = null;
+      _primaryHeldForConference = false;
       return 'Failed to initiate call to $cleaned.';
     } catch (e) {
+      _pendingConferenceLegNumber = null;
+      _pendingConferenceLegLabel = null;
+      _primaryConferenceCallId = null;
+      _primaryHeldForConference = false;
       return 'Error adding participant: $e';
     }
+  }
+
+  /// Auto-merge step: the secondary conference leg has reached a connected
+  /// state. Take the primary call off hold so the manager + new party are
+  /// bridged immediately, register both legs with the conference service for
+  /// UI tracking, and clear the pending state.
+  ///
+  /// Idempotent — safe to call multiple times if STREAM/ACCEPTED/CONFIRMED
+  /// fire in succession (which they often do).
+  void _handleConferenceLegConnected(Call newLeg) {
+    if (_pendingConferenceLegCallId == null ||
+        _pendingConferenceLegCallId != newLeg.id) {
+      return;
+    }
+    final pendingNumber = _pendingConferenceLegNumber ?? 'unknown';
+    debugPrint('[AgentService] Conference leg connected: id=${newLeg.id} '
+        'number=$pendingNumber — auto-unholding primary');
+
+    final primaryId = _primaryConferenceCallId;
+    Call? primary;
+    if (primaryId != null && sipHelper != null) {
+      primary = sipHelper!.findCall(primaryId);
+    }
+    // We trust our own `_primaryHeldForConference` flag rather than
+    // `primary.state == HOLD`. The dart_sip_ua library emits a STREAM
+    // callback right after a hold re-INVITE completes, which flips
+    // `Call.state` away from HOLD even though the negotiated SDP is still
+    // sendonly/recvonly (genuinely held). Driving off the lib's enum caused
+    // the auto-unhold to be skipped while the manager was actually still
+    // muted. unhold() on a call that's already sendrecv is harmless — at
+    // worst it triggers a no-op renegotiation.
+    if (primary != null && _primaryHeldForConference) {
+      try {
+        primary.unhold();
+        debugPrint('[AgentService] Auto-unhold sent for primary id=$primaryId '
+            '(libState=${primary.state.name})');
+      } catch (e) {
+        debugPrint('[AgentService] Auto-unhold failed: $e');
+      }
+    } else if (primary == null) {
+      debugPrint('[AgentService] Primary call not found (id=$primaryId) — '
+          'cannot unhold');
+    } else {
+      debugPrint('[AgentService] Primary was not held by us — skipping unhold');
+    }
+
+    // Register both legs with the conference service so the UI + future
+    // hold/hangup tools see them. addLeg is a no-op if already present.
+    // Pass the resolved friendly label for the secondary leg as displayName
+    // so `_resolveSecondaryLegLabel()` can read it after the pending fields
+    // are cleared below.
+    final secondaryLabel = _pendingConferenceLegLabel ?? pendingNumber;
+    if (conferenceService != null) {
+      try {
+        if (primary != null) {
+          conferenceService!.addLeg(primary,
+              isOutbound: false,
+              displayName: _resolveCallerName() ??
+                  _remoteDisplayName ??
+                  _remoteIdentity);
+        }
+        conferenceService!
+            .addLeg(newLeg, isOutbound: true, displayName: secondaryLabel);
+      } catch (e) {
+        debugPrint('[AgentService] ConferenceService.addLeg failed: $e');
+      }
+    }
+
+    // Tell the LLM the merge succeeded so it can speak naturally to the
+    // newly-bridged party rather than wondering why the manager is silent.
+    // Include both parties' labels so the model knows who's who when
+    // transcripts arrive tagged with their respective names.
+    final primaryLabel = _resolveCallerName() ?? _remoteIdentity ?? 'caller';
+    _textAgent?.addSystemContext(
+        '[system]: Conference is now bridged. $primaryLabel (primary) and '
+        '$secondaryLabel ($pendingNumber, secondary) are both on the line. '
+        'The manager is off hold. Subsequent transcripts will be tagged '
+        '[$primaryLabel] vs [$secondaryLabel] so you can tell who is '
+        'speaking.');
+
+    // APM conf mode is already on (set when the leg started ringing) — but
+    // re-apply defensively in case something flipped it off.
+    _applyConferenceModeForCallCount();
+
+    _pendingConferenceLegCallId = null;
+    _pendingConferenceLegNumber = null;
+    _pendingConferenceLegLabel = null;
+    _primaryConferenceCallId = null;
+    _primaryHeldForConference = false;
+  }
+
+  /// The pending conference leg failed before fully connecting (or hung up
+  /// immediately after). Take the primary back off hold so the manager
+  /// isn't stranded, surface the error to the LLM, and clear pending state.
+  void _handleConferenceLegDropped(Call newLeg, {String? reason}) {
+    if (_pendingConferenceLegCallId == null ||
+        _pendingConferenceLegCallId != newLeg.id) {
+      return;
+    }
+    final pendingNumber = _pendingConferenceLegNumber ?? 'unknown';
+    debugPrint('[AgentService] Conference leg dropped: id=${newLeg.id} '
+        'number=$pendingNumber reason=${reason ?? "unspecified"} — '
+        'restoring primary');
+
+    final primaryId = _primaryConferenceCallId;
+    Call? primary;
+    if (primaryId != null && sipHelper != null) {
+      primary = sipHelper!.findCall(primaryId);
+    }
+    if (primary != null && primary.state == CallStateEnum.HOLD) {
+      try {
+        primary.unhold();
+        debugPrint(
+            '[AgentService] Restore-unhold sent for primary id=$primaryId');
+      } catch (e) {
+        debugPrint('[AgentService] Restore-unhold failed: $e');
+      }
+    }
+
+    _textAgent?.addSystemContext(
+        '[system]: Conference dial to $pendingNumber failed '
+        '(${reason ?? "unknown"}). The primary caller is back off hold. '
+        'Briefly let them know the dial did not go through; do not retry '
+        'the same number unless asked.');
+
+    _applyConferenceModeForCallCount();
+
+    _pendingConferenceLegCallId = null;
+    _pendingConferenceLegNumber = null;
+    _pendingConferenceLegLabel = null;
+    _primaryConferenceCallId = null;
+    _primaryHeldForConference = false;
   }
 
   Future<String> _handleMergeConference(Map<String, dynamic> args) async {
@@ -8185,6 +8644,106 @@ class AgentService extends ChangeNotifier {
     return null;
   }
 
+  /// Look up a contact name by phone number. Returns null if no contact
+  /// matches, or if the contact's display name is just the number itself.
+  String? _lookupContactName(String phone) {
+    if (phone.isEmpty) return null;
+    final contact = contactService?.lookupByPhone(phone);
+    final name = contact?['display_name'] as String?;
+    if (name == null || name.isEmpty) return null;
+    if (name == phone) return null;
+    return name;
+  }
+
+  /// FluidAudio's `SpeakerManager` auto-assigns generic numeric labels like
+  /// "Speaker 1", "Speaker 2", … to voices it hasn't seen before (and to host
+  /// users that aren't backed by a stored embedding). These are placeholders,
+  /// not real names — using one as a transcript label tells the LLM nothing
+  /// more than "someone other than the primary spoke" while clobbering more
+  /// informative signals (contact match by dialed number, SIP display name,
+  /// etc.). This helper detects them so callers can prefer real names.
+  ///
+  /// Recognized patterns: "Speaker 1", "speaker  12", "SPEAKER\t3" — i.e.
+  /// the literal word "Speaker" (case-insensitive), optional whitespace, and
+  /// a positive integer with nothing else on the string.
+  static final RegExp _kGenericSpeakerLabelRe =
+      RegExp(r'^\s*speaker\s+\d+\s*$', caseSensitive: false);
+
+  bool _isGenericSpeakerLabel(String name) {
+    return _kGenericSpeakerLabelRe.hasMatch(name);
+  }
+
+  /// Resolve a friendly speaker label for the *secondary* (non-primary)
+  /// conference leg. This is the foundation for correctly attributing remote
+  /// audio that arrives during conference setup (manager held while we dial)
+  /// or on a multi-leg bridged call — without this, transcripts from the
+  /// other party's IVR / agent / human get mis-tagged as the primary remote
+  /// (e.g. "Patrick"), which confuses the LLM into responding to its own
+  /// caller's behalf.
+  ///
+  /// Lookup order (each step short-circuits as soon as it yields a value):
+  ///  1. `_pendingConferenceLegLabel` — set up-front in
+  ///     `_handleAddConferenceParticipant`, available even before the leg
+  ///     answers (covers the ringing / IVR-greeting window).
+  ///  2. A `ConferenceService` leg whose id ≠ `_primaryConferenceCallId`,
+  ///     using its `displayName` if present, falling back to a contact
+  ///     lookup by `remoteNumber`, then the raw number.
+  ///  3. A `sipHelper.calls` entry whose remote_identity differs from
+  ///     `_remoteIdentity` — last-resort discovery if neither of the above
+  ///     populated yet (e.g. a race between SIP signaling and our state
+  ///     bookkeeping).
+  ///
+  /// Returns null if the secondary leg can't be identified at all (caller
+  /// should fall back to a generic "other party" label rather than blaming
+  /// the primary remote).
+  String? _resolveSecondaryLegLabel() {
+    // 1. Pending dial — most authoritative during the ring/answer window.
+    if (_pendingConferenceLegLabel != null &&
+        _pendingConferenceLegLabel!.isNotEmpty) {
+      return _pendingConferenceLegLabel;
+    }
+
+    // 2. Conference service legs.
+    final cs = conferenceService;
+    if (cs != null) {
+      for (final leg in cs.legs) {
+        if (leg.sipCallId == _primaryConferenceCallId) continue;
+        final dn = leg.displayName;
+        if (dn != null && dn.isNotEmpty) {
+          final isNumericLike = RegExp(r'^[\+\d\s\-\(\)\.]+$').hasMatch(dn);
+          if (!isNumericLike) return dn;
+        }
+        final byContact = _lookupContactName(leg.remoteNumber);
+        if (byContact != null) return byContact;
+        if (leg.remoteNumber.isNotEmpty) return leg.remoteNumber;
+      }
+    }
+
+    // 3. Raw SIP calls — the secondary leg is whichever live call isn't
+    // the primary remote. We compare against `_remoteIdentity` rather than
+    // `_primaryConferenceCallId` because the latter is cleared after the
+    // auto-merge handler runs (but the secondary call's remote_identity
+    // remains stable for the life of the bridged call).
+    final helper = sipHelper;
+    if (helper != null) {
+      for (final c in helper.calls) {
+        final rid = c.remote_identity;
+        if (rid == null || rid.isEmpty) continue;
+        if (_remoteIdentity != null && rid == _remoteIdentity) continue;
+        final byContact = _lookupContactName(rid);
+        if (byContact != null) return byContact;
+        final dn = c.remote_display_name;
+        if (dn != null && dn.isNotEmpty) {
+          final isNumericLike = RegExp(r'^[\+\d\s\-\(\)\.]+$').hasMatch(dn);
+          if (!isNumericLike) return dn;
+        }
+        return rid;
+      }
+    }
+
+    return null;
+  }
+
   /// Claim the remote speaker's display label from the inbound phone number
   /// — manager match first (so calls from the manager's number are tagged
   /// with the manager's name immediately), then a contact-directory lookup.
@@ -8932,12 +9491,20 @@ class AgentService extends ChangeNotifier {
   }
 
   /// Briefly speak [text] aloud on the current active call, e.g. the polite
-  /// hold notice when a second inbound arrives.
+  /// hold notice when a second inbound arrives or when we're about to dial
+  /// a conference participant.
   ///
-  /// If the realtime agent pipeline is live (`_active`), the agent is
-  /// instructed to say only this phrase immediately. Returns when the agent
-  /// stops speaking or [timeout] elapses, whichever comes first. If the
-  /// pipeline is not live we return quickly (caller can proceed silently).
+  /// Routes the directive into whichever agent pipeline is live:
+  ///  • OpenAI Realtime (`_whisper`) — directly via `sendSystemDirective`.
+  ///  • Split pipeline (`_textAgent`) — as a tagged user message that
+  ///    forces an immediate response, which then flows out through the
+  ///    configured TTS provider (ElevenLabs / Kokoro / Pocket).
+  ///
+  /// Returns when the agent stops speaking or [timeout] elapses, whichever
+  /// comes first. The wait is important when this is called immediately
+  /// before a state change that would mute the call (e.g. a SIP hold
+  /// re-INVITE) — without the wait the announcement would be cut off
+  /// mid-sentence.
   Future<void> speakToCurrentCaller(
     String text, {
     Duration timeout = const Duration(seconds: 3),
@@ -8955,12 +9522,22 @@ class AgentService extends ChangeNotifier {
         '[HOLD TRANSITION] Immediately and only say to the current caller: '
         '"$trimmed". Say nothing else. Do not explain. Do not elaborate. '
         'Keep it under two seconds.';
+    bool dispatched = false;
     try {
-      _whisper.sendSystemDirective(directive);
+      if (_splitPipeline && _textAgent != null) {
+        // Force an immediate Claude response that flows into the active
+        // TTS provider and is played back into the call audio path.
+        _textAgent!.sendUserMessage(directive);
+        dispatched = true;
+      } else {
+        _whisper.sendSystemDirective(directive);
+        dispatched = true;
+      }
     } catch (e) {
       debugPrint('[AgentService] speakToCurrentCaller directive failed: $e');
       return;
     }
+    if (!dispatched) return;
 
     final deadline = DateTime.now().add(timeout);
     // Give TTS a brief head-start before checking for end-of-speech, so we
@@ -10995,7 +11572,7 @@ class AgentService extends ChangeNotifier {
 
     debugPrint('[AgentService] Flushing pre-generated greeting');
 
-    _preGreetGraceUntil = DateTime.now().add(const Duration(seconds: 10));
+    _preGreetGraceUntil = DateTime.now().add(const Duration(seconds: 6));
 
     // Insert settle-phase transcripts BEFORE the greeting so the UI
     // reflects chronological order (remote "Hello?" → agent greeting).
@@ -11117,7 +11694,11 @@ class AgentService extends ChangeNotifier {
         text: text,
       );
 
-      _textAgent?.addTranscript(speaker.label, text);
+      _textAgent?.addTranscript(
+        speaker.label,
+        text,
+        isHost: isCurrentRemoteAgentManager,
+      );
     }
     debugPrint('[AgentService] Drained ${batch.length} settle transcript(s)');
   }
@@ -11550,6 +12131,47 @@ class _AgentSipListener implements SipUaHelperListener {
 
   @override
   void callStateChanged(Call call, CallState callState) {
+    // Conference auto-merge: when the secondary leg dialed via
+    // `add_conference_participant` reaches CONFIRMED, the manager would
+    // otherwise stay on hold forever (the LLM was previously instructed to
+    // emit a separate `merge_conference` call, which the user found
+    // unintuitive). Catch the connect here and proactively take the
+    // primary leg off hold so the three of us are bridged immediately.
+    // We do this BEFORE the early-return guard so non-terminal states
+    // (CONFIRMED / ACCEPTED) reach this code path.
+    // Late-capture fallback: when `_handleAddConferenceParticipant` couldn't
+    // identify the new leg via helper.calls diffing (timing race), we still
+    // know the *primary* id. Any call.id we see here that isn't the primary
+    // while a conference dial is pending must be the new leg.
+    if (agent._pendingConferenceLegNumber != null &&
+        agent._pendingConferenceLegCallId == null &&
+        call.id != null &&
+        call.id != agent._primaryConferenceCallId &&
+        call.direction == Direction.outgoing) {
+      agent._pendingConferenceLegCallId = call.id;
+      debugPrint('[AgentService] Conference leg id captured via listener: '
+          '${call.id} (state=${callState.state.name})');
+    }
+
+    final pendingId = agent._pendingConferenceLegCallId;
+    if (pendingId != null && call.id == pendingId) {
+      final st = callState.state;
+      // IMPORTANT: do NOT include STREAM here. STREAM fires during local
+      // media-stream setup (long before the SIP 200 OK arrives) — using it
+      // as the "connected" trigger caused the auto-merge handler to run
+      // and clear pending state before the dial had a chance to fail
+      // (e.g. 404 Invalid number, 486 Busy). The user's symptom: the LLM
+      // never learned the dial failed and the secondary leg's IVR audio
+      // bled into the primary transcript.
+      if (st == CallStateEnum.CONFIRMED || st == CallStateEnum.ACCEPTED) {
+        agent._handleConferenceLegConnected(call);
+      } else if (st == CallStateEnum.FAILED ||
+          st == CallStateEnum.ENDED) {
+        agent._handleConferenceLegDropped(call,
+            reason: callState.cause?.cause ?? st.name);
+      }
+    }
+
     final phase = agent._sipStateToPhase(callState.state);
     if (phase == null) return;
     // Only force cleanup for end states — settling/ringing transitions are

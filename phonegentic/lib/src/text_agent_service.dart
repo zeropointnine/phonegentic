@@ -51,6 +51,19 @@ class TextAgentService {
   String? _oneShotModel;
   String? _oneShotSystemSuffix;
 
+  /// True when the most recent buffered transcript is from the host (mic
+  /// audio, or a remote leg whose number matches the configured manager).
+  /// Used by `_callLlm` to detect "agent went silent on the host" and
+  /// retry once with a clarifying nudge — rule 6/19 in the system prompt
+  /// forbids silence on host turns, but reasoning models still occasionally
+  /// emit zero text, so we have a safety net here.
+  bool _lastUserTurnWasHost = false;
+
+  /// Suppresses recursive retry — if the empty-response retry itself
+  /// produces no text, we accept that and fall through to the regular
+  /// no-output path rather than looping.
+  bool _emptyResponseRetryArmed = false;
+
   static const _responseTimeoutSecs = 45;
 
   final _responseController = StreamController<ResponseTextEvent>.broadcast();
@@ -122,9 +135,15 @@ class TextAgentService {
       _oneShotModel != null || _oneShotSystemSuffix != null;
 
   /// Buffer a transcript line; triggers a debounced flush → LLM call.
-  void addTranscript(String speakerLabel, String text) {
+  ///
+  /// [isHost] indicates whether the speaker is the app operator / manager.
+  /// When true, the LLM is required to produce a non-empty response (per
+  /// system prompt rule 6); if it doesn't, `_callLlm` retries once with
+  /// a clarifying nudge to break out of any "stay silent" misfire.
+  void addTranscript(String speakerLabel, String text, {bool isHost = false}) {
     _pendingContext.add('[$speakerLabel]: $text');
     _hasTranscriptPending = true;
+    _lastUserTurnWasHost = isHost;
     _scheduleFlush();
   }
 
@@ -1010,6 +1029,55 @@ class TextAgentService {
     }
 
     _trimHistory();
+
+    // Empty-response safety net for host turns. If the model produced no
+    // text AND no tool calls in response to a host utterance, the agent
+    // would otherwise sit in dead air — even though the system prompt
+    // forbids silence on host turns. Rather than rely on the prompt
+    // alone, retry once with an explicit clarifying nudge. This handles
+    // reasoning-model misfires (e.g. completion_tokens=3 with empty
+    // visible text) and partial transcripts ("Can you call" with no
+    // number) the same way: ask the host to repeat / clarify.
+    final bool emptyResponse =
+        fullText.trim().isEmpty && toolCallEvents.isEmpty;
+    if (emptyResponse &&
+        !cancelled &&
+        !fabricationDetected &&
+        _lastUserTurnWasHost &&
+        !_emptyResponseRetryArmed &&
+        !_disposed) {
+      _emptyResponseRetryArmed = true;
+      _oneShotSystemSuffix = '## Empty-response recovery\n'
+          'Your previous reply produced no spoken text. The host just '
+          'spoke and is waiting for you. The host\'s utterance may have '
+          'been short, fragmentary, ambiguous, or cut off mid-sentence. '
+          'You MUST respond now with ONE short, natural-sounding '
+          'clarifying line — at most one sentence. Examples: '
+          '"Sorry, call who?", "What number?", "Got it — say that '
+          'again?", "One sec, who am I conferencing in?". '
+          'Do NOT stay silent. Do NOT call any tools. Do NOT narrate '
+          'what you are about to do. Just speak the clarifying line.';
+      debugPrint(
+          '[TextAgent] Empty response on host turn — retrying once with '
+          'clarifying nudge');
+      try {
+        await _callLlm();
+      } finally {
+        _emptyResponseRetryArmed = false;
+      }
+    } else if (_emptyResponseRetryArmed) {
+      // We were inside a retry that itself produced something (or nothing,
+      // but we don't recurse further). Clear the flag so the next regular
+      // turn isn't accidentally treated as a recovery attempt.
+      _emptyResponseRetryArmed = false;
+    }
+
+    // Reset the host-turn flag after the response cycle completes so a
+    // subsequent assistant-initiated flush (system context only) doesn't
+    // inherit it and trigger spurious recovery retries.
+    if (!_emptyResponseRetryArmed) {
+      _lastUserTurnWasHost = false;
+    }
   }
 
   /// Cap history at `_maxHistory` while preserving tool_use↔tool_result
