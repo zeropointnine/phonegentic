@@ -39,11 +39,15 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   TtsConfig _tts = const TtsConfig();
   SttConfig _stt = const SttConfig();
   VadConfig _vad = const VadConfig();
+  IdleConversationConfig _idleConv = const IdleConversationConfig();
   AgentMutePolicy _mutePolicy = AgentMutePolicy.autoToggle;
   ComfortNoiseConfig _comfortNoise = const ComfortNoiseConfig();
   _PipelineSection _expandedSection = _PipelineSection.none;
   bool _loaded = false;
   bool _dirty = false;
+  // STT panel "Advanced" disclosure (idle conversation lives here). Off
+  // by default so the panel stays compact for the common case.
+  bool _sttAdvancedExpanded = false;
   AgentService? _agent;
 
   final _voiceKeyCtrl = TextEditingController();
@@ -118,6 +122,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     final tts = await AgentConfigService.loadTtsConfig();
     final stt = await AgentConfigService.loadSttConfig();
     final vad = await AgentConfigService.loadVadConfig();
+    final idleConv = await AgentConfigService.loadIdleConversationConfig();
     final mp = await AgentConfigService.loadMutePolicy();
     final cn = await AgentConfigService.loadComfortNoiseConfig();
     if (!mounted) return;
@@ -127,6 +132,7 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
       _tts = tts;
       _stt = stt;
       _vad = vad;
+      _idleConv = idleConv;
       _mutePolicy = mp;
       _comfortNoise = cn;
       _voiceKeyCtrl.text = v.apiKey;
@@ -984,34 +990,36 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           ),
         ],
       ],
-      ..._buildVadContent(),
+      _buildSttAdvancedHeader(),
+      if (_sttAdvancedExpanded) ...[
+        ..._buildVadContent(),
+        ..._buildIdleConversationContent(),
+      ],
     ];
   }
 
-  /// Voice-activity & hallucination controls. Always visible because the
-  /// Realtime API path needs the turn-detection knobs even when the user
-  /// hasn't chosen WhisperKit. WhisperKit-only knobs are gated below.
+  /// Voice-activity & hallucination controls. Lives under the STT
+  /// "Advanced" reveal. WhisperKit-only knobs are gated by provider.
   List<Widget> _buildVadContent() {
     final showRealtimeManual =
         _vad.realtimeProfile == RealtimeVadProfile.manual;
     final whisperVisible = BuildConfig.onDeviceModelsSupported &&
         _stt.provider == SttProvider.whisperKit;
     return [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-        child: Text('TURN DETECTION',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textTertiary,
-              letterSpacing: 0.5,
-            )),
+      _sectionHeader(
+        'TURN DETECTION',
+        help: 'Decides when you\'ve finished talking so the agent can '
+            'reply. Snappier profiles respond faster but may interrupt; '
+            'patient ones wait longer but feel laggier.',
       ),
       _buildVadProfileChips(),
       if (showRealtimeManual) ...[
         _divider(),
         _buildVadSlider(
           label: 'Threshold',
+          help: 'How loud the mic has to be to count as speech. '
+              'Higher = ignores quieter background noise, but quiet '
+              'talkers might be missed.',
           value: _vad.realtimeThreshold,
           min: 0.3,
           max: 0.95,
@@ -1023,6 +1031,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         _divider(),
         _buildVadSlider(
           label: 'Silence',
+          help: 'How much quiet (in milliseconds) ends a turn. '
+              'Lower = quicker responses; higher = waits longer in '
+              'case you keep going.',
           value: _vad.realtimeSilenceDurationMs.toDouble(),
           min: 200,
           max: 3000,
@@ -1034,6 +1045,8 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         _divider(),
         _buildVadSlider(
           label: 'Prefix',
+          help: 'How much audio before speech starts gets sent along. '
+              'Helps catch the first word so it isn\'t clipped.',
           value: _vad.realtimePrefixPaddingMs.toDouble(),
           min: 100,
           max: 600,
@@ -1044,21 +1057,26 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         ),
       ],
       if (whisperVisible) ...[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('NOISE GATE (WHISPERKIT)',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textTertiary,
-                letterSpacing: 0.5,
-              )),
+        _sectionHeader(
+          'NOISE GATE (WHISPERKIT)',
+          help: 'On-device filters that stop room noise, hum, and '
+              'unconfident transcriptions from being treated as speech.',
         ),
         SwitchListTile.adaptive(
           contentPadding: const EdgeInsets.symmetric(horizontal: 16),
           dense: true,
-          title: const Text('Adaptive noise floor',
-              style: TextStyle(fontSize: 13)),
+          title: Row(
+            children: [
+              const Text('Adaptive noise floor',
+                  style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 6),
+              _infoIcon(
+                'Automatically tunes the gate from a rolling estimate '
+                'of your room\'s ambient level. Recommended unless you '
+                'really know what value you need.',
+              ),
+            ],
+          ),
           subtitle: Text(
             'Auto-tune the gate from a rolling estimate of room ambient. '
             'Falls back to the manual gate during the first ~15 seconds '
@@ -1074,6 +1092,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           _divider(),
           _buildVadSlider(
             label: 'Manual gate',
+            help: 'Audio quieter than this is treated as silence. '
+                'Raise it in noisy rooms; lower it in quiet ones if soft '
+                'speech is being missed.',
             value: _vad.rmsNoiseGate,
             min: 0.0,
             max: 0.05,
@@ -1086,6 +1107,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         _divider(),
         _buildVadSlider(
           label: 'No-speech',
+          help: 'Whisper\'s own confidence that a clip is silence. '
+              'Higher = stricter (more silences ignored). Raise this if '
+              'you\'re seeing imaginary "you", "thanks", etc.',
           value: _vad.noSpeechThreshold,
           min: 0.1,
           max: 0.9,
@@ -1097,6 +1121,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         _divider(),
         _buildVadSlider(
           label: 'LogProb',
+          help: 'Drops transcripts the model isn\'t confident about. '
+              'Closer to 0 = stricter (drops more). More negative = '
+              'lets more borderline audio through.',
           value: _vad.logProbThreshold,
           min: -2.0,
           max: 0.0,
@@ -1108,6 +1135,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         _divider(),
         _buildVadSlider(
           label: 'Compression',
+          help: 'Drops looping/repetitive output like "the the the". '
+              'Lower = stricter. Raise only if real repetition is being '
+              'thrown away.',
           value: _vad.compressionRatioThreshold,
           min: 1.0,
           max: 3.0,
@@ -1137,7 +1167,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 100,
+            // Match the 130 px column the VAD sliders use so all
+            // left-rail labels in the Advanced reveal line up.
+            width: 130,
             child: Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text('Profile',
@@ -1183,16 +1215,34 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     required int divisions,
     required String Function(double) format,
     required ValueChanged<double> onChanged,
+    String? help,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
         children: [
           SizedBox(
-            width: 100,
-            child: Text(label,
-                style: TextStyle(
-                    fontSize: 13, color: AppColors.textSecondary)),
+            // Bumped from 100 → 130 so labels like "Compression" don't
+            // wrap when the trailing info icon is present (4 px gap +
+            // 14 px icon eats into the room "Compression" needs).
+            width: 130,
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textSecondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (help != null) ...[
+                  const SizedBox(width: 4),
+                  _infoIcon(help),
+                ],
+              ],
+            ),
           ),
           Expanded(
             child: Slider(
@@ -1214,6 +1264,92 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
                   fontSize: 11, color: AppColors.textSecondary),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Compact info-icon button rendered next to settings labels and
+  /// section headers. Tapping (or hovering on desktop) opens a small
+  /// tooltip with a plain-language explanation, so users aren't left
+  /// guessing what a knob does without leaving the settings panel.
+  ///
+  /// Styling matches the rest of the panel exactly:
+  ///   • `AppColors.surface` background and `AppColors.border` 0.5px
+  ///     outline — same as every section card on this tab, so the
+  ///     popup reads as a sibling of the panels it floats above
+  ///     (`agent_settings_tab.dart:559,718,1809` etc).
+  ///   • `BorderRadius.circular(12)` to match those cards.
+  ///   • Body text in `textSecondary` because it's supplementary
+  ///     information; the headline icon stays in `textTertiary` so it
+  ///     doesn't compete with the labels it annotates.
+  ///   • Soft accent-tinted glow (mirrors the phosphor/Miami palette
+  ///     in dark themes, falls back to a gentle warm shadow in light
+  ///     mode) instead of the default flat black drop shadow.
+  ///   • Generous padding (14×10) so the body breathes at the small
+  ///     12 px font size that matches the rest of the panel labels.
+  Widget _infoIcon(String message) {
+    return Tooltip(
+      message: message,
+      triggerMode: TooltipTriggerMode.tap,
+      preferBelow: false,
+      waitDuration: const Duration(milliseconds: 250),
+      showDuration: const Duration(seconds: 10),
+      verticalOffset: 18,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border, width: 0.5),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.accent.withValues(alpha: 0.10),
+            blurRadius: 16,
+            spreadRadius: -2,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: AppColors.bg.withValues(alpha: 0.4),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      textStyle: TextStyle(
+        fontSize: 12,
+        color: AppColors.textSecondary,
+        height: 1.45,
+        letterSpacing: 0.1,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      child: Icon(
+        Icons.info_outline_rounded,
+        size: 14,
+        color: AppColors.textTertiary,
+      ),
+    );
+  }
+
+  /// All-caps section header with an optional info-icon tooltip on the
+  /// right. Used by the Advanced reveal so each cluster of knobs comes
+  /// with one-sentence guidance for users who don't know which slider
+  /// to grab.
+  Widget _sectionHeader(String title, {String? help}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Row(
+        children: [
+          Text(title,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              )),
+          if (help != null) ...[
+            const SizedBox(width: 6),
+            _infoIcon(help),
+          ],
         ],
       ),
     );
@@ -2329,6 +2465,250 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
   void _updateVad(VadConfig v) {
     setState(() => _vad = v);
     _agent?.applyVadConfig(v);
+  }
+
+  /// Persist idle-conversation changes and push them straight into the
+  /// live agent. Like `_updateVad`, this skips `_dirty` because
+  /// `applyIdleConversationConfig` already handles the side effects
+  /// (pause/unpause Whisper, end open session if disabled).
+  void _updateIdleConv(IdleConversationConfig v) {
+    setState(() => _idleConv = v);
+    _agent?.applyIdleConversationConfig(v);
+  }
+
+  /// Section items for the idle-conversation block, intended to be
+  /// spread inline into the STT panel under the "Advanced" disclosure.
+  /// Returns a `List<Widget>` (not a card) so it composes with the
+  /// surrounding `_buildSttContent` flow without nested containers.
+  List<Widget> _buildIdleConversationContent() {
+    final agent = _agent;
+    final wakeSummary = agent?.wakePhraseSummary ??
+        // Fall back to a static preview when the agent isn't wired yet
+        // (settings opened from a deep link before AgentService boots).
+        (_idleConv.acceptGenericAlias ? 'persona name / agent' : 'persona name');
+    return [
+      _sectionHeader(
+        'IDLE CONVERSATION',
+        help: 'Wake the agent without making a call. When on, on-device '
+            'transcription stays warm so it can hear the wake phrase. '
+            'Off by default to save CPU.',
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Text(
+          'Wake the agent without a call. Say the wake phrase, then '
+          'have a normal back-and-forth — no need to repeat the name.',
+          style: TextStyle(
+            fontSize: 11,
+            color: AppColors.textTertiary,
+            height: 1.4,
+          ),
+        ),
+      ),
+      SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        dense: true,
+        title: Row(
+          children: [
+            const Text('Enable wake-word listening',
+                style: TextStyle(fontSize: 13)),
+            const SizedBox(width: 6),
+            _infoIcon(
+              'Master switch. When on, the agent listens at idle for '
+              'the wake phrase and opens a session when you say it. '
+              'When off, the agent only listens during calls.',
+            ),
+          ],
+        ),
+        subtitle: Text(
+          _idleConv.enabled
+              ? 'Active phrases: $wakeSummary'
+              : 'Off — agent only listens during calls',
+          style: TextStyle(fontSize: 11, color: AppColors.textTertiary),
+        ),
+        value: _idleConv.enabled,
+        onChanged: (b) => _updateIdleConv(_idleConv.copyWith(enabled: b)),
+      ),
+      if (_idleConv.enabled) ...[
+        _divider(),
+        SwitchListTile.adaptive(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          dense: true,
+          title: Row(
+            children: [
+              const Text('Accept generic "agent" alias',
+                  style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 6),
+              _infoIcon(
+                'Lets you wake the agent by saying "agent" / "hey agent" '
+                'in addition to its persona name. Turn off if you want '
+                'strict, persona-name-only wake.',
+              ),
+            ],
+          ),
+          subtitle: Text(
+            'Lets you say "agent" or "hey agent" in addition to the '
+            'persona\'s name.',
+            style:
+                TextStyle(fontSize: 11, color: AppColors.textTertiary),
+          ),
+          value: _idleConv.acceptGenericAlias,
+          onChanged: (b) =>
+              _updateIdleConv(_idleConv.copyWith(acceptGenericAlias: b)),
+        ),
+        _divider(),
+        SwitchListTile.adaptive(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          dense: true,
+          title: Row(
+            children: [
+              const Text('Speak replies through speakers',
+                  style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 6),
+              _infoIcon(
+                'When off, the agent\'s replies still appear in the '
+                'chat panel but no audio is played. Useful as a quiet '
+                'desktop dictation/assistant surface.',
+              ),
+            ],
+          ),
+          subtitle: Text(
+            'When off the agent only writes to the chat panel — '
+            'useful as a quiet desktop dictation surface.',
+            style:
+                TextStyle(fontSize: 11, color: AppColors.textTertiary),
+          ),
+          value: _idleConv.speakInIdle,
+          onChanged: (b) =>
+              _updateIdleConv(_idleConv.copyWith(speakInIdle: b)),
+        ),
+        _divider(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 130,
+                child: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        'Session window',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    _infoIcon(
+                      'How long after the last word the conversation '
+                      'stays open. Resets every time you or the agent '
+                      'speaks. Closes automatically when you say "thanks", '
+                      '"goodbye", or "stop listening".',
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Slider(
+                  value: _idleConv.sessionTimeoutSeconds
+                      .toDouble()
+                      .clamp(15.0, 180.0),
+                  min: 15,
+                  max: 180,
+                  divisions: 33,
+                  label: '${_idleConv.sessionTimeoutSeconds}s',
+                  onChanged: (v) => _updateIdleConv(_idleConv
+                      .copyWith(sessionTimeoutSeconds: v.round())),
+                ),
+              ),
+              SizedBox(
+                width: 56,
+                child: Text(
+                  '${_idleConv.sessionTimeoutSeconds}s',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                      fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: Text(
+            'Closes automatically after this much silence, or when '
+            'you say "thanks", "goodbye", "stop listening", etc.',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppColors.textTertiary,
+              height: 1.4,
+            ),
+          ),
+        ),
+      ],
+    ];
+  }
+
+  /// Tappable "ADVANCED" disclosure header that toggles
+  /// [_sttAdvancedExpanded]. Mirrors the look of the existing all-caps
+  /// section labels (`STT PROVIDER`, etc.) so it blends in but uses an
+  /// InkWell + chevron to telegraph that it's interactive. The hint to
+  /// the right summarizes what's tucked away inside, with an accent
+  /// pill when wake-word listening is on so the state is visible
+  /// without expanding.
+  Widget _buildSttAdvancedHeader() {
+    return InkWell(
+      onTap: () =>
+          setState(() => _sttAdvancedExpanded = !_sttAdvancedExpanded),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+        child: Row(
+          children: [
+            Text(
+              'ADVANCED',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textTertiary,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(width: 6),
+            _infoIcon(
+              'Power-user controls. Turn detection decides when you\'ve '
+              'finished talking; the noise gate filters room ambient '
+              'and unconfident transcripts; idle conversation lets you '
+              'wake the agent without a call. Defaults are tuned for '
+              'most setups — only touch these if something is off.',
+            ),
+            const SizedBox(width: 6),
+            Icon(
+              _sttAdvancedExpanded
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: AppColors.textTertiary,
+            ),
+            const Spacer(),
+            if (!_sttAdvancedExpanded)
+              Text(
+                _idleConv.enabled
+                    ? 'Turn detection · noise gate · wake word: on'
+                    : 'Turn detection · noise gate · idle conversation',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: _idleConv.enabled
+                      ? AppColors.accent
+                      : AppColors.textTertiary,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildVoiceSelector() {

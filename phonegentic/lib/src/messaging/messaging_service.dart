@@ -687,7 +687,54 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
   // Incoming handler
   // ---------------------------------------------------------------------------
 
+  /// Provider IDs that are mid-flight through `_onIncomingMessage`.
+  ///
+  /// The same Telnyx `message.received` event can be delivered up to three
+  /// times in rapid succession (WebSocket relay → local webhook listener →
+  /// MDR poll), and the persist-side dedupe in [_persistMessage] only kicks
+  /// in *after* the row is committed. Without an in-memory short-circuit,
+  /// two of those deliveries can race past the DB check, both persist (or
+  /// the second one collides with a UNIQUE constraint), and — critically —
+  /// both fan out to `_inboundController`, which makes the agent panel show
+  /// the same SMS twice and causes the LLM to react to the same text twice.
+  /// Tracking in-flight IDs here closes that window.
+  final Set<String> _inflightInboundIds = {};
+
   Future<void> _onIncomingMessage(SmsMessage msg) async {
+    // Inbound dedupe: if this exact provider+id pair was just seen on a
+    // sibling delivery channel, drop the duplicate before we touch the DB,
+    // notify listeners, or fan out to `_inboundController`. The first
+    // delivery wins.
+    //
+    // We claim the in-flight slot *synchronously*, before any await, so
+    // that two near-simultaneous deliveries (e.g. WS and webhook firing
+    // within the same micro-task tick) can't both see an empty set, both
+    // pass the DB check, and both fan out. The loser hits the `contains`
+    // branch and returns immediately.
+    if (msg.direction == SmsDirection.inbound && msg.providerId != null) {
+      final dedupKey = '${msg.providerType}:${msg.providerId}';
+      if (_inflightInboundIds.contains(dedupKey)) {
+        debugPrint('[MessagingService] Inbound duplicate suppressed '
+            '(in-flight): $dedupKey');
+        return;
+      }
+      _inflightInboundIds.add(dedupKey);
+      // Also short-circuit if it's already on disk from a previous run /
+      // earlier delivery cycle — `_persistMessage` would skip the insert
+      // anyway, but we don't want the inbound stream to re-fire, which is
+      // what was producing the duplicate Lee bubble in the agent panel.
+      // (We hold the in-flight slot across this await so a sibling delivery
+      // arriving mid-check still sees the guard.)
+      final existing = await CallHistoryDb.getSmsMessageByProviderId(
+          msg.providerId!, msg.providerType);
+      if (existing != null) {
+        debugPrint('[MessagingService] Inbound duplicate suppressed '
+            '(already persisted): $dedupKey');
+        _inflightInboundIds.remove(dedupKey);
+        return;
+      }
+    }
+
     final shouldMarkRead =
         _windowFocused && _isOpen && _selectedRemotePhone == msg.remotePhone;
     SmsMessage toStore = shouldMarkRead ? msg.copyWith(isRead: true) : msg;
@@ -735,15 +782,29 @@ class MessagingService extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    await _persistMessage(toStore);
-    await _refreshConversations();
-    if (_selectedRemotePhone == msg.remotePhone) {
-      await _loadMessages(msg.remotePhone);
+    try {
+      await _persistMessage(toStore);
+      await _refreshConversations();
+      if (_selectedRemotePhone == msg.remotePhone) {
+        await _loadMessages(msg.remotePhone);
+      }
+      if (msg.direction == SmsDirection.inbound) {
+        _inboundController.add(msg);
+      }
+      notifyListeners();
+    } finally {
+      // Hold the in-flight guard for a moment after persistence so a
+      // sibling channel that woke up a few hundred ms later still finds
+      // the row in the DB and bails out at the early `getSmsMessageByProviderId`
+      // check. Without this micro-delay the second delivery can race
+      // ahead of the first transaction commit on slow hosts.
+      if (msg.direction == SmsDirection.inbound && msg.providerId != null) {
+        final dedupKey = '${msg.providerType}:${msg.providerId}';
+        Timer(const Duration(seconds: 5), () {
+          _inflightInboundIds.remove(dedupKey);
+        });
+      }
     }
-    if (msg.direction == SmsDirection.inbound) {
-      _inboundController.add(msg);
-    }
-    notifyListeners();
   }
 
   // ---------------------------------------------------------------------------

@@ -703,6 +703,14 @@ class _AgentHeaderState extends State<_AgentHeader> {
     if (_showSpeaking) return 'Speaking';
     if (agent.thinking) return 'Thinking...';
     if (agent.muted) return 'Not Listening...';
+    // Idle conversation: reflect the wake-word-vs-active-session
+    // distinction in the status label so the host can tell at a glance
+    // whether the agent is paying attention.
+    if (agent.idleSessionActive) return 'In conversation';
+    if (agent.idleListeningForWakeWord) {
+      final hint = agent.wakePhraseSummary;
+      return hint == null ? 'Idle (say wake word)' : 'Say "$hint"';
+    }
     return 'Listening';
   }
 
@@ -710,6 +718,8 @@ class _AgentHeaderState extends State<_AgentHeader> {
     if (!agent.active) return AppColors.textTertiary;
     if (_showSpeaking) return AppColors.green;
     if (agent.thinking) return AppColors.burntAmber;
+    if (agent.idleSessionActive) return AppColors.accent;
+    if (agent.idleListeningForWakeWord) return AppColors.textSecondary;
     return AppColors.accent;
   }
 

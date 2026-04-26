@@ -431,6 +431,72 @@ class VadConfig {
   }
 }
 
+/// "Always-on" hands-free mode: the agent listens for a wake phrase even
+/// when no call is active. Once triggered, the agent enters a multi-turn
+/// conversation session that stays open until either an idle timeout
+/// elapses or the user says a close phrase ("thanks", "goodbye", ...).
+///
+/// Speech in idle mode is captured by the same on-device WhisperKit
+/// pipeline used in calls; the only thing this config gates is whether
+/// transcripts coming through `_onTranscript` while `_callPhase == idle`
+/// are *routed* to the LLM (and answered through Pocket TTS) vs. dropped.
+///
+/// Wake-phrase aliases are derived dynamically at runtime from the active
+/// persona's name (see `AgentBootContext.name`) plus the universal
+/// fallback "agent" / "hey agent". That keeps personalisation free —
+/// rename a persona to "Kara" and the wake phrase follows automatically.
+class IdleConversationConfig {
+  /// Master switch for the whole feature. When false the agent behaves
+  /// exactly like before (Whisper paused at idle, audio gated).
+  ///
+  /// When true, WhisperKit stays warm whenever the app is idle so the
+  /// wake phrase can be heard. We don't have a dedicated low-power wake
+  /// engine yet, so "listen for wake word" and "save CPU between sessions"
+  /// are mutually exclusive — we deliberately choose reliability.
+  final bool enabled;
+
+  /// How long the conversation session stays open after the last user or
+  /// agent utterance. Reset on every transcript / TTS turn. When this
+  /// elapses the session closes silently and we go back to wake-word mode.
+  final int sessionTimeoutSeconds;
+
+  /// Whether the agent should speak its replies through Pocket TTS while
+  /// in an idle session. When false the response only appears in the
+  /// chat panel — useful as a desktop dictation/assistant surface.
+  final bool speakInIdle;
+
+  /// Whether to also accept a generic "agent" / "hey agent" wake phrase
+  /// in addition to the persona's name. Off → strict, persona-name only.
+  final bool acceptGenericAlias;
+
+  const IdleConversationConfig({
+    this.enabled = false,
+    this.sessionTimeoutSeconds = 60,
+    this.speakInIdle = true,
+    this.acceptGenericAlias = true,
+  });
+
+  IdleConversationConfig copyWith({
+    bool? enabled,
+    int? sessionTimeoutSeconds,
+    bool? speakInIdle,
+    bool? acceptGenericAlias,
+  }) {
+    return IdleConversationConfig(
+      enabled: enabled ?? this.enabled,
+      sessionTimeoutSeconds:
+          sessionTimeoutSeconds ?? this.sessionTimeoutSeconds,
+      speakInIdle: speakInIdle ?? this.speakInIdle,
+      acceptGenericAlias: acceptGenericAlias ?? this.acceptGenericAlias,
+    );
+  }
+
+  @override
+  String toString() =>
+      'IdleConversationConfig(enabled=$enabled, window=${sessionTimeoutSeconds}s, '
+      'speakInIdle=$speakInIdle, acceptGenericAlias=$acceptGenericAlias)';
+}
+
 class CallRecordingConfig {
   final bool autoRecord;
 
@@ -733,6 +799,34 @@ class AgentConfigService {
         config.realtimeSilenceDurationMs);
     await prefs.setInt('${_prefix}vad_realtime_prefix_ms',
         config.realtimePrefixPaddingMs);
+  }
+
+  // -- Idle conversation (wake-word + session) -------------------------------
+
+  static Future<IdleConversationConfig> loadIdleConversationConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    return IdleConversationConfig(
+      enabled: prefs.getBool('${_prefix}idle_conv_enabled') ?? false,
+      sessionTimeoutSeconds:
+          prefs.getInt('${_prefix}idle_conv_session_timeout_s') ?? 60,
+      speakInIdle: prefs.getBool('${_prefix}idle_conv_speak') ?? true,
+      acceptGenericAlias:
+          prefs.getBool('${_prefix}idle_conv_accept_generic') ?? true,
+    );
+  }
+
+  static Future<void> saveIdleConversationConfig(
+      IdleConversationConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('${_prefix}idle_conv_enabled', config.enabled);
+    await prefs.setInt('${_prefix}idle_conv_session_timeout_s',
+        config.sessionTimeoutSeconds);
+    await prefs.setBool('${_prefix}idle_conv_speak', config.speakInIdle);
+    await prefs.setBool(
+        '${_prefix}idle_conv_accept_generic', config.acceptGenericAlias);
+    // Legacy 'idle_conv_pause_between' key is intentionally ignored — the
+    // option was removed because pausing Whisper between sessions makes
+    // the wake word undetectable.
   }
 
   // -- Comfort noise config ---------------------------------------------------

@@ -357,11 +357,48 @@ class AgentService extends ChangeNotifier {
   /// Initial value is the same defaults `VadConfig()` would give us, so
   /// reads before [_init] runs still produce sane output.
   VadConfig _vadConfig = const VadConfig();
+
+  /// Idle-mode wake-word + conversation-session config. Default disabled,
+  /// loaded from prefs in [_init], live-updated via [applyIdleConversationConfig].
+  IdleConversationConfig _idleConfig = const IdleConversationConfig();
+
+  /// True iff a wake phrase has been detected and we're inside the open
+  /// conversation window. Reset on session timeout, close phrase, or
+  /// when a real call starts.
+  bool _idleSessionActive = false;
+
+  /// Wall-clock when the session was last "touched" (transcript, agent
+  /// reply). The timeout fires `_idleConfig.sessionTimeoutSeconds` after
+  /// this. Driven by [_resetIdleSessionTimer].
+  DateTime? _idleSessionLastActivity;
+
+  /// One-shot timer that ends the idle session when no activity arrives
+  /// inside the configured window. Reset on each user / agent turn.
+  Timer? _idleSessionTimer;
+
+  /// Wall-clock when we last shipped an idle-session user transcript to the
+  /// LLM. Used by the in-flight follow-up gate to suppress impatient repeats
+  /// ("Can you hear me?" → 1s later → "Hello?") that Whisper would otherwise
+  /// turn into two LLM calls and two near-duplicate TTS replies. Cleared on
+  /// response final, idle session close, and barge-in.
+  DateTime? _idleLastDispatchAt;
+
   WhisperKitSttService? _whisperKitStt;
   StreamSubscription<Uint8List>? _localAudioSub;
   StreamSubscription<ResponseTextEvent>? _textAgentSub;
   StreamSubscription<ToolCallRequest>? _textAgentToolSub;
   StreamSubscription<SmsMessage>? _inboundSmsSub;
+
+  /// When true, the next LLM response should appear in the chat panel but
+  /// must NOT be vocalized. Set right before we dispatch a system event that
+  /// has no live audience for voice (currently: inbound SMS notifications).
+  /// Without this gate, when Patrick is mid-voice-conversation with Alice
+  /// about flights and Lee texts back "book it, using Patrick's card",
+  /// Alice's reply to *Lee's text* gets spoken into the desktop speakers as
+  /// if she were addressing Lee — which confuses the conversation. The reply
+  /// is still displayed in the chat panel and Patrick can ask Alice about it
+  /// out loud if he wants. Cleared as soon as the final response arrives.
+  bool _suppressNextTtsTurn = false;
 
   TextAgentService? _textAgent;
   TextAgentConfig? _textAgentConfig;
@@ -626,6 +663,40 @@ class AgentService extends ChangeNotifier {
         _toolCallFillers[_toolFillerCursor % _toolCallFillers.length];
     _toolFillerCursor++;
     return filler;
+  }
+
+  /// Wake-only acknowledgments — short, conversational replies played
+  /// when the host says just "Alice" / "Hey Alice" with no follow-up
+  /// question. Without an audible cue the host has no way to tell the
+  /// session opened, so they end up either repeating the wake word or
+  /// thinking the agent is broken. Templates are intentionally simple
+  /// and varied; the host-name placeholder ({host}) is filled at speak
+  /// time when the manager name is known. Keep these to ≤ 2-3 words so
+  /// they don't step on the host's actual question if they speak right
+  /// after.
+  static const _wakeAckTemplates = <String>[
+    'Yes?',
+    "Yes, {host}?",
+    "What's up, {host}?",
+    'Hi {host}.',
+    'Go ahead.',
+    "Listening, {host}.",
+  ];
+  int _wakeAckCursor = 0;
+
+  String _nextWakeAck(String hostName) {
+    final template =
+        _wakeAckTemplates[_wakeAckCursor % _wakeAckTemplates.length];
+    _wakeAckCursor++;
+    if (hostName.isEmpty) {
+      // Strip the placeholder cleanly when we don't know the host name —
+      // "Yes, {host}?" → "Yes?", "Hi {host}." → "Hi.".
+      return template
+          .replaceAll(RegExp(r',?\s*\{host\}'), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+    }
+    return template.replaceAll('{host}', hostName);
   }
 
   /// Stuck-detection escalation infrastructure. When the agent's reply
@@ -1036,6 +1107,8 @@ class AgentService extends ChangeNotifier {
 
       _sttConfig = await AgentConfigService.loadSttConfig();
       _vadConfig = await AgentConfigService.loadVadConfig();
+      _idleConfig = await AgentConfigService.loadIdleConversationConfig();
+      debugPrint('[AgentService] IdleConversation config loaded: $_idleConfig');
       // Push VAD straight into the realtime service so its first
       // session.update carries the user's profile rather than the
       // legacy defaults.
@@ -1523,8 +1596,11 @@ class AgentService extends ChangeNotifier {
         if (_whisper.ttsSuppressed) return;
         // Don't feed Whisper while idle — the native pause path stops
         // the transcription timer, but guarding here avoids queueing
-        // audio into a paused native buffer.
-        if (_callPhase == CallPhase.idle) return;
+        // audio into a paused native buffer. Exception: when idle
+        // conversation mode is enabled we *want* Whisper running so it
+        // can spot the wake phrase (and stay running through the open
+        // session).
+        if (_callPhase == CallPhase.idle && !_idleListenActive) return;
         _whisperKitStt?.feedAudio(chunk);
       });
 
@@ -1814,6 +1890,12 @@ class AgentService extends ChangeNotifier {
     // so it sits AFTER the cache boundary — only this tail is re-tokenized
     // on each turn instead of the whole prompt.
     final dyn = StringBuffer();
+    // Idle wake-word session override comes FIRST so the LLM sees it
+    // before any of the call-tuned guidance below in this turn's tail.
+    // Only emitted while a session is open; absent state keeps the
+    // dynamic tail byte-identical for normal call traffic.
+    final idleSession = _buildIdleSessionContext();
+    if (idleSession.isNotEmpty) dyn.write(idleSession);
     final calendar = _buildCalendarContext();
     final flight = _buildFlightAwareContext();
     final gmail = _buildGmailContext();
@@ -2232,6 +2314,81 @@ class AgentService extends ChangeNotifier {
         '\n\nNEVER skip the approval step. NEVER conference in the manager '
         'without their explicit YES. If SMS is not configured, post the '
         'request in the chat panel and wait for a response there.');
+
+    return buf.toString();
+  }
+
+  /// Behavioral override block emitted ONLY while a wake-word ("idle
+  /// conversation") session is open. The general system prompt is tuned
+  /// for live phone calls — terse one-sentence replies, "ask the caller
+  /// for their name", "produce zero output during settling", etc. None
+  /// of that fits a desktop wake-word chat with the host. This block
+  /// supersedes those rules for the duration of the session, and gets
+  /// pushed in/out via [updateInstructions] when the session opens or
+  /// closes so the cached prefix stays stable for non-idle traffic.
+  String _buildIdleSessionContext() {
+    if (!_idleSessionActive) return '';
+    final agentName = _bootContext.name?.trim();
+    final hostName = _agentManagerConfig.name.trim();
+    final personaWord =
+        agentName != null && agentName.isNotEmpty ? agentName : 'the agent';
+    final hostWord = hostName.isNotEmpty ? hostName : 'the host';
+    final wakeAliases = <String>[];
+    if (agentName != null && agentName.isNotEmpty) {
+      final base = agentName
+          .replaceAll(RegExp(r'\(.*?\)'), '')
+          .split(RegExp(r'[\s/,–-]'))
+          .firstWhere((s) => s.trim().length >= 3, orElse: () => '')
+          .trim();
+      if (base.isNotEmpty) wakeAliases.add('"$base"');
+    }
+    if (_idleConfig.acceptGenericAlias) wakeAliases.add('"agent"');
+    final wakeStr = wakeAliases.isEmpty
+        ? 'their wake phrase'
+        : wakeAliases.join(' or ');
+
+    final buf = StringBuffer('\n\n## IDLE CONVERSATION MODE — ACTIVE NOW\n');
+    buf.write(
+        '$hostWord is NOT on a phone call. They woke you with $wakeStr from '
+        'their desktop and are having a casual back-and-forth chat with '
+        'you, hands-free. Treat this like a co-worker leaning over to '
+        'talk to you — not like an inbound caller.\n\n');
+    buf.write('### Behavior overrides for this session\n');
+    buf.write(
+        '- The host is **${hostName.isNotEmpty ? hostName : 'Patrick'}** '
+        '(already known). NEVER ask "May I get your first name?", '
+        '"Who am I speaking to?", or any caller-identification question. '
+        'You already know who you\'re talking to.\n');
+    buf.write(
+        '- Reply CONVERSATIONALLY. One short sentence is fine when it '
+        'fits, but you may give a 2–4 sentence answer, a brief '
+        'explanation, or a small list when the question warrants it. '
+        'You are not on a phone call — drop the receptionist tone.\n');
+    buf.write(
+        '- Acknowledge wake-only utterances naturally. If '
+        '$hostWord just says "$personaWord" / "agent" / a near-miss '
+        'like "Allen", treat it as them getting your attention and '
+        'reply with a friendly check-in (e.g. "Hey $hostWord, what\'s '
+        'up?", "Yes $hostWord?"). Do NOT launch into the inbound-call '
+        'greeting script.\n');
+    buf.write(
+        '- Use the host\'s name lightly — once at the start of a turn '
+        'is plenty. Don\'t append ", $hostWord" to every short reply.\n');
+    buf.write(
+        '- Tools work normally: reminders, messages, search, calendar, '
+        'flights, calls, etc. If the host asks you to DO something, '
+        'just do it.\n');
+    buf.write(
+        '- Stay quiet between turns. The session auto-closes after a '
+        'silence window — you don\'t need to say goodbye, prompt for '
+        'more questions, or ask "anything else?".\n');
+    buf.write(
+        '- If the host says "thanks", "stop listening", "that\'s all", '
+        '"goodbye", etc., the session ends silently — no farewell.\n');
+    buf.write(
+        '- The "produce zero output during Initiating/Ringing/Settling" '
+        'and "never speak unless [CALL_STATE: Connected]" rules do NOT '
+        'apply here. There is no call. Speak freely.\n');
 
     return buf.toString();
   }
@@ -3980,6 +4137,10 @@ class AgentService extends ChangeNotifier {
     _whisper.stopResponseAudio();
     _whisper.clearTTSQueue();
     _whisper.isTtsPlaying = false;
+    _idleLastDispatchAt = null;
+    // The cancelled response may have been the SMS-context turn we marked
+    // as silent; clear the flag so it can't leak into the next turn.
+    _suppressNextTtsTurn = false;
 
     _ttsGenEndTimer?.cancel();
     _playbackEndDebounce?.cancel();
@@ -4033,6 +4194,10 @@ class AgentService extends ChangeNotifier {
     _whisper.stopResponseAudio();
     _whisper.clearTTSQueue();
     _whisper.isTtsPlaying = false;
+    _idleLastDispatchAt = null;
+    // See `_vadInterruptStop` — drop the SMS-silent flag if a barge-in
+    // killed the response before it finalised.
+    _suppressNextTtsTurn = false;
 
     // 4. Cancel all post-speak / playback timers.
     _ttsGenEndTimer?.cancel();
@@ -4252,7 +4417,11 @@ class AgentService extends ChangeNotifier {
   /// Core transcript processing shared by the live path and the post-speak
   /// buffer flush.
   void _processTranscript(TranscriptionEvent event) async {
-    final text = event.text.trim();
+    // `text` is the working copy used throughout this method. It can be
+    // rewritten by the idle-conversation wake-word gate below to strip
+    // the wake phrase ("Alice, what time is it?" → "what time is it?"),
+    // so it intentionally isn't final.
+    var text = event.text.trim();
     if (text.isEmpty) return;
 
     // Real human speech — cancel any pending connected greeting so the
@@ -4289,6 +4458,74 @@ class AgentService extends ChangeNotifier {
     }
     _lastTranscriptText = text;
     _lastTranscriptTime = now;
+
+    // Idle conversation (wake-word) gate. Only applies when:
+    //   • The feature is enabled in settings AND
+    //   • There is no live call (i.e. _callPhase == idle).
+    // When active, this is what filters background chatter ("the user
+    // wasn't talking to me") from genuine wake-and-ask turns. If the
+    // gate handles the transcript fully (no wake word, or close
+    // phrase, etc.) it returns true and we stop processing here.
+    // If a wake phrase was detected with a follow-up question
+    // ("Alice, what time is it?"), the gate stashes the trimmed
+    // remainder in `_idleSessionPendingRemainder` and we continue
+    // with the body so the rest of the pipeline (loop-breaker, etc.)
+    // still runs but on the post-wake text.
+    if (_handleIdleConversationTranscript(text)) {
+      return;
+    }
+    final pendingRemainder = _idleSessionPendingRemainder;
+    if (pendingRemainder != null && pendingRemainder.isNotEmpty) {
+      _idleSessionPendingRemainder = null;
+      event = TranscriptionEvent(
+        text: pendingRemainder,
+        isFinal: event.isFinal,
+        itemId: event.itemId,
+      );
+      text = pendingRemainder;
+    }
+
+    // Idle-session in-flight follow-up gate.
+    //
+    // When Patrick says "Can you hear me?" and (impatiently) follows up
+    // 1s later with "Hello?" before TTS has even started, Whisper hands
+    // us two distinct transcripts. Without this gate they each fire an
+    // independent LLM call, producing two near-duplicate replies
+    // ("Yes, Patrick, I can hear you." / "Yes, I'm here, Patrick.").
+    //
+    // Drop short (≤6 words) follow-ups that arrive while the previous
+    // turn is still mid-response. The reliable signals are:
+    //   • `_speaking` / `_whisper.isTtsPlaying` — agent is audibly
+    //     producing the previous reply right now.
+    //   • `_idleLastDispatchAt` < 3s ago — we shipped to LLM but the
+    //     reply / TTS hasn't landed yet.
+    // We deliberately do NOT consult `_thinking` here: `_onTranscript`
+    // sets that flag to true for *this* turn before calling us, so it's
+    // already true by the time the gate runs and would self-suppress
+    // every wake-phrase opener. Long utterances (7+ words) always fall
+    // through so a genuine new question lands. Reset the session
+    // activity clock so the silence window doesn't expire while we
+    // absorb the noise.
+    if (_idleSessionActive) {
+      final dispatchAge = _idleLastDispatchAt == null
+          ? null
+          : now.difference(_idleLastDispatchAt!).inMilliseconds;
+      final responsePending = _speaking ||
+          _whisper.isTtsPlaying ||
+          (dispatchAge != null && dispatchAge < 3000);
+      if (responsePending) {
+        final wcount =
+            text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+        if (wcount <= 6) {
+          debugPrint(
+              '[AgentService] Idle follow-up dropped (mid-response, '
+              '$wcount words, dispatchAge=${dispatchAge}ms, '
+              'speaking=$_speaking tts=${_whisper.isTtsPlaying}): "$text"');
+          _resetIdleSessionTimer();
+          return;
+        }
+      }
+    }
 
     // Reset the consecutive-agent-response counter when we're confident
     // this is genuine user speech, not TTS echo picked up by the mic.
@@ -4592,6 +4829,11 @@ class AgentService extends ChangeNotifier {
     // configured manager (the Patrick-calling-himself case). Both must
     // never be answered with silence.
     final bool turnIsHost = !isRemote || isCurrentRemoteAgentManager;
+    // Record the dispatch time so the idle in-flight follow-up gate can
+    // suppress impatient repeats while this turn is still in the LLM.
+    if (_idleSessionActive) {
+      _idleLastDispatchAt = DateTime.now();
+    }
     _textAgent?.addTranscript(label, text, isHost: turnIsHost);
 
     // If the previous agent reply armed an escalation, this user turn is
@@ -4818,6 +5060,16 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
+      // Agent just finished a turn — keep an active idle conversation
+      // session open across the back-and-forth. Without this, a long
+      // agent answer could chew through most of the silence window
+      // before the user even gets to reply.
+      if (_idleSessionActive) _resetIdleSessionTimer();
+      // The current turn produced a real reply — clear the in-flight
+      // dispatch marker so the next genuine user utterance isn't
+      // mistakenly treated as an impatient repeat.
+      _idleLastDispatchAt = null;
+
       // If a genuine user transcript reached the LLM since the previous
       // final response, this reply is part of an actual back-and-forth —
       // reset the loop-breaker counter. Otherwise increment.
@@ -4863,9 +5115,23 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
+      // Honour the one-shot SMS-context TTS gate even on the
+      // single-final-event path (where the streaming-delta gate above never
+      // ran). We still want the bubble to render — just no audio.
+      final smsTurnSilent = _suppressNextTtsTurn;
+      if (smsTurnSilent) {
+        debugPrint('[AgentService] SMS-context turn — skipping TTS, '
+            'rendering chat bubble only');
+        _suppressNextTtsTurn = false;
+      }
+
       // If the response arrived as a single final event (no prior streaming
       // deltas), TTS was never started. Start → send → end in one shot.
-      if (!_ttsMuted && !_muted && _hasTts && _streamingMessageId == null) {
+      if (!smsTurnSilent &&
+          !_ttsMuted &&
+          !_muted &&
+          _hasTts &&
+          _streamingMessageId == null) {
         final ttsText = _flattenMarkdownForTtsDelta(
             _stripBracketsForTts(
                 VocalExpressionRegistry.stripForDisplay(event.text)));
@@ -4876,12 +5142,12 @@ class AgentService extends ChangeNotifier {
           _activeTtsSendText(ttsText);
           _agentSpokeThisTurn = true;
         }
-      } else if (event.text.isNotEmpty) {
+      } else if (event.text.isNotEmpty && !smsTurnSilent) {
         debugPrint('[AgentService] Final-TTS SKIPPED: '
             'ttsMuted=$_ttsMuted muted=$_muted hasTts=$_hasTts '
             'streamingId=$_streamingMessageId');
       }
-      if (!_ttsMuted && !_muted) _activeTtsEndGeneration();
+      if (!_ttsMuted && !_muted && !smsTurnSilent) _activeTtsEndGeneration();
       _vocalExprState = StreamingExpressionState();
 
       if (_streamingMessageId != null) {
@@ -4953,12 +5219,22 @@ class AgentService extends ChangeNotifier {
     // Suppress TTS during pre-connect and settling phases so the agent
     // doesn't talk over auto-attendants / IVR greetings.  Also suppress
     // when a dial is pending — SIP events haven't arrived yet but the
-    // agent must not speak until the call connects.
+    // agent must not speak until the call connects. Finally, when the
+    // user has the idle-conversation feature on but turned off "speak
+    // replies through speakers", we keep the chat panel updates flowing
+    // but mute the audio side of the response.
+    final idleSessionMutedReply = _idleSessionActive && !_idleConfig.speakInIdle;
+    // Per-turn TTS gate: an inbound SMS notification was just dispatched and
+    // the resulting LLM reply must not be spoken aloud — see field doc on
+    // `_suppressNextTtsTurn`. We clear the flag in the `event.isFinal` branch
+    // above so the gate applies only to this single turn.
     final suppressTts = _callDialPending ||
         ((_callPhase.isPreConnect ||
                 _callPhase == CallPhase.answered ||
                 _callPhase == CallPhase.settling) &&
-            _callPhase != CallPhase.idle);
+            _callPhase != CallPhase.idle) ||
+        idleSessionMutedReply ||
+        _suppressNextTtsTurn;
 
     /// Only defer when this pipeline drives speech via Kokoro/ElevenLabs
     /// (`_ttsAudioSub`). Unified OpenAI audio does not use that stream.
@@ -5261,6 +5537,8 @@ class AgentService extends ChangeNotifier {
     if (_instantToolNames.contains(toolName)) return;
     if (_ttsMuted || _muted) return;
     if (!_hasTts) return;
+    // Idle-mode "text only" reply preference also silences fillers.
+    if (_idleSessionActive && !_idleConfig.speakInIdle) return;
     // Don't speak fillers during pre-connect / settling — same gate the
     // streaming TTS path uses to avoid talking over IVRs.
     final suppressTts = _callDialPending ||
@@ -5281,6 +5559,26 @@ class AgentService extends ChangeNotifier {
     _agentSpokeThisTurn = true;
   }
 
+  /// Speak a short canned acknowledgment right after the wake phrase
+  /// fires with no follow-up content ("Hey Alice." with no question).
+  /// Without this, the agent silently opens the session and waits for
+  /// the user's real question — but the user has no audible feedback
+  /// that the wake word landed and tends to repeat it or assume the
+  /// agent is broken. Mirrors how Alexa / Siri chirp on activation.
+  void _speakIdleWakeAck() {
+    if (_ttsMuted || _muted) return;
+    if (!_hasTts) return;
+    if (!_idleConfig.speakInIdle) return;
+    if (_consecutiveAgentResponses >= _maxConsecutiveAgentResponses) return;
+
+    final hostName = _agentManagerConfig.name.trim();
+    final ack = _nextWakeAck(hostName);
+    debugPrint('[AgentService] Wake ack: "$ack"');
+    _activeTtsStartGeneration();
+    _activeTtsSendText(ack);
+    _activeTtsEndGeneration();
+  }
+
   /// Speak the "I'm thinking harder, hang on" filler immediately before
   /// an escalated (slower fallback-model) LLM request fires. Skipped when
   /// TTS is muted, the call is in pre-connect/settling, or the loop-
@@ -5288,6 +5586,7 @@ class AgentService extends ChangeNotifier {
   void _maybeSpeakEscalationFiller() {
     if (_ttsMuted || _muted) return;
     if (!_hasTts) return;
+    if (_idleSessionActive && !_idleConfig.speakInIdle) return;
     final suppressTts = _callDialPending ||
         ((_callPhase.isPreConnect ||
                 _callPhase == CallPhase.answered ||
@@ -5314,6 +5613,12 @@ class AgentService extends ChangeNotifier {
     final cfg = _textAgentConfig;
     if (cfg == null) return;
     if (!cfg.stuckEscalationEnabled) return;
+    // Don't second-guess wake-word session replies. Casual desktop chat
+    // produces lots of legitimately short turns ("Hi, Patrick.", "Yes.",
+    // "Pretty good.") which the call-tuned stuck heuristic interprets
+    // as passive/stalled. Escalating to the fallback model in idle adds
+    // latency and cost for no benefit.
+    if (_idleSessionActive) return;
 
     _stuckTracker.onAgentTurn(
       text: agentText,
@@ -6054,11 +6359,25 @@ class AgentService extends ChangeNotifier {
           'actionable verb.');
     } else {
       buf.write(
-          'SYSTEM EVENT — New inbound SMS received on the manager\'s phone '
-          'from $senderLabel: "$preview" — This text was sent to the '
-          'manager (NOT from the manager). Use send_sms to reply to '
-          '${msg.from} on the manager\'s behalf if appropriate. Do not '
-          'place outbound calls on behalf of a third-party SMS without '
+          'SYSTEM EVENT — New inbound TEXT MESSAGE received on the manager\'s '
+          'phone from $senderLabel: "$preview"\n'
+          '\n'
+          'IMPORTANT: This is a written SMS from $senderLabel TO THE MANAGER. '
+          'You are NOT in a phone call with $senderLabel and they cannot hear '
+          'you. Do NOT speak a reply addressed to $senderLabel — anything you '
+          'say here goes to the manager only.\n'
+          '\n'
+          'Choose ONE of:\n'
+          '  • If a reply to the SMS is appropriate, use the send_sms tool '
+          'to text $senderLabel back on the manager\'s behalf. Compose the '
+          'message body in the third person (you are writing AS the manager\'s '
+          'assistant, not as $senderLabel\'s caller).\n'
+          '  • If the manager needs to know about it, write a short note '
+          'addressed TO THE MANAGER (e.g. "$senderLabel just texted: …") — '
+          'never write as if you are talking to $senderLabel directly.\n'
+          '  • If no action is required, return an empty response.\n'
+          '\n'
+          'Do not place outbound calls on behalf of a third-party SMS without '
           'manager confirmation.');
     }
 
@@ -6069,6 +6388,15 @@ class AgentService extends ChangeNotifier {
     // self-talk accounting from an earlier call.
     _consecutiveAgentResponses = 0;
     _userInputSinceLastFinal = true;
+
+    // Inbound SMS has no live voice audience — even if the manager is
+    // mid-idle-conversation about something else, we don't want Alice to
+    // suddenly start speaking AT a third party who can't hear her. The
+    // panel still gets a chat bubble; the manager can ask Alice about it
+    // out loud if they want a verbal summary. Manager-from-themselves SMS
+    // is also silent: they texted in (not called), so the response should
+    // be a tool action (send_sms / make_call / etc.) not a verbal reply.
+    _suppressNextTtsTurn = true;
 
     if (_textAgent != null) {
       _textAgent!.sendUserMessage(contextLine);
@@ -10680,6 +11008,14 @@ class AgentService extends ChangeNotifier {
     // Auto-mute/unmute based on policy
     _applyMutePolicy(phase);
 
+    // A real call took the floor — collapse any open idle conversation
+    // session so the call audio doesn't bleed into the wake-word
+    // pipeline (and the call-end teardown can re-pause Whisper cleanly
+    // without an "active" flag in the way).
+    if (phase != CallPhase.idle && _idleSessionActive) {
+      _endIdleSession(reason: 'call started: ${phase.name}');
+    }
+
     // Refresh text agent instructions when call state changes so that
     // context like agent-manager elevation is present during the call.
     // We must rebuild on `settling` and `connected` too — that's when
@@ -10996,13 +11332,471 @@ class AgentService extends ChangeNotifier {
   /// alive is required for always-listening features like wakeword; what
   /// we stop is the inference loop that, when fed silence, generates
   /// hallucinated transcripts and log storms.
+  ///
+  /// When idle-conversation wake-word mode is enabled the requested
+  /// `paused=true` (i.e. "go idle, stop transcribing") is overridden so
+  /// Whisper stays warm and can spot the next wake phrase. We don't have
+  /// a separate low-power wake engine, so reliable wake-word detection
+  /// is mutually exclusive with pausing inference between sessions.
   void _applyIdleAudioProcessing({required bool paused}) {
+    final effective = paused && !_idleConfig.enabled;
     try {
-      _whisper.setProcessingPaused(paused);
+      _whisper.setProcessingPaused(effective);
+      debugPrint(
+          '[AgentService] Idle audio processing → ${effective ? "PAUSED" : "ACTIVE"} '
+          '(req=${paused ? "pause" : "resume"}, wakeWord=${_idleConfig.enabled})');
     } catch (e) {
-      debugPrint('[AgentService] setProcessingPaused($paused) failed: $e');
+      debugPrint(
+          '[AgentService] setProcessingPaused($effective) failed: $e');
     }
   }
+
+  // ───────────────────── Idle conversation (wake word) ─────────────────────
+  //
+  // When `IdleConversationConfig.enabled` is on, the agent stays attentive
+  // even outside of calls. The flow is:
+  //
+  //  • Wake word ("Alice", "hey Alice", "agent", "hey agent") → open a
+  //    session, route the *remainder* of the utterance to the LLM.
+  //  • Subsequent transcripts inside the session are routed normally,
+  //    each one resetting a rolling silence timer.
+  //  • The session closes on (a) silence timeout, (b) a close phrase
+  //    ("thanks", "goodbye", ...), or (c) a real call starting.
+  //
+  // None of this changes the in-call pipeline. It only gates whether
+  // idle-phase transcripts reach `TextAgentService.addTranscript()`.
+
+  /// True whenever the audio listener should keep feeding chunks to
+  /// WhisperKit even though `_callPhase == idle` — i.e. wake-word mode is
+  /// enabled (either listening for the wake phrase or in an open session).
+  bool get _idleListenActive => _idleConfig.enabled;
+
+  /// Public read-only access for UI / settings.
+  IdleConversationConfig get idleConfig => _idleConfig;
+  bool get idleSessionActive => _idleSessionActive;
+
+  /// True when the wake-word feature is enabled but no session is open.
+  /// The agent panel uses this to render a subtler "Hey Alice…" hint.
+  bool get idleListeningForWakeWord =>
+      _idleConfig.enabled && !_idleSessionActive && _callPhase == CallPhase.idle;
+
+  /// Comma-separated list of active wake aliases for display purposes
+  /// (e.g. "Alice, hey Alice, agent"). Returns null when wake-word mode
+  /// is off or nothing resolves.
+  String? get wakePhraseSummary {
+    if (!_idleConfig.enabled) return null;
+    final names = <String>[];
+    final personaName = _bootContext.name?.trim() ?? '';
+    if (personaName.isNotEmpty) {
+      final base = personaName
+          .replaceAll(RegExp(r'\(.*?\)'), '')
+          .split(RegExp(r'[\s/,–-]'))
+          .firstWhere((s) => s.trim().length >= 3, orElse: () => '')
+          .trim();
+      if (base.isNotEmpty) names.add(base);
+    }
+    if (_idleConfig.acceptGenericAlias) names.add('agent');
+    return names.isEmpty ? null : names.join(' / ');
+  }
+
+  /// Seconds remaining in the open session, or `null` when no session is
+  /// active. Used by the agent panel "Listening…" pill to render a
+  /// countdown.
+  int? get idleSessionSecondsRemaining {
+    if (!_idleSessionActive || _idleSessionLastActivity == null) return null;
+    final elapsed =
+        DateTime.now().difference(_idleSessionLastActivity!).inSeconds;
+    final remaining = _idleConfig.sessionTimeoutSeconds - elapsed;
+    return remaining < 0 ? 0 : remaining;
+  }
+
+  /// Apply a new IdleConversationConfig at runtime. Persists to prefs
+  /// and pushes the side-effects (Whisper pause toggle, session reset
+  /// when disabled) immediately so Settings changes feel live.
+  Future<void> applyIdleConversationConfig(
+      IdleConversationConfig cfg) async {
+    final prev = _idleConfig;
+    _idleConfig = cfg;
+    await AgentConfigService.saveIdleConversationConfig(cfg);
+    debugPrint(
+        '[AgentService] applyIdleConversationConfig → $cfg (was $prev)');
+
+    if (!cfg.enabled && _idleSessionActive) {
+      _endIdleSession(reason: 'config disabled');
+    }
+
+    // Re-run the idle audio gate so the new enabled state takes effect
+    // right now if we're sitting at idle.
+    if (_callPhase == CallPhase.idle) {
+      _applyIdleAudioProcessing(paused: true);
+    }
+
+    if (prev.sessionTimeoutSeconds != cfg.sessionTimeoutSeconds &&
+        _idleSessionActive) {
+      // Re-arm the timer so the new timeout takes effect on the
+      // already-open session.
+      _resetIdleSessionTimer();
+    }
+
+    notifyListeners();
+  }
+
+  /// Resolve the persona's "base" wake token from the configured name.
+  /// Strips parenthetical role tags and stops at the first separator so
+  /// "Alice (sales)" / "Phonegentic AI" both reduce to "Alice" /
+  /// "Phonegentic". Returns the empty string when nothing usable
+  /// resolves.
+  String _resolvePersonaWakeBase() {
+    final personaName = _bootContext.name?.trim() ?? '';
+    if (personaName.isEmpty) return '';
+    return personaName
+        .replaceAll(RegExp(r'\(.*?\)'), '')
+        .split(RegExp(r'[\s/,–-]'))
+        .firstWhere((s) => s.trim().length >= 3, orElse: () => '')
+        .trim();
+  }
+
+  /// Soundex-style phonetic key for one word. Used to fuzzy-match the
+  /// first word of a transcript against the persona name when Whisper
+  /// transcribes it imperfectly ("Alice" → "Alyssa" / "Allis" / "Alex"
+  /// on a faint mic; "Sam" → "Sammy"; etc.). Tight enough that ordinary
+  /// words ("Hi", "Hello", "OK") don't accidentally wake the agent.
+  ///
+  /// Algorithm:
+  ///   1. Lower-case, strip non-letters.
+  ///   2. Keep the first letter (or normalize to 'A' if it's a vowel —
+  ///      Whisper often substitutes vowel-initial names for each other:
+  ///      Alice ↔ Elise, Alex ↔ Olex, etc.).
+  ///   3. Map the remaining consonants to Soundex digits, drop vowels +
+  ///      h/w/y, collapse runs of the same digit.
+  ///   4. Pad to 4 chars total.
+  static String _phoneticKey(String word) {
+    final lower = word.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+    if (lower.isEmpty) return '';
+    final firstRaw = lower[0];
+    final firstLetter = _isVowel(firstRaw) ? 'a' : firstRaw;
+    final buf = StringBuffer(firstLetter);
+    String? lastCode;
+    final firstCodeForDup = _soundexCode(firstRaw);
+    for (var i = 1; i < lower.length && buf.length < 4; i++) {
+      final code = _soundexCode(lower[i]);
+      if (code == null) {
+        // Vowel / h / w / y — acts as a separator that breaks the
+        // duplicate-collapse run.
+        lastCode = null;
+        continue;
+      }
+      // Don't repeat the leading consonant immediately ("Bob" stays B100,
+      // not B100100). Soundex rule.
+      if (i == 1 && code == firstCodeForDup) {
+        lastCode = code;
+        continue;
+      }
+      if (code == lastCode) continue;
+      buf.write(code);
+      lastCode = code;
+    }
+    while (buf.length < 4) buf.write('0');
+    return buf.toString().substring(0, 4);
+  }
+
+  static bool _isVowel(String c) =>
+      c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u';
+
+  static String? _soundexCode(String c) {
+    switch (c) {
+      case 'b':
+      case 'f':
+      case 'p':
+      case 'v':
+        return '1';
+      case 'c':
+      case 'g':
+      case 'j':
+      case 'k':
+      case 'q':
+      case 's':
+      case 'x':
+      case 'z':
+        return '2';
+      case 'd':
+      case 't':
+        return '3';
+      case 'l':
+        return '4';
+      case 'm':
+      case 'n':
+        return '5';
+      case 'r':
+        return '6';
+      default:
+        return null; // a, e, i, o, u, h, w, y
+    }
+  }
+
+  /// Build the wake-phrase regex from the active persona's name plus the
+  /// universal "agent" alias. Returns `null` when nothing usable resolves
+  /// (no persona, generic alias disabled). Handles literal matches —
+  /// near-miss / mis-transcription matching is layered on top via the
+  /// phonetic fallback in [_matchWakePhrase]. Cheap enough to recompute
+  /// on every transcript so renames take effect immediately.
+  RegExp? _buildWakePhraseRegex() {
+    final names = <String>[];
+    final base = _resolvePersonaWakeBase();
+    if (base.isNotEmpty) names.add(base);
+    if (_idleConfig.acceptGenericAlias) names.add('agent');
+    if (names.isEmpty) return null;
+
+    // Common conversational openers we'll tolerate between the start of
+    // the utterance and the wake name. Order doesn't matter — they're
+    // joined into an alternation. Using a non-capturing group with
+    // optional comma / dash so "Hey Alice" / "Hey, Alice" / "Hey — Alice"
+    // all match cleanly. "hey there" is explicitly listed because it's
+    // long and natural; "okay" covers the spelled-out form of "ok".
+    const preambles = <String>[
+      'hey there',
+      'hey',
+      'hi there',
+      'hi',
+      'hello there',
+      'hello',
+      'ok',
+      'okay',
+      'yo',
+      'um',
+    ];
+    final preambleAlt = preambles.map(RegExp.escape).join('|');
+    final nameAlt = names.map(RegExp.escape).join('|');
+
+    // Anchor at the start, optionally swallow one of the preambles plus
+    // a separator (whitespace, comma, dash, colon), then the name, then
+    // the trailing separator that ends the wake phrase.
+    return RegExp(
+      r'^\s*(?:(?:' +
+          preambleAlt +
+          r')[\s,:;.\-—]+)?(?:' +
+          nameAlt +
+          r')(?:\s*[,:;.\-—]\s*|\s+|$)',
+      caseSensitive: false,
+    );
+  }
+
+  /// Cheap mis-transcription tolerance. After the literal regex misses,
+  /// peel off the first word of the transcript and check whether it
+  /// shares a phonetic code with the persona base name. If so, treat
+  /// it as a wake hit and return the remainder. Optional "hey" / "ok"
+  /// preambles are stripped first so "Hey Alyssa, what time is it?"
+  /// still matches the persona "Alice".
+  ///
+  /// Returns the remainder text (possibly empty), or `null` if no
+  /// phonetic match was found.
+  String? _phoneticWakeMatch(String text) {
+    final base = _resolvePersonaWakeBase();
+    if (base.length < 3) return null;
+    final personaKey = _phoneticKey(base);
+    if (personaKey.isEmpty) return null;
+
+    // Tokenize on whitespace, then strip trailing punctuation off each
+    // token *before* the preamble lookup so "Hey, Alice" / "Hello, Alan"
+    // still recognise "hey"/"hello" as openers. Without this, the
+    // commas Whisper inserts make the preamble word fail the set check
+    // and the persona-key compare runs against "Hello," instead of
+    // "Alice", which never matches.
+    final rawTokens = text.trim().split(RegExp(r'\s+'));
+    if (rawTokens.isEmpty) return null;
+
+    // Same set as `_buildWakePhraseRegex`'s preamble list — kept in
+    // sync so a near-miss persona name preceded by a tolerated opener
+    // is recognised whether the literal regex hits or misses.
+    const preambles = {
+      'hey',
+      'hi',
+      'hello',
+      'ok',
+      'okay',
+      'yo',
+      'um',
+      'there', // covers "hey there" / "hi there" / "hello there"
+    };
+
+    String stripWordPunct(String w) =>
+        w.replaceAll(RegExp(r'[^A-Za-z]'), '');
+
+    // Walk forward through up to two preamble tokens ("hey there",
+    // "hello there") so the persona name lands at the cursor.
+    var startIdx = 0;
+    while (startIdx < rawTokens.length - 1 && startIdx < 2) {
+      final token = stripWordPunct(rawTokens[startIdx]).toLowerCase();
+      if (!preambles.contains(token)) break;
+      startIdx++;
+    }
+    if (startIdx >= rawTokens.length) return null;
+
+    final cleaned = stripWordPunct(rawTokens[startIdx]);
+    if (cleaned.length < 3) return null;
+    if (_phoneticKey(cleaned) != personaKey) return null;
+
+    final remainderTokens = rawTokens.sublist(startIdx + 1);
+    final remainder = remainderTokens.join(' ').trim();
+    // Strip a single leading punctuation/separator left over from the
+    // peeled wake word ("Alyssa, hello" → "hello").
+    return remainder.replaceFirst(RegExp(r'^[,:;.\-—]\s*'), '').trim();
+  }
+
+  /// Wake-phrase detection. Returns the post-phrase remainder (possibly
+  /// empty when the user just said the name and stopped) iff the input
+  /// begins with one of the resolved aliases or a near-phonetic variant
+  /// of the persona name. Returns `null` otherwise.
+  String? _matchWakePhrase(String text) {
+    final re = _buildWakePhraseRegex();
+    if (re != null) {
+      final m = re.firstMatch(text);
+      if (m != null) {
+        return text.substring(m.end).trim();
+      }
+    }
+    return _phoneticWakeMatch(text);
+  }
+
+  /// Common conversational closers. The match is intentionally simple —
+  /// short utterances that *only* contain a closing phrase. We don't want
+  /// "thanks for that, also, ..." to drop the session mid-thought.
+  static final RegExp _idleSessionCloseRe = RegExp(
+    r'^\s*(thanks( agent| alice)?|thank you|that\s*\u2019?s?\s*all|that is all|'
+    r'good\s*bye|goodbye|bye|stop listening|never mind|nevermind|'
+    r'go to sleep|sleep|that\s*\u2019?s?\s*it)\s*[.!?]*\s*$',
+    caseSensitive: false,
+  );
+  bool _isIdleSessionClosePhrase(String text) =>
+      _idleSessionCloseRe.hasMatch(text);
+
+  /// Open a fresh idle conversation session. Idempotent — calling this
+  /// while already active just resets the silence timer.
+  void _startIdleSession({required String trigger}) {
+    if (!_idleConfig.enabled) return;
+    final wasActive = _idleSessionActive;
+    _idleSessionActive = true;
+    _idleSessionLastActivity = DateTime.now();
+    if (!wasActive) {
+      debugPrint('[AgentService] Idle session OPEN (trigger=$trigger, '
+          'window=${_idleConfig.sessionTimeoutSeconds}s)');
+      // Push the wake-word behavioral override into the LLM prompt so
+      // this turn (and subsequent turns until session close) get the
+      // desktop-chat persona instead of the phone-call persona. Also
+      // wipe any stuck-detector carryover from prior call-mode turns
+      // so a one-sentence "Hi, Patrick." doesn't immediately escalate.
+      _textAgent?.updateInstructions(_buildTextAgentInstructions());
+      _resetStuckTracking();
+    }
+    _resetIdleSessionTimer();
+    notifyListeners();
+  }
+
+  /// Reset (or initialise) the silence-timeout timer. Called on every
+  /// user transcript and every agent TTS turn that lands inside a
+  /// session, so back-and-forth conversation keeps the window open.
+  void _resetIdleSessionTimer() {
+    _idleSessionLastActivity = DateTime.now();
+    _idleSessionTimer?.cancel();
+    _idleSessionTimer = Timer(
+      Duration(seconds: _idleConfig.sessionTimeoutSeconds),
+      () => _endIdleSession(reason: 'silence timeout'),
+    );
+  }
+
+  /// Close the session. Resets the LLM history so the next wake-word
+  /// starts cleanly. Whisper stays warm because we're still listening
+  /// for the next wake phrase.
+  void _endIdleSession({required String reason}) {
+    if (!_idleSessionActive) return;
+    debugPrint('[AgentService] Idle session CLOSE ($reason)');
+    _idleSessionActive = false;
+    _idleSessionLastActivity = null;
+    _idleSessionTimer?.cancel();
+    _idleSessionTimer = null;
+    _idleLastDispatchAt = null;
+    // Reset conversational scratch so the next wake-word turn starts
+    // fresh — otherwise the prior "what's the time / 7 PM" lingers in
+    // history and the LLM can keep referring back to it days later.
+    _textAgent?.reset();
+    // Pull the wake-word override back out of the system prompt so any
+    // subsequent turn (e.g. an inbound call landing seconds later) gets
+    // the normal call-tuned persona again. Also reset stuck tracking
+    // so idle-mode short replies don't poison the next call session.
+    _textAgent?.updateInstructions(_buildTextAgentInstructions());
+    _resetStuckTracking();
+    notifyListeners();
+  }
+
+  /// Process a final transcript that arrived while we're at idle. Returns
+  /// `true` if this transcript was handled here and the caller should
+  /// stop further processing; `false` if normal routing should continue.
+  ///
+  /// Behaviour:
+  ///   • Session inactive + wake phrase matched → open session, route
+  ///     the remainder (when non-empty) to the LLM, return true.
+  ///   • Session inactive + no wake phrase → drop, return true.
+  ///   • Session active + close phrase → end session, return true.
+  ///   • Session active + any other text → reset timer, return false
+  ///     so the caller continues with normal LLM routing.
+  ///   • Idle conversation feature disabled → return false (legacy
+  ///     behaviour, where idle transcripts could already reach the LLM
+  ///     in split / local-STT modes).
+  bool _handleIdleConversationTranscript(String text) {
+    if (!_idleConfig.enabled) return false;
+    if (_callPhase != CallPhase.idle) return false;
+
+    if (_idleSessionActive) {
+      if (_isIdleSessionClosePhrase(text)) {
+        _endIdleSession(reason: 'close phrase: "$text"');
+        return true;
+      }
+      _resetIdleSessionTimer();
+      return false;
+    }
+
+    final remainder = _matchWakePhrase(text);
+    if (remainder == null) {
+      // Background chatter — not the wake word, ignore. Include the
+      // wake summary in the log so when Whisper mis-transcribes the
+      // wake word (a common failure on a faint mic) it's visible WHY
+      // the agent didn't respond. Otherwise the user sees "ignored"
+      // and can't tell if the issue is recognition or matching.
+      final summary = wakePhraseSummary ?? '(none)';
+      debugPrint(
+          '[AgentService] Idle transcript ignored (no wake phrase, '
+          'expected one of: $summary): "$text"');
+      return true;
+    }
+
+    _startIdleSession(trigger: 'wake phrase');
+    if (remainder.isEmpty) {
+      // User said just "Alice" / "agent" with no follow-up. Don't
+      // dispatch anything yet — wait for their next utterance. The
+      // session timer is already armed by _startIdleSession, so they
+      // have the full window to ask the actual question. Speak a
+      // short ack ("Yeah?", "Yes, Patrick?") so the host has audible
+      // confirmation the wake landed; otherwise they end up repeating
+      // it or assuming the agent is broken.
+      debugPrint(
+          '[AgentService] Wake phrase only, awaiting follow-up question.');
+      _speakIdleWakeAck();
+      return true;
+    }
+
+    // Mutate the event so downstream routing sees just the body of the
+    // request without the "Alice, " prefix. We do this by returning
+    // false and letting the caller use the trimmed text.
+    debugPrint(
+        '[AgentService] Wake phrase matched, routing remainder: "$remainder"');
+    _idleSessionPendingRemainder = remainder;
+    return false;
+  }
+
+  /// One-shot field used to pass the post-wake-word remainder back to
+  /// the calling site without rewriting the whole transcript event
+  /// pipeline. Read-and-clear inside `_processTranscript`.
+  String? _idleSessionPendingRemainder;
 
   /// Subscribe directly to SIP helper callbacks so call-end cleanup runs
   /// regardless of which UI widget is currently mounted. Idempotent.
