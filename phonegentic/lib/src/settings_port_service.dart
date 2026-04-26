@@ -959,9 +959,10 @@ class SettingsPortService {
     final cn = await AgentConfigService.loadComfortNoiseConfig();
     final mgr = await UserConfigService.loadAgentManagerConfig();
 
-    final recordingFilenames = manifest != null
-        ? await manifest.attachDir('audio/recordings', 'recordings')
-        : <String>[];
+    // Call recordings are intentionally NOT bundled into exports. They can
+    // be large (hours of audio) and are tied to call-history metadata that
+    // isn't part of this export anyway. The user's `auto_record` preference
+    // still round-trips so new recordings keep happening on the new device.
     final voiceSampleFilenames = manifest != null
         ? await manifest.attachDir('audio/voice_samples', 'voice_samples')
         : <String>[];
@@ -1004,11 +1005,8 @@ class SettingsPortService {
       },
       'recording': {
         'auto_record': rec.autoRecord,
-        // Filenames whose raw bytes live in `audio/recordings/<filename>`
-        // archive entries. Call-history metadata isn't exported; on import
-        // the WAVs are written back to disk where they can be re-linked if
-        // the user later imports a matching call history database.
-        'filenames': recordingFilenames,
+        // Recording WAVs are deliberately excluded from exports (see
+        // _gatherAgent above). Only the user's preference round-trips.
       },
       'mute_policy': mute.index,
       'comfort_noise': {
@@ -1468,7 +1466,7 @@ class SettingsPortService {
           .values[(t['provider'] as int? ?? 0).clamp(0, TextAgentProvider.values.length - 1)],
       openaiApiKey: t['openai_api_key'] as String? ?? '',
       claudeApiKey: t['claude_api_key'] as String? ?? '',
-      openaiModel: t['openai_model'] as String? ?? 'gpt-4o',
+      openaiModel: t['openai_model'] as String? ?? 'gpt-5.4-mini',
       claudeModel: t['claude_model'] as String? ?? 'claude-sonnet-4-20250514',
       customApiKey: t['custom_api_key'] as String? ?? '',
       customEndpointUrl: t['custom_endpoint_url'] as String? ?? '',
@@ -1500,11 +1498,10 @@ class SettingsPortService {
     await AgentConfigService.saveCallRecordingConfig(
       CallRecordingConfig(autoRecord: rec['auto_record'] as bool? ?? false),
     );
-    // Restore call-recording WAVs from `audio/recordings/*` archive entries
-    // to `{docs}/phonegentic/recordings/`. We don't (re-)link them to call
-    // history rows -- history isn't part of the export -- but the files
-    // exist on disk for the user to play back or for a future call-history
-    // import to attach to.
+    // Newer exports do not include call recordings. Older backups (pre-
+    // exclusion) may still carry `audio/recordings/*` entries; restore them
+    // so legacy archives keep importing cleanly even though we no longer
+    // produce them.
     await _restoreAudioFromArchive(attach, 'audio/recordings', 'recordings');
 
     // Restore voice samples from `audio/voice_samples/*` archive entries.

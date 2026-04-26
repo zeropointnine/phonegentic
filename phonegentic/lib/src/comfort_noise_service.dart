@@ -33,6 +33,11 @@ class ComfortNoiseService extends ChangeNotifier {
   bool _stopRequested = false;
   Timer? _chunkTimer;
 
+  /// Persistent loop position so each resume picks up where the previous
+  /// playback left off — gives the impression of one continuous background
+  /// track rather than restarting at the same spot every silence gap.
+  int _loopOffset = 0;
+
   AudioPlayer? _previewPlayer;
 
   ComfortNoiseConfig get config => _config;
@@ -56,6 +61,7 @@ class ComfortNoiseService extends ChangeNotifier {
     if (_pcmCachePath != newConfig.selectedPath) {
       _pcmCache = null;
       _pcmCachePath = null;
+      _loopOffset = 0;
     }
     notifyListeners();
   }
@@ -98,6 +104,7 @@ class ComfortNoiseService extends ChangeNotifier {
       await AgentConfigService.saveComfortNoiseConfig(_config);
       _pcmCache = null;
       _pcmCachePath = null;
+      _loopOffset = 0;
     }
     notifyListeners();
   }
@@ -197,21 +204,24 @@ class ComfortNoiseService extends ChangeNotifier {
   }
 
   void _loopPcm(Uint8List pcm) {
-    int offset = 0;
     const chunkDuration = Duration(milliseconds: 950);
+
+    if (_loopOffset < 0 || _loopOffset >= pcm.length) {
+      _loopOffset = 0;
+    }
 
     void sendNextChunk() {
       if (!_playing) return;
 
-      final end = (offset + _chunkBytes).clamp(0, pcm.length);
-      final chunk = pcm.sublist(offset, end);
+      final end = (_loopOffset + _chunkBytes).clamp(0, pcm.length);
+      final chunk = pcm.sublist(_loopOffset, end);
 
       _tapChannel.invokeMethod<void>('playAudioResponse', chunk).catchError(
           (e) => debugPrint('[ComfortNoise] playAudioResponse error: $e'));
 
-      offset += _chunkBytes;
-      if (offset >= pcm.length) {
-        offset = 0; // loop back
+      _loopOffset += _chunkBytes;
+      if (_loopOffset >= pcm.length) {
+        _loopOffset = 0; // loop back
       }
 
       _chunkTimer = Timer(chunkDuration, sendNextChunk);

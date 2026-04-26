@@ -77,7 +77,7 @@ class TextAgentConfig {
     this.provider = TextAgentProvider.openai,
     this.openaiApiKey = '',
     this.claudeApiKey = '',
-    this.openaiModel = 'gpt-4o',
+    this.openaiModel = 'gpt-5.4-mini',
     this.claudeModel = 'claude-sonnet-4-20250514',
     this.customApiKey = '',
     this.customEndpointUrl = '',
@@ -349,7 +349,7 @@ class AgentConfigService {
       openaiApiKey: prefs.getString('${_prefix}text_openai_key') ?? '',
       claudeApiKey: prefs.getString('${_prefix}text_claude_key') ?? '',
       openaiModel:
-          prefs.getString('${_prefix}text_openai_model') ?? 'gpt-4o',
+          prefs.getString('${_prefix}text_openai_model') ?? 'gpt-5.4-mini',
       claudeModel: _migrateClaudeModel(
           prefs.getString('${_prefix}text_claude_model')),
       customApiKey: prefs.getString('${_prefix}text_custom_key') ?? '',

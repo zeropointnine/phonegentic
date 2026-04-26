@@ -8,14 +8,17 @@ We need a way for users to upload custom audio clips (office ambience, gentle hu
 
 ## Solution
 
-Comfort noise is a user-uploaded audio clip that loops into the call audio stream via the existing `playAudioResponse` native path. It plays during every silence gap in the call — both the initial settling phase and the pauses between remote speech ending and agent TTS arriving. Playback stops automatically when TTS audio chunks arrive, when the remote starts speaking again (VAD), or when the call ends/fails.
+Comfort noise is a user-uploaded audio clip that loops into the call audio stream via the existing `playAudioResponse` native path. It plays during every silence gap in the call — the initial settling phase, the pauses between remote speech ending and agent TTS arriving, the gap after the agent finishes speaking, and continuously through the remote party's own speech. Playback only pauses for outgoing agent TTS (so the agent's voice isn't muddied) and stops on call end/fail.
 
 **Lifecycle triggers:**
 - **Settling** — starts with a 250ms pipeline-init delay when the call enters settling, survives the settling→connected transition.
-- **Between turns** — starts immediately (no pipeline delay) when a transcript is sent to the LLM, provided the agent isn't already speaking.
-- **Stop on TTS** — all three TTS paths (ElevenLabs, Kokoro, OpenAI Realtime) stop comfort noise on the first audio chunk.
-- **Stop on remote speech** — VAD speech-start events stop comfort noise so it doesn't mix with the caller's voice.
+- **Between turns** — resumes immediately (no pipeline delay) when a transcript is sent to the LLM, provided the agent isn't already speaking.
+- **After agent TTS** — resumes when native `onPlaybackComplete` fires so the gap between the agent finishing and the remote replying stays filled.
+- **Through remote speech** — VAD speech-start events do **not** stop comfort noise. Because the loop is sent outbound only, the caller never hears themselves echoed and the ambient stays continuous instead of dropping out the moment they speak.
+- **Pause on TTS** — all three TTS paths (ElevenLabs, Kokoro, OpenAI Realtime) pause comfort noise on the first audio chunk so the agent's voice plays cleanly.
 - **Stop on call end** — ended/failed phases stop comfort noise.
+
+**Continuous loop position:** the loop offset is persisted on the service across pause/resume cycles, so each resume continues from where the previous chunk left off rather than restarting at byte 0. This makes the ambient feel like one continuous track rather than the same opening seconds repeating after every silence gap. The offset is reset only when the selected file changes or is deleted.
 
 The PCM is pre-cached at app startup to avoid file I/O latency during calls. A cancellation flag prevents late starts when the call phase advances before loading completes.
 

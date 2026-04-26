@@ -1077,9 +1077,14 @@ class AgentService extends ChangeNotifier {
           'text agent not configured — Kokoro TTS requires a Claude text agent');
       return;
     }
-    if (tc.provider == TextAgentProvider.openai) {
+    // Only bail on the realtime WebSocket path: when the OpenAI Realtime
+    // pipeline is active (not _isLocalSttMode), the realtime channel handles
+    // text in-band, so spawning a parallel OpenAI text agent would fight it.
+    // In the split (local STT) pipeline, every provider — including OpenAI —
+    // is just a swappable thinking model behind WhisperKit + local TTS.
+    if (tc.provider == TextAgentProvider.openai && !_isLocalSttMode) {
       debugPrint('[KokoroTTS-DIAG] _initTextAgent BAILING: '
-          'provider is OpenAI (not Claude) — split pipeline not active');
+          'OpenAI Realtime pipeline active — text handled in-band');
       return;
     }
 
@@ -1090,9 +1095,10 @@ class AgentService extends ChangeNotifier {
     _textAgentSub = _textAgent!.responses.listen(_appendStreamingResponse);
     _textAgentToolSub = _textAgent!.toolCalls.listen(_onTextAgentToolCall);
 
-    // Set the whisper flag so OpenAI audio responses are suppressed on the
-    // Dart side, but do NOT change modalities on the server — text-only
-    // modalities disable VAD which kills transcription.
+    // Suppress any OpenAI Realtime audio responses on the Dart side (no-op
+    // when _isLocalSttMode since that path doesn't open a realtime socket).
+    // Do NOT change server modalities — text-only modalities disable VAD
+    // which kills transcription on the realtime path.
     _whisperMode = true;
 
     _initTts();
@@ -1380,27 +1386,15 @@ class AgentService extends ChangeNotifier {
           .listen(_onTranscript);
 
       // Text LLM + TTS pipeline.
-      // _initTextAgent() skips OpenAI text providers (designed for the split-
-      // pipeline where OpenAI Realtime handles everything). In local STT mode
-      // we need a text agent regardless of provider, so we fall back to direct
-      // init when _initTextAgent() leaves _textAgent null.
+      // _initTextAgent() handles every provider (Claude / OpenAI / custom) in
+      // local STT mode — it only short-circuits OpenAI on the realtime
+      // WebSocket path, which isn't us. If the text agent is disabled or
+      // unconfigured _textAgent stays null, and we still init TTS so the
+      // chat panel works as a TTS-only interface.
       _syncBootContextFromJobFunction();
       _initTextAgent();
       if (_textAgent == null) {
-        final tc = _textAgentConfig;
-        if (tc != null && tc.enabled && tc.isConfigured) {
-          _textAgent = TextAgentService(
-            config: tc,
-            systemInstructions: _buildTextAgentInstructions(),
-          );
-          _textAgentSub = _textAgent!.responses.listen(_appendStreamingResponse);
-          _textAgentToolSub = _textAgent!.toolCalls.listen(_onTextAgentToolCall);
-          // _initTextAgent normally calls _initTts; mirror that here.
-          _initTts();
-        } else {
-          // No text agent configured — TTS alone (responses appear in chat only).
-          _initTts();
-        }
+        _initTts();
       }
       // _initTextAgent already called _initTts when it set _textAgent, so
       // only call updateVoiceId here (not _initTts again).
@@ -3632,9 +3626,10 @@ class AgentService extends ChangeNotifier {
       return;
     }
 
-    // Remote started speaking — stop comfort noise so it doesn't mix with
-    // their voice. TTS audio will stop it too, but VAD fires sooner.
-    comfortNoiseService?.stopPlayback();
+    // Don't stop comfort noise on remote speech-start. Comfort noise plays
+    // outbound only — the remote does not hear themselves echoed back, so
+    // letting the loop run through their utterance gives a continuous
+    // ambient that doesn't drop out the moment they begin to speak.
 
     // Only trigger barge-in during active agent audio playback.
     if (!_speaking && !_whisper.isTtsPlaying) return;
@@ -4135,12 +4130,22 @@ class AgentService extends ChangeNotifier {
     // Fill the silence between the remote finishing and TTS audio arriving
     // with comfort noise. Playback stops automatically when the first TTS
     // chunk is emitted (see ElevenLabs / Kokoro / Whisper audio listeners).
-    if (_callPhase.isActive && !_speaking && !_whisper.isTtsPlaying) {
-      comfortNoiseService?.startPlayback(
-        _bootContext.comfortNoisePath,
-        waitForPipeline: false,
-      );
-    }
+    _resumeComfortNoiseIfIdle();
+  }
+
+  /// Idempotently resume comfort noise if the call is active and no agent
+  /// audio is currently flowing. The service early-returns when already
+  /// playing, so this is safe to call from multiple lifecycle hooks
+  /// (transcript-arrived, TTS-playback-complete, etc.) to keep the loop
+  /// running through every silence gap — including after the remote party
+  /// finishes speaking but before they reply again.
+  void _resumeComfortNoiseIfIdle() {
+    if (!_callPhase.isActive) return;
+    if (_speaking || _whisper.isTtsPlaying) return;
+    comfortNoiseService?.startPlayback(
+      _bootContext.comfortNoisePath,
+      waitForPipeline: false,
+    );
   }
 
   void _onResponseText(ResponseTextEvent event) {
@@ -8132,7 +8137,10 @@ class AgentService extends ChangeNotifier {
 
     if (_active) {
       if (_splitPipeline) {
-        debugPrint('[AgentService] User message → Claude: "$trimmed"');
+        final providerName =
+            _textAgentConfig?.provider.name ?? 'text-agent';
+        debugPrint(
+            '[AgentService] User message → $providerName: "$trimmed"');
         _textAgent!.sendUserMessage(trimmed);
       } else {
         _whisper.sendTextMessage(trimmed);
@@ -10623,10 +10631,12 @@ class AgentService extends ChangeNotifier {
             if (_isLocalSttMode) {
               _whisperKitStt?.notifyPlaybackEnded();
             }
+            _resumeComfortNoiseIfIdle();
           });
         } else {
           _playbackSafetyTimer?.cancel();
           _whisper.isTtsPlaying = false;
+          _resumeComfortNoiseIfIdle();
         }
         break;
       case 'onBeepDetected':

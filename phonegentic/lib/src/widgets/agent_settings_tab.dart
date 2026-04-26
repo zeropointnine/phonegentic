@@ -1132,8 +1132,11 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
           'Model',
           _text.openaiModel,
           const {
-            'gpt-4o': 'GPT-4o',
-            'gpt-4o-mini': 'GPT-4o Mini',
+            'gpt-5.4-nano': 'GPT-5.4 Nano (fastest)',
+            'gpt-5.4-mini': 'GPT-5.4 Mini (recommended)',
+            'gpt-5.5': 'GPT-5.5',
+            'gpt-4o': 'GPT-4o (legacy)',
+            'gpt-4o-mini': 'GPT-4o Mini (legacy)',
           },
           (v) => _updateText(_text.copyWith(openaiModel: v)),
         ),
@@ -1323,6 +1326,9 @@ class _AgentSettingsTabState extends State<AgentSettingsTab> {
     if (!_text.enabled) return 'Not configured';
     return switch (_text.provider) {
       TextAgentProvider.openai => switch (_text.openaiModel) {
+          'gpt-5.4-nano' => 'GPT-5.4 Nano',
+          'gpt-5.4-mini' => 'GPT-5.4 Mini',
+          'gpt-5.5' => 'GPT-5.5',
           'gpt-4o' => 'GPT-4o',
           'gpt-4o-mini' => 'GPT-4o Mini',
           _ => _text.openaiModel,

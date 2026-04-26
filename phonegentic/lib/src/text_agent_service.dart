@@ -53,8 +53,13 @@ class TextAgentService {
 
   bool _disposed = false;
 
-  static const _defaultDebounceMs = 1500;
-  static const _inCallDebounceMs = 3500;
+  // Debounce after a final transcript before flushing to the LLM. WhisperKit
+  // already emits its `isFinal` only after VAD-detected end-of-speech, so this
+  // is a tiny *extra* buffer to absorb a late follow-on transcript chunk —
+  // not a "wait for the speaker to think". Older values (1500 / 3500 ms)
+  // dominated end-to-end call latency and made turn-taking feel sluggish.
+  static const _defaultDebounceMs = 600;
+  static const _inCallDebounceMs = 1200;
   static const _maxHistory = 60;
   int _debounceMs = _defaultDebounceMs;
 
@@ -1168,15 +1173,20 @@ class TextAgentService {
   }
 
   static LlmCaller _createCaller(TextAgentConfig config, HttpClient http) {
-
     switch (config.provider) {
       case TextAgentProvider.claude:
         return ClaudeCaller(http);
       case TextAgentProvider.openai:
-        throw UnimplementedError('OpenAI realtime handles text in-band');
+        // Split-pipeline thinking model: drive the official OpenAI
+        // chat-completions endpoint as a plain text LLM (WhisperKit handles
+        // STT, PocketTTS/Kokoro/ElevenLabs handles TTS). The realtime
+        // WebSocket path lives elsewhere and short-circuits this caller.
+        return OpenAiCaller(
+          http,
+          baseUrl: Uri.parse('https://api.openai.com/v1/chat/completions'),
+        );
       case TextAgentProvider.custom:
         return OpenAiCaller(
-
           http,
           baseUrl: Uri.parse(config.customEndpointUrl),
         );

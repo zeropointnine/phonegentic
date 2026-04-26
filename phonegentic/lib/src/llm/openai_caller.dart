@@ -38,9 +38,14 @@ class OpenAiCaller implements LlmCaller {
     }
     httpRequest.headers.set('content-type', 'application/json; charset=utf-8');
 
+    // GPT-5.x and o-series reject `max_tokens` and require
+    // `max_completion_tokens`. Older `gpt-4o*` models accept either, but
+    // also accept the new field, so always emit `max_completion_tokens`.
+    // OpenAI-compatible third parties (OpenRouter, Ollama, LM Studio) all
+    // accept it as well.
     final body = jsonEncode({
       'model': request.model,
-      'max_tokens': request.maxTokens,
+      'max_completion_tokens': request.maxTokens,
       'messages': _serializeMessages(request),
       if (request.tools.isNotEmpty)
         'tools': request.tools.map(_serializeTool).toList(),
