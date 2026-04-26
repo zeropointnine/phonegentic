@@ -16,24 +16,35 @@ class ClaudeCaller implements LlmCaller {
 
   @override
   Stream<LlmResponseEvent> call(LlmRequest request) async* {
-    final uri = Uri.parse(_endpoint);
-    final httpRequest = await _httpClient.postUrl(uri);
+    final HttpClientResponse response;
+    try {
+      final uri = Uri.parse(_endpoint);
+      final httpRequest = await _httpClient.postUrl(uri);
 
-    httpRequest.headers.set('x-api-key', request.apiKey);
-    httpRequest.headers.set('anthropic-version', _anthropicVersion);
-    httpRequest.headers.set('content-type', 'application/json; charset=utf-8');
+      httpRequest.headers.set('x-api-key', request.apiKey);
+      httpRequest.headers.set('anthropic-version', _anthropicVersion);
+      httpRequest.headers.set('content-type', 'application/json; charset=utf-8');
 
-    final body = jsonEncode({
-      'model': request.model,
-      'max_tokens': request.maxTokens,
-      'system': request.systemInstructions,
-      'messages': request.messages.map(_serializeMessage).toList(),
-      'tools': request.tools.map(_serializeTool).toList(),
-      'stream': true,
-    });
-    httpRequest.add(utf8.encode(body));
+      final body = jsonEncode({
+        'model': request.model,
+        'max_tokens': request.maxTokens,
+        'system': request.systemInstructions,
+        'messages': request.messages.map(_serializeMessage).toList(),
+        'tools': request.tools.map(_serializeTool).toList(),
+        'stream': true,
+      });
+      httpRequest.add(utf8.encode(body));
 
-    final response = await httpRequest.close();
+      response = await httpRequest.close();
+    } on HttpException catch (e) {
+      throw LlmTransientException('Claude HTTP error: $e');
+    } on SocketException catch (e) {
+      throw LlmTransientException('Claude socket error: $e');
+    } on HandshakeException catch (e) {
+      throw LlmTransientException('Claude TLS handshake error: $e');
+    } on TlsException catch (e) {
+      throw LlmTransientException('Claude TLS error: $e');
+    }
 
     if (response.statusCode != 200) {
       final respBody = await response.transform(utf8.decoder).join();
@@ -50,7 +61,13 @@ class ClaudeCaller implements LlmCaller {
       }
     }
 
-    yield* _handler.handle(response);
+    try {
+      yield* _handler.handle(response);
+    } on HttpException catch (e) {
+      throw LlmTransientException('Claude stream HTTP error: $e');
+    } on SocketException catch (e) {
+      throw LlmTransientException('Claude stream socket error: $e');
+    }
   }
 
   // ─────────────────────────── Serialization ───────────────────────────────

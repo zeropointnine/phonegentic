@@ -72,7 +72,7 @@ class LlmRequest {
     required this.systemInstructions,
     required this.messages,
     required this.tools,
-    this.maxTokens = 1024,
+    this.maxTokens = 2048,
   });
 }
 
@@ -97,6 +97,33 @@ final class LlmToolCallEvent extends LlmResponseEvent {
 
 final class LlmDoneEvent extends LlmResponseEvent {
   const LlmDoneEvent();
+}
+
+/// Token-usage stats reported by the provider at the end of a stream.
+/// Surfacing these lets us see whether prompt caching is hitting (the
+/// difference between a hot and cold cache is roughly 50% of input cost
+/// and a comparable drop in TTFT).
+///
+/// Fields are nullable because not every provider/model reports them
+/// (e.g. older OpenAI-compatible third parties may omit the usage chunk
+/// entirely even when `stream_options.include_usage=true` is requested).
+final class LlmUsageEvent extends LlmResponseEvent {
+  /// Total tokens in the input prompt (system + messages + tools).
+  final int? promptTokens;
+
+  /// Of [promptTokens], how many were served from OpenAI's prompt cache.
+  /// `cached_tokens == promptTokens` is a perfect cache hit; `0` is a
+  /// full cold call.
+  final int? cachedPromptTokens;
+
+  /// Tokens generated in the response.
+  final int? completionTokens;
+
+  const LlmUsageEvent({
+    this.promptTokens,
+    this.cachedPromptTokens,
+    this.completionTokens,
+  });
 }
 
 // ───────────────────────────────── Exceptions ────────────────────────────────

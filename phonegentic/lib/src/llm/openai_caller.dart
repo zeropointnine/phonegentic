@@ -27,33 +27,56 @@ class OpenAiCaller implements LlmCaller {
 
   @override
   Stream<LlmResponseEvent> call(LlmRequest request) async* {
-    final httpRequest = await _httpClient.postUrl(_baseUrl);
+    // Open the request and stream the response. Socket-level errors
+    // (HttpException, SocketException, TLS handshake failures, "connection
+    // reset by peer") are surfaced as LlmTransientException so the
+    // _callWithRetry path in TextAgentService treats them as retryable
+    // instead of letting the raw error bubble up to TTS.
+    final HttpClientResponse response;
+    try {
+      final httpRequest = await _httpClient.postUrl(_baseUrl);
 
-    final apiKey = request.apiKey.trim();
-    if (apiKey.isNotEmpty) {
-      httpRequest.headers.set('Authorization', 'Bearer $apiKey');
-    } else {
-      debugPrint('[OpenAiCaller] WARNING: apiKey is empty — Authorization header not set. '
-          'Check that the API Key field is filled in under Settings > Agents > Custom.');
+      final apiKey = request.apiKey.trim();
+      if (apiKey.isNotEmpty) {
+        httpRequest.headers.set('Authorization', 'Bearer $apiKey');
+      } else {
+        debugPrint('[OpenAiCaller] WARNING: apiKey is empty — Authorization header not set. '
+            'Check that the API Key field is filled in under Settings > Agents > Custom.');
+      }
+      httpRequest.headers.set('content-type', 'application/json; charset=utf-8');
+
+      // GPT-5.x and o-series reject `max_tokens` and require
+      // `max_completion_tokens`. Older `gpt-4o*` models accept either, but
+      // also accept the new field, so always emit `max_completion_tokens`.
+      // OpenAI-compatible third parties (OpenRouter, Ollama, LM Studio) all
+      // accept it as well.
+      // `stream_options.include_usage` makes OpenAI emit a final SSE chunk
+      // with token-usage stats (including `prompt_tokens_details.cached_tokens`)
+      // so we can verify prompt caching is hitting on every turn. Without this
+      // opt-in, streaming responses contain no usage information at all and
+      // cache hits are invisible. Other OpenAI-compatible providers ignore the
+      // field gracefully.
+      final body = jsonEncode({
+        'model': request.model,
+        'max_completion_tokens': request.maxTokens,
+        'messages': _serializeMessages(request),
+        if (request.tools.isNotEmpty)
+          'tools': request.tools.map(_serializeTool).toList(),
+        'stream': true,
+        'stream_options': {'include_usage': true},
+      });
+      httpRequest.add(utf8.encode(body));
+
+      response = await httpRequest.close();
+    } on HttpException catch (e) {
+      throw LlmTransientException('OpenAI HTTP error: $e');
+    } on SocketException catch (e) {
+      throw LlmTransientException('OpenAI socket error: $e');
+    } on HandshakeException catch (e) {
+      throw LlmTransientException('OpenAI TLS handshake error: $e');
+    } on TlsException catch (e) {
+      throw LlmTransientException('OpenAI TLS error: $e');
     }
-    httpRequest.headers.set('content-type', 'application/json; charset=utf-8');
-
-    // GPT-5.x and o-series reject `max_tokens` and require
-    // `max_completion_tokens`. Older `gpt-4o*` models accept either, but
-    // also accept the new field, so always emit `max_completion_tokens`.
-    // OpenAI-compatible third parties (OpenRouter, Ollama, LM Studio) all
-    // accept it as well.
-    final body = jsonEncode({
-      'model': request.model,
-      'max_completion_tokens': request.maxTokens,
-      'messages': _serializeMessages(request),
-      if (request.tools.isNotEmpty)
-        'tools': request.tools.map(_serializeTool).toList(),
-      'stream': true,
-    });
-    httpRequest.add(utf8.encode(body));
-
-    final response = await httpRequest.close();
 
     if (response.statusCode != 200) {
       final respBody = await response.transform(utf8.decoder).join();
@@ -71,7 +94,16 @@ class OpenAiCaller implements LlmCaller {
       }
     }
 
-    yield* _handler.handle(response);
+    // Stream parsing can also fail mid-response with a connection reset.
+    // Convert those into transient errors as well so a partial stream
+    // triggers a retry instead of leaking the error into the audio path.
+    try {
+      yield* _handler.handle(response);
+    } on HttpException catch (e) {
+      throw LlmTransientException('OpenAI stream HTTP error: $e');
+    } on SocketException catch (e) {
+      throw LlmTransientException('OpenAI stream socket error: $e');
+    }
   }
 
   // ─────────────────────────── Serialization ───────────────────────────────

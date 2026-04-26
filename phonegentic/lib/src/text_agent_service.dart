@@ -199,7 +199,28 @@ class TextAgentService {
     _respond();
   }
 
-  static const _maxRetries = 2;
+  static const _maxRetries = 3;
+
+  /// Pool of short, natural-sounding fillers to speak when the LLM call
+  /// failed for transient/network reasons after exhausting retries.
+  /// Rotated by [_fillerCursor] so the caller doesn't hear the same canned
+  /// line twice in a row when multiple turns hit a network blip.
+  static const _networkFillers = <String>[
+    'One moment, my machine is frozen — one sec.',
+    'Hold on a second, I lost my connection there.',
+    'Sorry, give me one moment to get back on.',
+  ];
+  static const _timeoutFillers = <String>[
+    'Sorry, give me one second — still thinking.',
+    'One sec, taking a moment to process that.',
+  ];
+  int _fillerCursor = 0;
+  String _politeNetworkFillerFor(Object error) {
+    final pool = error is TimeoutException ? _timeoutFillers : _networkFillers;
+    final filler = pool[_fillerCursor % pool.length];
+    _fillerCursor++;
+    return filler;
+  }
 
   Future<void> _respond() async {
     if (_responding) {
@@ -219,8 +240,22 @@ class TextAgentService {
     } catch (e) {
       debugPrint('[TextAgentService] Error: $e');
       if (_history.isNotEmpty) {
+        // NEVER pipe raw error text into the response stream — AgentService
+        // routes ResponseTextEvent.text straight into TTS, which means the
+        // caller would hear "HttpException: Connection reset by peer..."
+        // spoken over a live call.
+        //
+        // Instead, emit a polite filler so the caller hears something
+        // natural while the network recovers, plus an internal-only error
+        // marker (kept in chat history for debugging but suppressed from
+        // TTS by AgentService when it sees the [pipeline-error] tag).
+        final filler = _politeNetworkFillerFor(e);
         _responseController
-            .add(ResponseTextEvent(text: 'Error: $e', isFinal: true));
+            .add(ResponseTextEvent(text: filler, isFinal: true));
+        // Tag the raw error so AgentService can persist it to history /
+        // surface it in the UI without speaking it.
+        _responseController.add(ResponseTextEvent(
+            text: '[pipeline-error] $e', isFinal: true));
       }
     } finally {
       _responding = false;
@@ -837,6 +872,7 @@ class TextAgentService {
 
     String fullText = '';
     final toolCallEvents = <LlmToolCallEvent>[];
+    LlmUsageEvent? usage;
     bool cancelled = false;
 
     bool fabricationDetected = false;
@@ -868,12 +904,19 @@ class TextAgentService {
         }
       } else if (event is LlmToolCallEvent) {
         toolCallEvents.add(event);
+      } else if (event is LlmUsageEvent) {
+        usage = event;
       }
     }
 
     stopwatch.stop();
+    final cacheLog = usage == null
+        ? ''
+        : ' [tokens in=${usage.promptTokens ?? '?'} '
+            'cached=${usage.cachedPromptTokens ?? 0} '
+            'out=${usage.completionTokens ?? '?'}]';
     debugPrint('[TextAgent] LLM response time: ${stopwatch.elapsedMilliseconds}ms '
-        '(model: ${req.model}, tools: ${toolCallEvents.length})');
+        '(model: ${req.model}, tools: ${toolCallEvents.length})$cacheLog');
 
     if (_disposed) return;
     _cancelRequested = false;

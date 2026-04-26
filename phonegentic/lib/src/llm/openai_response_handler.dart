@@ -34,6 +34,21 @@ class OpenAiResponseHandler implements LlmResponseHandler {
 
         try {
           final json = jsonDecode(data) as Map<String, dynamic>;
+
+          // The final SSE chunk emitted under `stream_options.include_usage`
+          // has `choices: []` and a top-level `usage` block. Surface it as
+          // an LlmUsageEvent so callers can log cache hits.
+          final usage = json['usage'] as Map<String, dynamic>?;
+          if (usage != null) {
+            final promptDetails =
+                usage['prompt_tokens_details'] as Map<String, dynamic>?;
+            yield LlmUsageEvent(
+              promptTokens: usage['prompt_tokens'] as int?,
+              cachedPromptTokens: promptDetails?['cached_tokens'] as int?,
+              completionTokens: usage['completion_tokens'] as int?,
+            );
+          }
+
           final choices = json['choices'] as List<dynamic>?;
           if (choices == null || choices.isEmpty) continue;
           final delta =

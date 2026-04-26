@@ -47,6 +47,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
     /// dedup log. When ambient noise keeps producing the same short word,
     /// this log otherwise fires every 1.5s for hours.
     private var carryOverRepeatLogCount = 0
+
     private static let maxAneFailuresBeforeCpuFallback = 2
     private static let transcriptionIntervalMs = 1500
     private static let inputSampleRate: Double = 24000
@@ -363,7 +364,9 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
 
     private func processBufferedAudio() {
         #if canImport(WhisperKit)
-        guard let kit = whisperKit, isTranscribing, !isProcessing, !processingPaused else { return }
+        guard let kit = whisperKit, isTranscribing else { return }
+        if processingPaused { return }
+        if isProcessing { return }
 
         bufferLock.lock()
         guard audioBuffer.count > 0 else {
@@ -436,6 +439,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                             DispatchQueue.main.async {
                                 self.lastTranscriptWasEmpty = false
                                 self.lastTranscriptText = dedupedText
+                                NSLog("[WhisperKit] Transcribed: %@", dedupedText)
                                 self.transcriptEventSink?([
                                     "text": dedupedText,
                                     "isFinal": true,
@@ -453,6 +457,7 @@ class WhisperKitChannel: NSObject, FlutterStreamHandler {
                         DispatchQueue.main.async {
                             self.lastTranscriptWasEmpty = true
                             if !text.isEmpty {
+                                NSLog("[WhisperKit] Filtered (hallucination): %@", text)
                                 self.transcriptEventSink?([
                                     "text": text,
                                     "isFinal": true,

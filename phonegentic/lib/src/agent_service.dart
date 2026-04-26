@@ -529,8 +529,53 @@ class AgentService extends ChangeNotifier {
   /// reset in _processTranscript when genuine speech reaches the LLM.
   /// NOTE: this blocks the agent's OUTPUT, never the user's INPUT — user
   /// transcripts always flow through regardless of the counter.
+  ///
+  /// 2 consecutive replies are tolerated before the loop-breaker fires.
+  /// Lower values (1) cause false positives when a single user turn arrives
+  /// chunked across two WhisperKit windows (e.g. "Hi" → "five seconds of
+  /// audio, can you hear me talk?") and the agent legitimately answers
+  /// each transcript before the user-input flag has a chance to flip.
   int _consecutiveAgentResponses = 0;
-  static const _maxConsecutiveAgentResponses = 1;
+  static const _maxConsecutiveAgentResponses = 2;
+
+  /// Set true by `_processTranscript` whenever a transcript actually
+  /// reaches the LLM (passes echo-suppression, hallucination filters,
+  /// short-fragment guards, etc). Cleared when the next agent final
+  /// response is observed. The loop-breaker uses this as the authoritative
+  /// "is the user actually present?" signal — much more reliable than the
+  /// previous heuristic of "≥4 words OR ≥3s after TTS ended", which missed
+  /// cases like a 3-word reply ("yes please") arriving immediately after
+  /// the agent's last sentence.
+  bool _userInputSinceLastFinal = false;
+
+  /// Per-turn flag: did the agent emit any non-empty TTS text this turn?
+  /// Reset when a new user transcript reaches the LLM. Set as soon as we
+  /// hand any text to the active TTS engine. Used to decide whether to drop
+  /// a quick "just a sec…" filler when the LLM jumps straight into a tool
+  /// call with no preface (so the user doesn't sit in silence while a slow
+  /// tool — Gmail, calendar, flight lookup — runs and the LLM then turns
+  /// the result into a reply).
+  bool _agentSpokeThisTurn = false;
+
+  /// Short, natural fillers spoken before a slow tool runs when the LLM
+  /// hasn't already prefaced. PocketTTS doesn't support phonemes, so these
+  /// stick to plain words that the engine renders cleanly. We rotate the
+  /// pool so it doesn't sound like a stuck loop.
+  static const _toolCallFillers = <String>[
+    'Just a sec.',
+    'One moment.',
+    'Okay, hold on.',
+    'Give me a sec.',
+    'One second.',
+  ];
+  int _toolFillerCursor = 0;
+
+  String _nextToolCallFiller() {
+    final filler =
+        _toolCallFillers[_toolFillerCursor % _toolCallFillers.length];
+    _toolFillerCursor++;
+    return filler;
+  }
 
   final List<String> _recentAgentTexts = [];
   static const _maxRecentAgentTexts = 5;
@@ -1359,10 +1404,12 @@ class AgentService extends ChangeNotifier {
         // room reverb that the native suppression misses.  This doesn't
         // add latency to the first transcript because the WhisperKit timer
         // reset fires based on when isTtsPlaying went false.
-        if (_muted || _speaking || _whisper.ttsSuppressed) return;
-        // Don't feed Whisper while idle — the native pause path stops the
-        // transcription timer, but guarding here avoids queueing audio
-        // into a paused native buffer and keeps Dart-side metrics honest.
+        if (_muted) return;
+        if (_speaking) return;
+        if (_whisper.ttsSuppressed) return;
+        // Don't feed Whisper while idle — the native pause path stops
+        // the transcription timer, but guarding here avoids queueing
+        // audio into a paused native buffer.
         if (_callPhase == CallPhase.idle) return;
         _whisperKitStt?.feedAudio(chunk);
       });
@@ -1533,8 +1580,18 @@ class AgentService extends ChangeNotifier {
 
   static final _phonegenticRe = RegExp(r'Phonegentic', caseSensitive: false);
 
+  // PocketTTS mispronounces "yep" — swap to "yes" before it reaches any TTS
+  // engine. Word-bounded so we don't break words that happen to contain "yep"
+  // (e.g. "yepson"). Case-preserving for the three common spellings.
+  static final _yepLowerRe = RegExp(r'\byep\b');
+  static final _yepTitleRe = RegExp(r'\bYep\b');
+  static final _yepUpperRe = RegExp(r'\bYEP\b');
+
   void _activeTtsSendText(String text) {
-    final fixed = text.replaceAll(_phonegenticRe, 'Phone-Jentic');
+    var fixed = text.replaceAll(_phonegenticRe, 'Phone-Jentic');
+    fixed = fixed.replaceAll(_yepLowerRe, 'yes');
+    fixed = fixed.replaceAll(_yepTitleRe, 'Yes');
+    fixed = fixed.replaceAll(_yepUpperRe, 'YES');
     _tts?.sendText(fixed);
     _localTts?.sendText(fixed);
   }
@@ -1597,6 +1654,19 @@ class AgentService extends ChangeNotifier {
     return '$h:$m $ap';
   }
 
+  /// Builds the system prompt with **prompt-cache friendliness** as a hard
+  /// constraint. OpenAI (and most modern providers) cache the longest
+  /// byte-identical prefix of the prompt across requests; once a single byte
+  /// changes, *everything after it* is recomputed at full cost. Keeping the
+  /// stable persona / boundaries / instructions material at the top of the
+  /// system message means the cache hits across an entire session, often
+  /// halving TTFT on `gpt-5.x` mini/nano. Dynamic context (current time,
+  /// calendar/flight/gmail data, active reminders) is appended LAST so it
+  /// doesn't bust the cache for the bulk of the prompt.
+  ///
+  /// If you add new content here, ask: "does this change minute-to-minute or
+  /// call-to-call?". If yes — append it to the dynamic block. If no — fold
+  /// it into the stable block.
   String _buildTextAgentInstructions() {
     final hasTts =
         (_tts != null || _localTts != null) && !_ttsMuted && !_muted;
@@ -1609,27 +1679,44 @@ class AgentService extends ChangeNotifier {
       textOnly: !hasTts,
       defaultCountryCode: _bootContext.defaultCountryCode,
     );
-    final base = ctx.toInstructions();
+    final prompt = _textAgentConfig?.systemPrompt ?? '';
+
+    // ── STABLE PREFIX ──────────────────────────────────────────────────
+    // Content here is cacheable: it depends only on persona/job-function
+    // configuration which doesn't change during a call session. The OpenAI
+    // prompt cache hits if this section is byte-identical across requests.
+    final buf = StringBuffer(ctx.toInstructions());
+    buf.write(_buildPersonaRuntimeContext());
+    buf.write(_buildConversationBoundariesContext());
+    buf.write(_buildHallucinationAwarenessContext());
+    buf.write(_buildManagerContext());
+    if (prompt.isNotEmpty) {
+      buf.write('\n\n## Additional Instructions\n$prompt');
+    }
+
+    // ── DYNAMIC SUFFIX ─────────────────────────────────────────────────
+    // Content below changes during a session (clock ticks, calendar events
+    // fire, reminders update, integration auth state shifts). Append last
+    // so it sits AFTER the cache boundary — only this tail is re-tokenized
+    // on each turn instead of the whole prompt.
+    final dyn = StringBuffer();
     final calendar = _buildCalendarContext();
     final flight = _buildFlightAwareContext();
     final gmail = _buildGmailContext();
     final gcal = _buildGoogleCalendarContext();
     final gsearch = _buildGoogleSearchContext();
-    final prompt = _textAgentConfig?.systemPrompt ?? '';
-    final buf = StringBuffer(base);
-    buf.write(_buildDateTimeContext());
-    if (calendar.isNotEmpty) buf.write(calendar);
-    if (flight.isNotEmpty) buf.write(flight);
-    if (gmail.isNotEmpty) buf.write(gmail);
-    if (gcal.isNotEmpty) buf.write(gcal);
-    if (gsearch.isNotEmpty) buf.write(gsearch);
-    buf.write(_buildManagerContext());
-    buf.write(_buildReminderAndAwarenessContext());
-    buf.write(_buildPersonaRuntimeContext());
-    buf.write(_buildConversationBoundariesContext());
-    buf.write(_buildHallucinationAwarenessContext());
-    if (prompt.isNotEmpty) {
-      buf.write('\n\n## Additional Instructions\n$prompt');
+    if (calendar.isNotEmpty) dyn.write(calendar);
+    if (flight.isNotEmpty) dyn.write(flight);
+    if (gmail.isNotEmpty) dyn.write(gmail);
+    if (gcal.isNotEmpty) dyn.write(gcal);
+    if (gsearch.isNotEmpty) dyn.write(gsearch);
+    dyn.write(_buildReminderAndAwarenessContext());
+    dyn.write(_buildDateTimeContext());
+
+    final dynStr = dyn.toString();
+    if (dynStr.isNotEmpty) {
+      buf.write('\n\n## Live session context (changes turn-to-turn)\n');
+      buf.write(dynStr);
     }
     return buf.toString();
   }
@@ -2148,10 +2235,22 @@ class AgentService extends ChangeNotifier {
         'You can look up real-time flight information using these tools:\n'
         '- **lookup_flight**: Look up a specific flight by number (e.g. UAL278, AA100, DAL405). '
         'Returns airline, origin/destination, departure/arrival times, status, and gate info.\n'
-        '- **search_flights_by_route**: Search all flights between two airports using '
-        'ICAO codes (e.g. KSFO→KJFK, KLAX→KORD). Returns a table of upcoming and recent flights.\n'
-        'Use these when the caller or host asks about flight status, arrival times, '
-        'which flights serve a route, or anything aviation-related.\n';
+        '- **search_flights_by_route**: Search all flights between two airports. '
+        'Accepts IATA (3-letter: CLT→PDX, SFO→JFK) or ICAO (4-letter: KSFO→KJFK). '
+        'IATA is preferred and works fine.\n'
+        '\n'
+        '**CRITICAL — do not stall on airport codes.** When the user names a city, '
+        'YOU map it to the IATA code yourself and call the tool immediately. '
+        'Do NOT ask the user for the code. Common mappings: Charlotte=CLT, '
+        'Portland (Oregon)=PDX, NYC=JFK (or LGA/EWR), San Francisco=SFO, '
+        'Los Angeles=LAX, Chicago=ORD, Atlanta=ATL, Dallas=DFW, Boston=BOS, '
+        'Seattle=SEA, Denver=DEN, Miami=MIA. If a city has multiple major '
+        'airports and the user did not specify one, pick the largest hub and '
+        'mention which one you used. Only ask the user when a city genuinely '
+        'cannot be inferred (e.g. "Springfield" — pick which state).\n'
+        '\n'
+        'Use these tools when the caller or host asks about flight status, '
+        'arrival times, which flights serve a route, or anything aviation-related.\n';
   }
 
   String _buildGmailContext() {
@@ -2221,18 +2320,27 @@ class AgentService extends ChangeNotifier {
       'description':
           'Search for all flights between two airports. Returns a list of '
               'upcoming and recent flights with airline, ident, aircraft, '
-              'status, and times.',
+              'status, and times. Accepts either IATA (3-letter, e.g. CLT, '
+              'PDX, JFK) or ICAO (4-letter, e.g. KCLT, KPDX, KJFK) codes — '
+              'IATA is preferred. Infer the airport code yourself when the '
+              'user names a city (Charlotte=CLT, Portland=PDX, NYC=JFK, '
+              "Chicago=ORD, etc.) — do NOT ask the user for the code.",
       'parameters': {
         'type': 'object',
         'properties': {
           'origin': {
             'type': 'string',
-            'description': 'Origin airport ICAO code (e.g. KSFO, KLAX, KJFK)',
+            'description':
+                'Origin airport code — IATA (CLT, SFO, LAX) or ICAO (KCLT, '
+                    'KSFO, KLAX). Infer from city name when the user gives '
+                    'one.',
           },
           'destination': {
             'type': 'string',
             'description':
-                'Destination airport ICAO code (e.g. KJFK, KORD, KATL)',
+                'Destination airport code — IATA (PDX, JFK, ORD) or ICAO '
+                    '(KPDX, KJFK, KORD). Infer from city name when the user '
+                    'gives one.',
           },
         },
         'required': ['origin', 'destination'],
@@ -2260,19 +2368,28 @@ class AgentService extends ChangeNotifier {
     ),
     LlmTool(
       name: 'search_flights_by_route',
-      description: 'Search all flights between two airports. Returns upcoming and '
-          'recent flights with airline, ident, aircraft, status, and times.',
+      description: 'Search all flights between two airports. Returns upcoming '
+          'and recent flights with airline, ident, aircraft, status, and '
+          'times. Accepts IATA (CLT, PDX, JFK) or ICAO (KCLT, KPDX, KJFK) — '
+          'IATA preferred. Infer the airport code from a city name yourself '
+          '(Charlotte=CLT, Portland=PDX, NYC=JFK, Chicago=ORD) — do NOT ask '
+          'the user for codes.',
       inputSchema: {
         'type': 'object',
         'properties': {
           'origin': {
             'type': 'string',
-            'description': 'Origin airport ICAO code (e.g. KSFO, KLAX, KJFK)',
+            'description':
+                'Origin airport code — IATA (CLT, SFO, LAX) or ICAO (KCLT, '
+                    'KSFO, KLAX). Infer from city name when the user gives '
+                    'one.',
           },
           'destination': {
             'type': 'string',
             'description':
-                'Destination airport ICAO code (e.g. KJFK, KORD, KATL)',
+                'Destination airport code — IATA (PDX, JFK, ORD) or ICAO '
+                    '(KPDX, KJFK, KORD). Infer from city name when the user '
+                    'gives one.',
           },
         },
         'required': ['origin', 'destination'],
@@ -3971,10 +4088,18 @@ class AgentService extends ChangeNotifier {
     _lastTranscriptText = text;
     _lastTranscriptTime = now;
 
-    // Reset the consecutive-agent-response counter only when we're confident
+    // Reset the consecutive-agent-response counter when we're confident
     // this is genuine user speech, not TTS echo picked up by the mic.
     //  1. 4+ words — always unlocks (a real question/command)
     //  2. ANY words arriving 3+ seconds after TTS ended
+    // Echoes (short fragments arriving inside the post-TTS guard window)
+    // do NOT reset, so a self-talk loop still trips the breaker.
+    //
+    // Note: the authoritative reset happens at the bottom of this method
+    // via _userInputSinceLastFinal — that flag is what the loop-breaker
+    // actually consults when the next agent final arrives. The counter
+    // reset here is kept as defense-in-depth so an explicit long user
+    // turn unlocks immediately even if a final is racing in.
     final wordCount = text.split(RegExp(r'\s+')).length;
     final msSinceSpeech = now.difference(_speakingEndTime).inMilliseconds;
     if (wordCount >= 4 || msSinceSpeech > 3000) {
@@ -4115,6 +4240,15 @@ class AgentService extends ChangeNotifier {
         '(phase=${_callPhase.name} conf=${confidence.toStringAsFixed(2)} '
         'src=$source)');
 
+    // Authoritative "user spoke" signal for the loop-breaker. Anything that
+    // reaches this point has cleared echo suppression, hallucination
+    // filters, voiceprint matching, and short-fragment guards — i.e. it's
+    // a real user turn worth telling the LLM about.
+    _userInputSinceLastFinal = true;
+    // New turn → reset the "agent already said something" gate so the
+    // tool-call filler can fire if the LLM jumps straight to a tool.
+    _agentSpokeThisTurn = false;
+
     _textAgent?.addTranscript(label, text);
 
     if (!_thinking) {
@@ -4176,6 +4310,25 @@ class AgentService extends ChangeNotifier {
   /// Realtime or the external text agent (Claude, etc.).
   void _appendStreamingResponse(ResponseTextEvent event) {
     if (_callPhase == CallPhase.ended || _callPhase == CallPhase.failed) return;
+
+    // [pipeline-error] is the silent companion to a polite filler — the
+    // text agent emits both when its retry budget is exhausted. Capture
+    // the underlying error for the UI banner and persist it via
+    // _formatPipelineError, but DO NOT pipe it to TTS or display it as a
+    // chat bubble. The user already heard a natural-sounding filler from
+    // the prior event; leaking the raw error into the call audio (or chat
+    // log as agent speech) would defeat that.
+    if (event.isFinal && event.text.startsWith('[pipeline-error]')) {
+      final raw = event.text
+          .substring('[pipeline-error]'.length)
+          .trim();
+      debugPrint('[AgentService] Pipeline error logged silently: $raw');
+      _pipelineError = _formatPipelineError(raw);
+      // Do NOT increment _consecutiveAgentResponses here — the polite
+      // filler that preceded this event already counted as the agent turn.
+      notifyListeners();
+      return;
+    }
 
     // Dial pending: SIP events haven't promoted the phase yet but a call is
     // being placed.  Drop the response entirely so the LLM doesn't burn its
@@ -4312,7 +4465,15 @@ class AgentService extends ChangeNotifier {
     }
 
     if (event.isFinal) {
-      _consecutiveAgentResponses++;
+      // If a genuine user transcript reached the LLM since the previous
+      // final response, this reply is part of an actual back-and-forth —
+      // reset the loop-breaker counter. Otherwise increment.
+      if (_userInputSinceLastFinal) {
+        _consecutiveAgentResponses = 1;
+      } else {
+        _consecutiveAgentResponses++;
+      }
+      _userInputSinceLastFinal = false;
       debugPrint('[AgentService] Response final (consecutive=$_consecutiveAgentResponses): '
           '${event.text.length > 80 ? event.text.substring(0, 80) : event.text}...');
 
@@ -4360,6 +4521,7 @@ class AgentService extends ChangeNotifier {
         if (ttsText.trim().isNotEmpty) {
           _activeTtsStartGeneration();
           _activeTtsSendText(ttsText);
+          _agentSpokeThisTurn = true;
         }
       } else if (event.text.isNotEmpty) {
         debugPrint('[AgentService] Final-TTS SKIPPED: '
@@ -4469,6 +4631,7 @@ class AgentService extends ChangeNotifier {
       );
       if (ttsText.trim().isNotEmpty) {
         _activeTtsSendText(ttsText);
+        _agentSpokeThisTurn = true;
       }
     }
 
@@ -4725,9 +4888,51 @@ class AgentService extends ChangeNotifier {
   }
 
   /// Handle tool calls from the Claude text agent (split pipeline).
+  // Tools that return in milliseconds with no network or disk-heavy work.
+  // No filler for these — speaking a "one moment" only to immediately reply
+  // would sound jittery.
+  static const _instantToolNames = <String>{
+    'check_locale',
+    'send_dtmf',
+    'end_call',
+  };
+
+  void _maybeSpeakToolCallFiller(String toolName) {
+    if (_agentSpokeThisTurn) return;
+    if (_instantToolNames.contains(toolName)) return;
+    if (_ttsMuted || _muted) return;
+    if (!_hasTts) return;
+    // Don't speak fillers during pre-connect / settling — same gate the
+    // streaming TTS path uses to avoid talking over IVRs.
+    final suppressTts = _callDialPending ||
+        ((_callPhase.isPreConnect ||
+                _callPhase == CallPhase.answered ||
+                _callPhase == CallPhase.settling) &&
+            _callPhase != CallPhase.idle);
+    if (suppressTts) return;
+    if (_consecutiveAgentResponses >= _maxConsecutiveAgentResponses) return;
+
+    final filler = _nextToolCallFiller();
+    debugPrint('[AgentService] Tool-call filler: "$filler" (tool=$toolName)');
+    _activeTtsStartGeneration();
+    _activeTtsSendText(filler);
+    _activeTtsEndGeneration();
+    // Mark the turn as spoken so a follow-up tool call in the same turn
+    // doesn't double-speak a second filler back-to-back.
+    _agentSpokeThisTurn = true;
+  }
+
   Future<void> _onTextAgentToolCall(ToolCallRequest req) async {
     debugPrint(
         '[AgentService] Text-agent tool: ${req.name} args=${req.arguments}');
+
+    // If the LLM jumped straight into a tool call without speaking first,
+    // drop a short filler ("just a sec…", "one moment…") so the user
+    // doesn't sit through dead air while the tool runs and the model then
+    // forms its real reply. PocketTTS doesn't support phonemes, so these
+    // are kept to plain conversational words. Skipped for tools that finish
+    // synchronously and locally (no perceptible silence to fill).
+    _maybeSpeakToolCallFiller(req.name);
 
     String result;
     try {
@@ -5393,6 +5598,7 @@ class AgentService extends ChangeNotifier {
     // loop-breaker so the agent's next reply is not suppressed by stale
     // self-talk accounting from an earlier call.
     _consecutiveAgentResponses = 0;
+    _userInputSinceLastFinal = true;
 
     if (_textAgent != null) {
       _textAgent!.sendUserMessage(contextLine);
@@ -8118,6 +8324,7 @@ class AgentService extends ChangeNotifier {
     // been raised by prior TTS echo or a self-talk burst. Otherwise the next
     // agent reply will be suppressed by `_consecutiveAgentResponses`.
     _consecutiveAgentResponses = 0;
+    _userInputSinceLastFinal = true;
 
     // Typing in the local chat panel is, by definition, the manager — only
     // they have access to the device's UI. Flip the manager-auth flag so the
@@ -10762,6 +10969,7 @@ class AgentService extends ChangeNotifier {
     _ttsMuted = false;
     _ttsInterrupted = false;
     _consecutiveAgentResponses = 0;
+    _userInputSinceLastFinal = false;
     _userMuteOverride = false;
     _awayMuteSaved = false;
     _callPhase = CallPhase.idle;

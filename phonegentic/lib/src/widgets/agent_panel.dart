@@ -783,28 +783,29 @@ class _AgentHeaderState extends State<_AgentHeader> {
           const SizedBox(width: 6),
           _MuteButtonWithPolicy(agent: agent),
           const SizedBox(width: 6),
-          if (agent.hasActiveCall || agent.whisperMode) ...[
-            _HeaderButton(
-              icon: agent.whisperMode
-                  ? Icons.voice_over_off_rounded
-                  : Icons.record_voice_over_rounded,
-              color: agent.canToggleWhisper
-                  ? (agent.whisperMode
-                      ? AppColors.burntAmber
-                      : AppColors.textSecondary)
-                  : AppColors.textTertiary.withValues(alpha: 0.5),
-              bgColor: agent.canToggleWhisper && agent.whisperMode
-                  ? AppColors.burntAmber.withValues(alpha: 0.12)
-                  : AppColors.card,
-              onTap: agent.canToggleWhisper ? agent.toggleWhisperMode : null,
-              tooltip: !agent.canToggleWhisper
-                  ? 'Whisper locked (split pipeline)'
-                  : agent.whisperMode
-                      ? 'Exit Whisper'
-                      : 'Whisper Mode',
-            ),
-            const SizedBox(width: 6),
-          ],
+          // Whisper Mode lives directly to the right of the mute button and
+          // is always visible — it's a global toggle, not call-only, so the
+          // user can flip it from idle as well as mid-call.
+          _HeaderButton(
+            icon: agent.whisperMode
+                ? Icons.voice_over_off_rounded
+                : Icons.record_voice_over_rounded,
+            color: agent.canToggleWhisper
+                ? (agent.whisperMode
+                    ? AppColors.burntAmber
+                    : AppColors.textSecondary)
+                : AppColors.textTertiary.withValues(alpha: 0.5),
+            bgColor: agent.canToggleWhisper && agent.whisperMode
+                ? AppColors.burntAmber.withValues(alpha: 0.12)
+                : AppColors.card,
+            onTap: agent.canToggleWhisper ? agent.toggleWhisperMode : null,
+            tooltip: !agent.canToggleWhisper
+                ? 'Whisper locked (split pipeline)'
+                : agent.whisperMode
+                    ? 'Exit Whisper'
+                    : 'Whisper Mode',
+          ),
+          const SizedBox(width: 6),
           _HeaderButton(
             icon: Icons.download_rounded,
             color: AppColors.textTertiary,
